@@ -76,6 +76,10 @@ pub struct VaapiEncoder {
     width: i32,
     height: i32,
     frame_index: i64,
+
+    // Stored for use during resize reinitialization.
+    fps: f64,
+    bitrate_kbps: u32,
 }
 
 // SAFETY: raw pointers are only accessed from the single encoder task thread.
@@ -260,6 +264,8 @@ impl VaapiEncoder {
                 width: w,
                 height: h,
                 frame_index: 0,
+                fps: config.fps,
+                bitrate_kbps: config.bitrate_kbps,
             })
         }
     }
@@ -399,6 +405,112 @@ impl VideoEncoder for VaapiEncoder {
 
     fn update_bitrate(&mut self, kbps: u32) {
         unsafe { (*self.codec_ctx).bit_rate = (kbps as i64) * 1000; }
+    }
+
+    fn resize(&mut self, width: u32, height: u32) -> anyhow::Result<()> {
+        let w = width as i32;
+        let h = height as i32;
+
+        unsafe {
+            // --- Free resolution-dependent resources ---
+            if !self.filter_graph.is_null() {
+                avfilter_graph_free(&mut self.filter_graph);
+                self.filter_graph = std::ptr::null_mut();
+                self.filter_buffersrc = std::ptr::null_mut();
+                self.filter_buffersink = std::ptr::null_mut();
+            }
+            if !self.drm_frames_ctx.is_null() {
+                av_buffer_unref(&mut self.drm_frames_ctx);
+            }
+            if !self.codec_ctx.is_null() {
+                avcodec_free_context(&mut (self.codec_ctx as *mut _));
+                self.codec_ctx = std::ptr::null_mut();
+            }
+            if !self.hw_frames_ctx.is_null() {
+                av_buffer_unref(&mut self.hw_frames_ctx);
+                self.hw_frames_ctx = std::ptr::null_mut();
+            }
+
+            // --- Rebuild codec context ---
+            let codec = avcodec_find_encoder_by_name(c"h264_vaapi".as_ptr());
+            if codec.is_null() {
+                anyhow::bail!("h264_vaapi codec not found during resize");
+            }
+            let codec_ctx = avcodec_alloc_context3(codec);
+            if codec_ctx.is_null() {
+                anyhow::bail!("avcodec_alloc_context3 failed during resize");
+            }
+
+            (*codec_ctx).width = w;
+            (*codec_ctx).height = h;
+            (*codec_ctx).pix_fmt = AVPixelFormat::AV_PIX_FMT_VAAPI;
+            (*codec_ctx).time_base = AVRational { num: 1, den: 1000 };
+            (*codec_ctx).framerate = AVRational { num: self.fps as i32, den: 1 };
+            (*codec_ctx).gop_size = (self.fps * 2.0) as i32;
+            (*codec_ctx).max_b_frames = 0;
+            (*codec_ctx).bit_rate = (self.bitrate_kbps as i64) * 1000;
+            (*codec_ctx).hw_device_ctx = av_buffer_ref(self.hw_device_ctx);
+
+            // --- Rebuild hw_frames_ctx (NV12 VAAPI pool) ---
+            let hw_frames_ref = av_hwframe_ctx_alloc(self.hw_device_ctx);
+            if hw_frames_ref.is_null() {
+                avcodec_free_context(&mut (codec_ctx as *mut _));
+                anyhow::bail!("av_hwframe_ctx_alloc failed during resize");
+            }
+            {
+                let fc = (*hw_frames_ref).data as *mut AVHWFramesContext;
+                (*fc).format = AVPixelFormat::AV_PIX_FMT_VAAPI;
+                (*fc).sw_format = AVPixelFormat::AV_PIX_FMT_NV12;
+                (*fc).width = w;
+                (*fc).height = h;
+                (*fc).initial_pool_size = 8;
+            }
+            let ret = av_hwframe_ctx_init(hw_frames_ref);
+            if ret < 0 {
+                avcodec_free_context(&mut (codec_ctx as *mut _));
+                anyhow::bail!("av_hwframe_ctx_init failed during resize: {}", ret);
+            }
+            (*codec_ctx).hw_frames_ctx = av_buffer_ref(hw_frames_ref);
+
+            (*codec_ctx).flags |= AV_CODEC_FLAG2_LOCAL_HEADER;
+            let mut opts: *mut AVDictionary = std::ptr::null_mut();
+            av_dict_set(&mut opts, c"profile".as_ptr(), c"high".as_ptr(), 0);
+            av_dict_set(&mut opts, c"level".as_ptr(), c"4.1".as_ptr(), 0);
+            av_dict_set(&mut opts, c"rc_mode".as_ptr(), c"CBR".as_ptr(), 0);
+            let ret = avcodec_open2(codec_ctx, codec, &mut opts);
+            if !opts.is_null() { av_dict_free(&mut opts); }
+            if ret < 0 {
+                avcodec_free_context(&mut (codec_ctx as *mut _));
+                anyhow::bail!("avcodec_open2 failed during resize: {}", ret);
+            }
+
+            self.codec_ctx = codec_ctx;
+            self.hw_frames_ctx = hw_frames_ref;
+
+            // --- Rebuild DMA-BUF filter pipeline ---
+            if !self.drm_device_ctx.is_null() {
+                match init_dmabuf_pipeline(self.drm_device_ctx, self.hw_device_ctx, w, h, self.fps) {
+                    Ok((dfc, fg, src, sink)) => {
+                        self.drm_frames_ctx = dfc;
+                        self.filter_graph = fg;
+                        self.filter_buffersrc = src;
+                        self.filter_buffersink = sink;
+                        self.dmabuf_path_ok = true;
+                    }
+                    Err(e) => {
+                        tracing::warn!("DMA-BUF pipeline rebuild failed after resize ({})", e);
+                        self.dmabuf_path_ok = false;
+                    }
+                }
+            }
+
+            self.width = w;
+            self.height = h;
+            self.frame_index = 0;
+        }
+
+        tracing::info!("VA-API encoder resized to {}x{}", width, height);
+        Ok(())
     }
 }
 

@@ -84,6 +84,12 @@ async fn main() -> Result<()> {
     // Shared keyframe request flag: set by a drive task, polled by the encoder.
     let keyframe_flag = Arc::new(AtomicBool::new(false));
 
+    // ── Resize channels ───────────────────────────────────────────────────────
+    // Web server → resize coordinator (async).
+    let (resize_tx, mut resize_rx) = tokio::sync::mpsc::channel::<(u32, u32)>(4);
+    // Resize coordinator → encoder task (std channel, non-blocking try_recv).
+    let (enc_resize_tx, enc_resize_rx) = std::sync::mpsc::channel::<(u32, u32)>();
+
     // ── Session manager ───────────────────────────────────────────────────────
     let ice_servers = args.ice_servers.split(',')
         .map(|s| lumen_webrtc::types::IceServer { url: s.trim().to_string(), credential: None })
@@ -124,7 +130,22 @@ async fn main() -> Result<()> {
             };
             let mut frame_rx = frame_rx;
             let mut encoded_count: u64 = 0;
+            let mut encoder_width = encoder_config.width;
+            let mut encoder_height = encoder_config.height;
             loop {
+                // Check for a pending resize before blocking on the next frame.
+                match enc_resize_rx.try_recv() {
+                    Ok((w, h)) => {
+                        tracing::info!("Encoder resizing to {w}x{h}");
+                        match encoder.resize(w, h) {
+                            Ok(()) => { encoder_width = w; encoder_height = h; }
+                            Err(e) => tracing::error!("Encoder resize failed: {e:#}"),
+                        }
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+                }
+
                 let frame = match frame_rx.blocking_recv() {
                     Ok(f) => f,
                     Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -135,6 +156,10 @@ async fn main() -> Result<()> {
                 };
                 // Skip encoding when nobody is watching.
                 if peer_count.load(Ordering::Relaxed) == 0 {
+                    continue;
+                }
+                // Skip frames from the old resolution that arrived after a resize.
+                if frame.width != encoder_width || frame.height != encoder_height {
                     continue;
                 }
                 // Service any pending keyframe request before encoding.
@@ -162,11 +187,30 @@ async fn main() -> Result<()> {
     }
 
     // ── Spawn: input forwarding task ──────────────────────────────────────────
-    tokio::spawn(async move {
-        while let Some(ev) = input_rx.recv().await {
-            compositor_input_tx.send(ev);
-        }
-    });
+    {
+        let compositor_input_tx = compositor_input_tx.clone();
+        tokio::spawn(async move {
+            while let Some(ev) = input_rx.recv().await {
+                compositor_input_tx.send(ev);
+            }
+        });
+    }
+
+    // ── Spawn: resize coordinator task ────────────────────────────────────────
+    // Receives (width, height) from the web layer, fans the command out to the
+    // compositor and the encoder, then triggers a keyframe at the new size.
+    {
+        let compositor_input_tx = compositor_input_tx.clone();
+        let keyframe_flag = keyframe_flag.clone();
+        tokio::spawn(async move {
+            while let Some((w, h)) = resize_rx.recv().await {
+                tracing::info!("Resize requested: {w}x{h}");
+                compositor_input_tx.resize(w, h);
+                let _ = enc_resize_tx.send((w, h));
+                keyframe_flag.store(true, Ordering::Relaxed);
+            }
+        });
+    }
 
     // ── Spawn: audio fan-out task ─────────────────────────────────────────────
     {
@@ -243,6 +287,7 @@ async fn main() -> Result<()> {
         input_tx,
         keyframe_flag,
         last_cursor_json,
+        resize_tx,
     })
     .run()
     .await

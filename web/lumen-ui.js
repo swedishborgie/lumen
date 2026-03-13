@@ -15,6 +15,8 @@ export class LumenUI {
   #client;
   #els;       // { video, stats, btnConnect, btnDisconnect, statusEl }
   #statsTimer = null;
+  #resizeObserver = null;
+  #resizeDebounceTimer = null;
 
   /**
    * @param {LumenClient} client
@@ -31,6 +33,7 @@ export class LumenUI {
     this.#bindClientEvents();
     this.#bindInputEvents();
     this.#bindControlEvents();
+    this.#bindResizeObserver();
   }
 
   // ── client event bindings ────────────────────────────────────────────────────
@@ -51,11 +54,13 @@ export class LumenUI {
         video.focus();
         video.style.cursor = 'default';
         this.#statsTimer = setInterval(() => this.#updateStats(), 1000);
+        // Send the current size immediately so the compositor matches the viewport.
+        this.#sendCurrentSize();
       } else if (state === 'idle') {
         if (this.#statsTimer) { clearInterval(this.#statsTimer); this.#statsTimer = null; }
         stats.textContent  = 'No stats yet';
         video.srcObject    = null;
-        video.style.cursor = 'none';
+        video.style.cursor = 'default';
       }
     });
 
@@ -200,5 +205,35 @@ export class LumenUI {
       x: Math.max(0, Math.min(vw - 1, ((clientX - rect.left - offX) / drawW) * vw)),
       y: Math.max(0, Math.min(vh - 1, ((clientY - rect.top  - offY) / drawH) * vh)),
     };
+  }
+
+  // ── resize observer ──────────────────────────────────────────────────────────
+
+  #sendCurrentSize() {
+    const { video } = this.#els;
+    const rect = video.getBoundingClientRect();
+    const w = Math.round(rect.width  * devicePixelRatio) & ~1;
+    const h = Math.round(rect.height * devicePixelRatio) & ~1;
+    if (w > 0 && h > 0) {
+      this.#client.sendResize(w, h);
+    }
+  }
+
+  #bindResizeObserver() {
+    const { video } = this.#els;
+    this.#resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const rect = entry.contentRect;
+        clearTimeout(this.#resizeDebounceTimer);
+        this.#resizeDebounceTimer = setTimeout(() => {
+          const w = Math.round(rect.width  * devicePixelRatio) & ~1;
+          const h = Math.round(rect.height * devicePixelRatio) & ~1;
+          if (w > 0 && h > 0) {
+            this.#client.sendResize(w, h);
+          }
+        }, 150);
+      }
+    });
+    this.#resizeObserver.observe(video);
   }
 }

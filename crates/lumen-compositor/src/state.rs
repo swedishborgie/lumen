@@ -6,6 +6,7 @@ use smithay::{
     backend::{
         allocator::dmabuf::Dmabuf,
         renderer::{
+            damage::OutputDamageTracker,
             gles::GlesRenderer,
             pixman::PixmanRenderer,
         },
@@ -49,6 +50,7 @@ use crate::types::{CapturedFrame, CursorEvent};
 /// Internal commands sent into the calloop event loop.
 pub enum CompositorCommand {
     Input(InputEvent),
+    Resize(u32, u32),
     Stop,
 }
 
@@ -91,6 +93,9 @@ pub struct AppState {
     pub offscreen_modifier: u64,
     pub use_gpu: bool,
     pub frame_buffer: Vec<u8>,
+
+    /// Damage tracker, stored here so the resize handler can rebuild it.
+    pub damage_tracker: Option<OutputDamageTracker>,
 
     pub is_capturing: bool,
     pub width: i32,

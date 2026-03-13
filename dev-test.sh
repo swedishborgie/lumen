@@ -82,17 +82,17 @@ else
     echo "==> Socket file confirmed: $SOCKET_PATH"
 fi
 
-# ── Launch terminal emulator ───────────────────────────────────────────────────
-# Prefer foot (minimal, reliable Wayland-native), then kitty, then ghostty.
+# ── Launch client ─────────────────────────────────────────────────────────────
+# Prefer weston (nested desktop), then foot, kitty, ghostty as fallback terminals.
 TERM_CMD=""
-for candidate in ghostty foot kitty; do
+for candidate in weston foot kitty ghostty; do
     if command -v "$candidate" &>/dev/null; then
         TERM_CMD="$candidate"
         break
     fi
 done
 if [[ -z "$TERM_CMD" ]]; then
-    echo "ERROR: no supported terminal emulator found (foot / kitty / ghostty)"
+    echo "ERROR: no supported client found (weston / foot / kitty / ghostty)"
     exit 1
 fi
 
@@ -101,12 +101,17 @@ echo "==> Launching $TERM_CMD on WAYLAND_DISPLAY=$WAYLAND_SOCK  (log: $TERM_LOG)
 echo "    Web UI at: http://localhost:8080  (or --bind to override)"
 echo ""
 
-# Unset DISPLAY so the terminal uses Wayland and not X11.
-# WAYLAND_DEBUG=client logs every protocol message the terminal sends/receives.
+# Build launch args (weston needs --backend=wayland for nested mode)
+TERM_ARGS=()
+if [[ "$TERM_CMD" == "weston" ]]; then
+    TERM_ARGS=(--backend=wayland)
+fi
+
+# Unset DISPLAY so the client uses Wayland and not X11.
 env -u DISPLAY \
     WAYLAND_DISPLAY="$WAYLAND_SOCK" \
     XDG_RUNTIME_DIR="$RUNTIME_DIR" \
-    "$TERM_CMD" >"$TERM_LOG" 2>&1 &
+    "$TERM_CMD" "${TERM_ARGS[@]}" >"$TERM_LOG" 2>&1 &
 TERM_PID=$!
 
 # Give the terminal a moment to start, then check it's still alive.

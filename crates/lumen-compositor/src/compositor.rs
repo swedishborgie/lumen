@@ -70,6 +70,12 @@ impl InputSender {
     pub fn send(&self, ev: InputEvent) {
         let _ = self.0.send(CompositorCommand::Input(ev));
     }
+
+    /// Request a live resize of the compositor output.
+    /// Width and height must be positive even numbers ≤ 4096.
+    pub fn resize(&self, width: u32, height: u32) {
+        let _ = self.0.send(CompositorCommand::Resize(width, height));
+    }
 }
 
 /// Smithay-based Wayland compositor.
@@ -200,6 +206,7 @@ impl Compositor {
             frame_buffer: vec![0u8; usize::try_from(width * height * 4).expect("frame buffer size fits usize")],
             gles_renderer, pixman_renderer, gbm_device: gbm_device_raw, offscreen_buffer,
             offscreen_modifier,
+            damage_tracker: None,
             is_capturing: true, width, height, target_fps, frame_tx, cursor_tx,
             frame_counter: 0, clock: Clock::new(), current_cursor_icon: None,
             last_log_time: Instant::now(), encoded_frame_count: 0, start_time: Instant::now(),
@@ -227,7 +234,7 @@ impl Compositor {
         state.space.map_output(&output, (0, 0));
         state.outputs.push(output.clone());
         let _output_global = output.create_global::<AppState>(&dh);
-        let mut damage_tracker = OutputDamageTracker::from_output(&output);
+        state.damage_tracker = Some(OutputDamageTracker::from_output(&output));
 
         // -----------------------------------------------------------------------
         // Wayland display source (calloop watches the display fd)
@@ -277,6 +284,9 @@ impl Compositor {
                     CalloopEvent::Msg(CompositorCommand::Input(ev)) => {
                         crate::input::inject_input(state, ev);
                     }
+                    CalloopEvent::Msg(CompositorCommand::Resize(w, h)) => {
+                        crate::compositor::apply_resize(state, w, h);
+                    }
                     CalloopEvent::Closed => {}
                 }
             })
@@ -299,7 +309,11 @@ impl Compositor {
                 }
 
                 if state.is_capturing {
-                    render_and_capture(state, &mut damage_tracker);
+                    // Take damage_tracker out to avoid a simultaneous mutable borrow of `state`.
+                    if let Some(mut dt) = state.damage_tracker.take() {
+                        render_and_capture(state, &mut dt);
+                        state.damage_tracker = Some(dt);
+                    }
                 }
 
                 let spent = t0.elapsed();
@@ -322,5 +336,81 @@ impl Compositor {
 
         tracing::info!("Compositor stopped.");
         Ok(())
+    }
+}
+
+/// Apply a live resize to the compositor output.
+///
+/// Called from the calloop event loop when a `CompositorCommand::Resize` arrives.
+/// Validates dimensions, updates state, rebuilds the offscreen buffer and damage tracker.
+pub(crate) fn apply_resize(state: &mut AppState, w: u32, h: u32) {
+    // Reject invalid dimensions (must be positive, even, within a sane limit).
+    if w == 0 || h == 0 || w % 2 != 0 || h % 2 != 0 || w > 4096 || h > 4096 {
+        tracing::warn!("Ignoring invalid resize request {}x{}", w, h);
+        return;
+    }
+    if state.width == w as i32 && state.height == h as i32 {
+        return; // no-op
+    }
+
+    tracing::info!("Compositor resizing {}x{} → {}x{}", state.width, state.height, w, h);
+
+    state.width = w as i32;
+    state.height = h as i32;
+
+    // Resize the CPU frame buffer.
+    if !state.use_gpu {
+        state.frame_buffer.resize((w * h * 4) as usize, 0);
+    }
+
+    // Rebuild the GPU offscreen buffer at the new size.
+    if state.use_gpu {
+        if let Some(ref gbm) = state.gbm_device {
+            match gbm.create_buffer_object(w, h, GbmFormat::Argb8888, BufferObjectFlags::RENDERING) {
+                Ok(bo) => {
+                    let modifier = u64::from(bo.modifier());
+                    let dmabuf = crate::state::create_dmabuf_from_bo(&bo);
+                    state.offscreen_modifier = modifier;
+                    state.offscreen_buffer = Some((bo, dmabuf));
+                }
+                Err(e) => {
+                    tracing::error!("Failed to create GBM BO for resize: {e}");
+                    return;
+                }
+            }
+        }
+    }
+
+    // Update the Wayland output mode so clients see the new resolution.
+    if let Some(output) = state.outputs.first() {
+        #[allow(clippy::cast_possible_truncation)]
+        let refresh_mhz = (state.target_fps * 1000.0).round() as i32;
+        let new_mode = OutputMode { size: (w as i32, h as i32).into(), refresh: refresh_mhz };
+        output.change_current_state(
+            Some(new_mode),
+            Some(smithay::utils::Transform::Normal),
+            Some(smithay::output::Scale::Integer(1)),
+            Some((0, 0).into()),
+        );
+        output.set_preferred(new_mode);
+
+        // Rebuild damage tracker for the new output geometry.
+        state.damage_tracker = Some(OutputDamageTracker::from_output(output));
+    }
+
+    // Reconfigure every mapped XDG toplevel window at the new size.
+    // Without this, Wayland clients keep their old dimensions and won't fill
+    // the resized output.
+    let windows: Vec<_> = state.space.elements().cloned().collect();
+    for window in windows {
+        if let Some(toplevel) = window.toplevel() {
+            toplevel.with_pending_state(|pending| {
+                use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
+                pending.size = Some((w as i32, h as i32).into());
+                pending.states.set(xdg_toplevel::State::Fullscreen);
+                pending.states.set(xdg_toplevel::State::Activated);
+            });
+            toplevel.send_configure();
+        }
     }
 }

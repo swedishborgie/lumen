@@ -189,4 +189,40 @@ impl VideoEncoder for SoftwareEncoder {
             x264_encoder_reconfig(self.handle, &mut params);
         }
     }
+
+    fn resize(&mut self, width: u32, height: u32) -> anyhow::Result<()> {
+        // Close the current encoder and reinitialize with new dimensions.
+        // Bitrate and fps are preserved; we need them for the new encoder params.
+        unsafe {
+            // Read current params to preserve fps and rc settings.
+            let mut params = MaybeUninit::uninit();
+            x264_sys::x264_encoder_parameters(self.handle, params.as_mut_ptr());
+            let mut params = params.assume_init();
+
+            // Close old encoder.
+            x264_encoder_close(self.handle);
+            self.handle = std::ptr::null_mut();
+
+            // Apply new dimensions.
+            params.i_width = width as i32;
+            params.i_height = height as i32;
+
+            let profile = c"baseline".as_ptr();
+            if x264_param_apply_profile(&mut params, profile) != 0 {
+                anyhow::bail!("x264_param_apply_profile failed during resize");
+            }
+
+            let handle = x264_encoder_open(&mut params);
+            if handle.is_null() {
+                anyhow::bail!("x264_encoder_open returned null during resize");
+            }
+
+            self.handle = handle;
+            self.width = width;
+            self.height = height;
+            self.frame_index = 0;
+            self.force_keyframe = true;
+        }
+        Ok(())
+    }
 }

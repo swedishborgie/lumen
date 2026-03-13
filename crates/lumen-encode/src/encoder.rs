@@ -54,6 +54,9 @@ pub trait VideoEncoder: Send {
     fn request_keyframe(&mut self);
     /// Update the target bitrate at runtime (CBR mode).
     fn update_bitrate(&mut self, kbps: u32);
+    /// Reinitialize the encoder for a new frame size.
+    /// Forces a keyframe on the next encode call.
+    fn resize(&mut self, width: u32, height: u32) -> Result<()>;
 }
 
 /// Auto-select the best available encoder backend.

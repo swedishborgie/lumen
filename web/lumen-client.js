@@ -153,6 +153,17 @@ export class LumenClient extends EventTarget {
   }
 
   /**
+   * Send a resize request to the server over the signaling WebSocket.
+   * @param {number} width  - New compositor width in pixels (must be positive and even).
+   * @param {number} height - New compositor height in pixels (must be positive and even).
+   */
+  sendResize(width, height) {
+    if (this.#ws?.readyState === WebSocket.OPEN) {
+      this.#ws.send(JSON.stringify({ type: 'resize', width, height }));
+    }
+  }
+
+  /**
    * Collect WebRTC stats and return a structured snapshot.
    * Returns null if not connected.
    */

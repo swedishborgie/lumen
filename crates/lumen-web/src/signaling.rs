@@ -22,6 +22,8 @@ pub struct SignalingState {
     pub keyframe_flag: Arc<AtomicBool>,
     /// The most recent cursor state JSON, replayed to new sessions on DC open.
     pub last_cursor_json: Arc<tokio::sync::Mutex<Option<Vec<u8>>>>,
+    /// Forwards resize requests to the resize coordinator task.
+    pub resize_tx: mpsc::Sender<(u32, u32)>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -30,6 +32,7 @@ enum ClientMessage {
     Offer { sdp: String },
     #[allow(dead_code)] // fields populated by serde from browser ICE candidates
     Candidate { candidate: String, sdp_mid: Option<String>, sdp_m_line_index: Option<u32> },
+    Resize { width: u32, height: u32 },
 }
 
 #[derive(Debug, Serialize)]
@@ -95,6 +98,16 @@ async fn handle_socket(mut socket: WebSocket, state: SignalingState) {
                             tracing::debug!("Candidate error: {e:#}");
                         }
                     }
+                }
+            }
+            ClientMessage::Resize { width, height } => {
+                // Validate: must be positive, even, and within a sane limit.
+                if width == 0 || height == 0 || width % 2 != 0 || height % 2 != 0
+                    || width > 4096 || height > 4096
+                {
+                    tracing::warn!("Rejected invalid resize {}x{}", width, height);
+                } else {
+                    let _ = state.resize_tx.try_send((width, height));
                 }
             }
         }

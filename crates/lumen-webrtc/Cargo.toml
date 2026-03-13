@@ -1,0 +1,24 @@
+[package]
+name = "lumen-webrtc"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lumen-compositor = { path = "../lumen-compositor" }
+lumen-encode     = { path = "../lumen-encode" }
+lumen-audio      = { path = "../lumen-audio" }
+
+# WebRTC
+str0m = "0.16"
+
+tokio       = { workspace = true }
+bytes       = { workspace = true }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+tracing     = { workspace = true }
+thiserror   = { workspace = true }
+anyhow      = { workspace = true }
+uuid        = { version = "1", features = ["v4"] }
+
+[lints]
+workspace = true

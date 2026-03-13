@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lumen</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #111; color: #eee; font-family: sans-serif; height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+    #video-container { position: relative; width: 100%; max-width: 1920px; }
+    video { width: 100%; display: block; background: #000; }
+    #controls { margin-top: 10px; display: flex; gap: 10px; }
+    button { padding: 8px 20px; border: none; border-radius: 4px; background: #444; color: #eee; cursor: pointer; font-size: 14px; }
+    button:hover { background: #555; }
+    button:disabled { opacity: 0.4; cursor: default; }
+    #status { margin-top: 8px; font-size: 13px; color: #aaa; }
+  </style>
+</head>
+<body>
+  <div id="video-container">
+    <video id="video" autoplay playsinline muted></video>
+  </div>
+  <div id="controls">
+    <button id="btn-connect">Connect</button>
+    <button id="btn-disconnect" disabled>Disconnect</button>
+  </div>
+  <div id="status">Idle</div>
+
+  <script>
+    const video   = document.getElementById('video');
+    const btnConn = document.getElementById('btn-connect');
+    const btnDisc = document.getElementById('btn-disconnect');
+    const status  = document.getElementById('status');
+
+    let pc  = null;
+    let ws  = null;
+    let sessionId = null;
+
+    function setStatus(msg) { status.textContent = msg; console.log('[lumen]', msg); }
+
+    async function connect() {
+      btnConn.disabled = true;
+      setStatus('Connecting…');
+
+      const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/signal`;
+      ws = new WebSocket(wsUrl);
+
+      ws.onclose = () => {
+        setStatus('Signaling closed');
+        cleanup();
+      };
+      ws.onerror = (e) => { setStatus('WebSocket error'); cleanup(); };
+
+      await new Promise((resolve, reject) => {
+        ws.onopen = resolve;
+        ws.onerror = reject;
+      });
+
+      pc = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+        bundlePolicy: 'max-bundle',
+      });
+
+      pc.ontrack = (e) => {
+        setStatus('Stream active');
+        video.srcObject = e.streams[0];
+      };
+
+      pc.onicecandidate = (e) => {
+        if (e.candidate && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: 'candidate',
+            candidate: e.candidate.candidate,
+            sdp_mid: e.candidate.sdpMid,
+            sdp_m_line_index: e.candidate.sdpMLineIndex,
+          }));
+        }
+      };
+
+      pc.onconnectionstatechange = () => {
+        setStatus(`WebRTC: ${pc.connectionState}`);
+        if (['failed', 'closed', 'disconnected'].includes(pc.connectionState)) cleanup();
+      };
+
+      // Add transceivers (receive-only — server sends, browser receives).
+      pc.addTransceiver('video', { direction: 'recvonly' });
+      pc.addTransceiver('audio', { direction: 'recvonly' });
+
+      // Optionally add a data channel for input forwarding.
+      const dc = pc.createDataChannel('input');
+      dc.onopen = () => setStatus('Connected (data channel open)');
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      ws.onmessage = async (evt) => {
+        const msg = JSON.parse(evt.data);
+        if (msg.type === 'answer') {
+          sessionId = msg.session_id;
+          await pc.setRemoteDescription({ type: 'answer', sdp: msg.sdp });
+          setStatus('Waiting for media…');
+        } else if (msg.type === 'candidate') {
+          await pc.addIceCandidate({ candidate: msg.candidate });
+        } else if (msg.type === 'error') {
+          setStatus(`Server error: ${msg.message}`);
+        }
+      };
+
+      ws.send(JSON.stringify({ type: 'offer', sdp: offer.sdp }));
+      btnDisc.disabled = false;
+    }
+
+    function cleanup() {
+      if (pc)  { pc.close();  pc = null; }
+      if (ws)  { ws.close();  ws = null; }
+      video.srcObject = null;
+      sessionId = null;
+      btnConn.disabled = false;
+      btnDisc.disabled = true;
+    }
+
+    btnConn.addEventListener('click', connect);
+    btnDisc.addEventListener('click', () => { setStatus('Disconnected'); cleanup(); });
+  </script>
+</body>
+</html>

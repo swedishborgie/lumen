@@ -1,0 +1,61 @@
+[workspace]
+members = [
+    ".",
+    "crates/lumen-compositor",
+    "crates/lumen-audio",
+    "crates/lumen-encode",
+    "crates/lumen-webrtc",
+    "crates/lumen-web",
+]
+resolver = "2"
+
+[workspace.lints.rust]
+unused = "warn"
+
+[workspace.lints.clippy]
+# All default lints (clippy::all) are already enabled by default.
+# Promote select pedantic lints that catch real bugs or improve clarity.
+cast_possible_truncation  = "warn"
+cast_sign_loss            = "warn"
+explicit_iter_loop        = "warn"
+filter_map_next           = "warn"
+flat_map_option           = "warn"
+manual_string_new         = "warn"
+needless_pass_by_value    = "warn"
+redundant_closure_for_method_calls = "warn"
+semicolon_if_nothing_returned = "warn"
+# Allow common false-positives / overly strict lints
+module_name_repetitions   = "allow"
+missing_errors_doc        = "allow"
+missing_panics_doc        = "allow"
+must_use_candidate        = "allow"
+
+[workspace.dependencies]
+bytes = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+
+[package]
+name = "lumen"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lumen-compositor = { path = "crates/lumen-compositor" }
+lumen-audio      = { path = "crates/lumen-audio" }
+lumen-encode     = { path = "crates/lumen-encode" }
+lumen-webrtc     = { path = "crates/lumen-webrtc" }
+lumen-web        = { path = "crates/lumen-web" }
+tokio            = { workspace = true }
+tracing          = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow           = { workspace = true }
+clap             = { version = "4", features = ["derive", "env"] }
+
+[lints]
+workspace = true

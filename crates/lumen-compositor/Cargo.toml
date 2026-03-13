@@ -1,0 +1,43 @@
+[package]
+name = "lumen-compositor"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Wayland / Smithay compositor
+smithay = { git = "https://github.com/Smithay/smithay", default-features = false, features = [
+    "backend_drm",
+    "backend_egl",
+    "backend_gbm",
+    "backend_libinput",
+    "desktop",
+    "renderer_gl",
+    "renderer_pixman",
+    "wayland_frontend",
+] }
+wayland-server = "0.31"
+wayland-protocols = { version = "0.32", features = ["server"] }
+wayland-protocols-wlr = { version = "0.3", features = ["server"] }
+calloop = { version = "0.14", features = ["executor"] }
+calloop-wayland-source = "0.4"
+
+# GPU / DRM
+gbm = "0.18"
+drm = "0.14"
+drm-sys = "0.8"
+
+# Input
+xkbcommon = { version = "0.7", features = ["wayland"] }
+
+# Async channels
+tokio = { workspace = true }
+
+# Utilities
+tracing     = { workspace = true }
+thiserror   = { workspace = true }
+anyhow      = { workspace = true }
+bytes       = { workspace = true }
+serde       = { workspace = true }
+
+[lints]
+workspace = true

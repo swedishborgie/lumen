@@ -1,0 +1,29 @@
+[package]
+name = "lumen-encode"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lumen-compositor = { path = "../lumen-compositor" }
+
+# Hardware encoding via FFmpeg (VA-API)
+ffmpeg-next     = "7"
+ffmpeg-sys-next = "7"
+
+# Software H.264 encoding
+x264-sys = "0.2"
+
+# YUV color space conversion
+yuv = "0.8"
+
+# Parallel processing
+rayon = "1"
+
+tokio     = { workspace = true }
+bytes     = { workspace = true }
+tracing   = { workspace = true }
+thiserror = { workspace = true }
+anyhow    = { workspace = true }
+
+[lints]
+workspace = true

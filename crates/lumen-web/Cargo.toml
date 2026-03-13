@@ -1,0 +1,22 @@
+[package]
+name = "lumen-web"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lumen-webrtc    = { path = "../lumen-webrtc" }
+lumen-compositor = { path = "../lumen-compositor" }
+
+# HTTP server + WebSocket
+axum        = { version = "0.8", features = ["ws", "macros"] }
+tower-http  = { version = "0.6", features = ["fs", "cors", "trace"] }
+
+tokio       = { workspace = true }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+tracing     = { workspace = true }
+thiserror   = { workspace = true }
+anyhow      = { workspace = true }
+
+[lints]
+workspace = true

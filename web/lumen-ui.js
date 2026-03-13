@@ -17,6 +17,7 @@ export class LumenUI {
   #statsTimer = null;
   #resizeObserver = null;
   #resizeDebounceTimer = null;
+  #audioUnlocked = false;
 
   /**
    * @param {LumenClient} client
@@ -58,6 +59,8 @@ export class LumenUI {
         this.#sendCurrentSize();
       } else if (state === 'idle') {
         if (this.#statsTimer) { clearInterval(this.#statsTimer); this.#statsTimer = null; }
+        this.#prevSnap = null;
+        this.#audioUnlocked = false;
         stats.textContent  = 'No stats yet';
         video.srcObject    = null;
         video.muted        = true;
@@ -71,16 +74,18 @@ export class LumenUI {
         video.srcObject = this.#client.stream;
       }
       // Unmute when the audio track arrives. The video element starts muted to
-      // satisfy browser autoplay policy; by the time media flows the user has
-      // already interacted with the page (explicit Connect click or navigation).
+      // satisfy browser autoplay policy; we defer unmuting until the first user
+      // interaction (click or keypress) which provides the required gesture.
       if (e.detail.kind === 'audio') {
-        video.muted = false;
+        this.#tryUnlockAudio();
       }
     });
 
     this.#client.addEventListener('dcmessage', (e) => {
       const msg = e.detail;
       if (msg.type === 'cursor_update') this.#applyCursor(msg);
+      else if (msg.type === 'clipboard_update') this.#applyClipboard(msg);
+      else console.log('[lumen] dcmessage unknown type:', msg.type);
     });
   }
 
@@ -90,6 +95,7 @@ export class LumenUI {
     const { video } = this.#els;
 
     video.addEventListener('keydown', (e) => {
+      this.#tryUnlockAudio();
       const sc = KEY_MAP[e.code];
       if (sc === undefined) return;
       e.preventDefault();
@@ -111,6 +117,7 @@ export class LumenUI {
     video.addEventListener('pointerdown', (e) => {
       video.focus();
       video.setPointerCapture(e.pointerId);
+      this.#tryUnlockAudio();
       const { x, y } = this.#toCompositorCoords(e.clientX, e.clientY);
       this.#client.sendInput({ type: 'pointer_motion', x, y });
       this.#client.sendInput({ type: 'pointer_button', btn: BTN_CODES[e.button] ?? 272, state: 1 });
@@ -127,6 +134,16 @@ export class LumenUI {
       e.preventDefault();
       this.#client.sendInput({ type: 'pointer_axis', x: e.deltaX / 20, y: e.deltaY / 20 });
     }, { passive: false });
+
+    // Sync browser clipboard to compositor when the user pastes into the video element.
+    // The paste event fires synchronously with clipboard data available, before the
+    // Ctrl+V key events reach the compositor.
+    video.addEventListener('paste', (e) => {
+      const text = e.clipboardData?.getData('text/plain');
+      console.log('[lumen] paste event, text length=%d, preview=%s',
+        text?.length ?? 0, JSON.stringify(text?.slice(0, 80) ?? ''));
+      if (text) this.#client.sendClipboardWrite(text);
+    });
   }
 
   // ── control button bindings ──────────────────────────────────────────────────
@@ -139,18 +156,46 @@ export class LumenUI {
 
   // ── stats display ────────────────────────────────────────────────────────────
 
+  #prevSnap = null;
+
   async #updateStats() {
     const snap = await this.#client.getStats();
     if (!snap) return;
-    const kb     = (snap.videoBytes / 1024).toFixed(1);
-    const jitter = snap.jitter != null ? (snap.jitter * 1000).toFixed(1) + ' ms' : '—';
-    const rtt    = snap.rtt    != null ? '   RTT: ' + (snap.rtt * 1000).toFixed(1) + ' ms' : '';
+    const prev = this.#prevSnap;
+    this.#prevSnap = snap;
+
+    // All WebRTC stats are cumulative totals; compute per-second deltas vs prev sample.
+    const df = (key) => prev != null ? snap[key] - prev[key] : '—';
+
+    const kb      = prev != null ? ((snap.videoBytes - prev.videoBytes) / 1024).toFixed(1) + ' KB/s' : '—';
+    const jitter  = snap.jitter != null ? (snap.jitter * 1000).toFixed(1) + ' ms' : '—';
+    const rtt     = snap.rtt    != null ? '   RTT: ' + (snap.rtt * 1000).toFixed(1) + ' ms' : '';
+    const fRecv   = df('framesReceived');
+    const fDec    = df('framesDecoded');
+    const fDrop   = df('framesDropped');
+    const pktLost = prev != null ? snap.videoLost - prev.videoLost : '—';
     this.#els.stats.textContent = [
-      `Video recv  : ${kb} KB  |  pkts ${snap.videoPackets}  lost ${snap.videoLost}`,
-      `Frames      : recv ${snap.framesReceived}  decoded ${snap.framesDecoded}  dropped ${snap.framesDropped}`,
+      `Video       : ${kb}  |  pkts ${df('videoPackets')}  lost ${pktLost}`,
+      `Frames/s    : recv ${fRecv}  decoded ${fDec}  dropped ${fDrop}`,
       `Decoder     : ${snap.decoderImpl ?? '—'}`,
       `Jitter      : ${jitter}${rtt}`,
     ].join('\n');
+  }
+
+  // ── audio unlock ─────────────────────────────────────────────────────────────
+
+  /** Unmute and play on first user gesture; no-op after first call. */
+  #tryUnlockAudio() {
+    if (this.#audioUnlocked) return;
+    const { video } = this.#els;
+    video.muted = false;
+    video.play().catch(() => {
+      // If play() fails (e.g. srcObject not yet set), leave muted — the next
+      // gesture will try again.
+      video.muted = true;
+      this.#audioUnlocked = false;
+    });
+    this.#audioUnlocked = true;
   }
 
   // ── cursor handling ──────────────────────────────────────────────────────────
@@ -185,6 +230,22 @@ export class LumenUI {
         break;
       }
     }
+  }
+
+  // ── clipboard handling ───────────────────────────────────────────────────────
+
+  /**
+   * Apply a clipboard_update message from the compositor.
+   * Writes the text to the browser's clipboard so it is immediately available
+   * for pasting outside the remote session.
+   */
+  #applyClipboard(msg) {
+    if (typeof msg.text !== 'string') return;
+    console.log('[lumen] clipboard_update received, length=%d, preview=%s',
+      msg.text.length, JSON.stringify(msg.text.slice(0, 80)));
+    navigator.clipboard.writeText(msg.text)
+      .then(() => console.log('[lumen] navigator.clipboard.writeText succeeded'))
+      .catch((err) => console.warn('[lumen] navigator.clipboard.writeText failed:', err));
   }
 
   // ── coordinate mapping ────────────────────────────────────────────────────────

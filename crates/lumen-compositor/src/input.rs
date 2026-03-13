@@ -1,5 +1,6 @@
 use smithay::{
     backend::input::{Axis, ButtonState, KeyState},
+    desktop::WindowSurfaceType,
     input::{
         keyboard::{FilterResult, Keycode},
         pointer::{AxisFrame, ButtonEvent, MotionEvent},
@@ -11,8 +12,26 @@ use smithay::{
 
 use crate::state::AppState;
 
+/// Find the actual Wayland surface (including subsurfaces and popups) under `location`.
+///
+/// `Space::element_under` only matches the top-level window element and returns the window's root
+/// wl_surface.  That means popup context-menu surfaces never receive pointer events, which breaks
+/// clipboard copy via right-click (the app's `set_selection` serial doesn't match any delivered
+/// event).  Using `Window::surface_under(WindowSurfaceType::ALL)` walks the popup tree so popup
+/// surfaces receive motion and button events with the correct serials.
+fn surface_under_at(
+    state: &AppState,
+    location: Point<f64, smithay::utils::Logical>,
+) -> Option<(WlSurface, Point<i32, smithay::utils::Logical>)> {
+    state.space.elements().rev().find_map(|window| {
+        let window_loc = state.space.element_location(window)?;
+        let relative = location - window_loc.to_f64();
+        window.surface_under(relative, WindowSurfaceType::ALL)
+    })
+}
+
 /// Events sent from the browser to the compositor via the WebRTC data channel.
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum InputEvent {
     KeyboardKey {
@@ -37,6 +56,10 @@ pub enum InputEvent {
         /// Vertical scroll delta.
         y: f64,
     },
+    /// Request to set the compositor clipboard to the given text.
+    ClipboardWrite {
+        text: String,
+    },
 }
 
 /// Inject an [`InputEvent`] into the Smithay seat, dispatching it to the
@@ -58,6 +81,9 @@ pub fn inject_input(state: &mut AppState, event: InputEvent) {
         InputEvent::PointerAxis { x, y } => {
             inject_pointer_axis(state, time, x, y);
         }
+        // ClipboardWrite is handled at the orchestration layer (main.rs) before
+        // reaching inject_input; this arm is a safety fallback.
+        InputEvent::ClipboardWrite { .. } => {}
     }
 }
 
@@ -94,17 +120,29 @@ fn inject_pointer_motion(state: &mut AppState, serial: Serial, time: u32, x: f64
     let pointer = state.seat.get_pointer().unwrap();
     let location = Point::from((x, y));
 
-    // Resolve which surface is under the cursor.
-    let focus = state.space.element_under(location)
-        .and_then(|(w, loc)| {
-            w.wl_surface().map(|s| ((*s).clone(), loc.to_f64()))
-        });
+    // Resolve the actual surface under the cursor, including popup surfaces.
+    let focus = surface_under_at(state, location)
+        .map(|(s, offset)| (s, offset.to_f64()));
 
     pointer.motion(state, focus, &MotionEvent { location, serial, time });
     pointer.frame(state);
 }
 
 fn inject_pointer_button(state: &mut AppState, serial: Serial, time: u32, btn: u32, btn_state: u32) {
+    // On press, set keyboard focus to the topmost window's surface.  This is needed for
+    // wl_data_device::set_selection (copy) to work when the user copies via right-click
+    // menu without any prior keyboard interaction.  We focus the toplevel (not the popup)
+    // because keyboard focus belongs to the application window, not its transient popups.
+    if btn_state == 1 {
+        let keyboard = state.seat.get_keyboard().unwrap();
+        let focus_surface: Option<WlSurface> = state.space.elements()
+            .rev()
+            .find_map(|w| w.wl_surface().map(|s| (*s).clone()));
+        if let Some(surface) = focus_surface {
+            keyboard.set_focus(state, Some(surface), serial);
+        }
+    }
+
     let pointer = state.seat.get_pointer().unwrap();
     let button_state = if btn_state == 1 { ButtonState::Pressed } else { ButtonState::Released };
     pointer.button(state, &ButtonEvent { serial, time, button: btn, state: button_state });

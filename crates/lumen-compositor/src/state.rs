@@ -1,4 +1,5 @@
 use std::fs::File;
+use std::sync::Arc;
 use std::time::Instant;
 
 use gbm::{BufferObject, Device as RawGbmDevice};
@@ -45,12 +46,13 @@ use smithay::{
 use tokio::sync::broadcast;
 
 use crate::input::InputEvent;
-use crate::types::{CapturedFrame, CursorEvent};
+use crate::types::{CapturedFrame, ClipboardEvent, CursorEvent};
 
 /// Internal commands sent into the calloop event loop.
 pub enum CompositorCommand {
     Input(InputEvent),
     Resize(u32, u32),
+    ClipboardWrite(String),
     Stop,
 }
 
@@ -103,10 +105,21 @@ pub struct AppState {
     pub target_fps: f64,
     pub frame_tx: broadcast::Sender<CapturedFrame>,
     pub cursor_tx: broadcast::Sender<CursorEvent>,
+    pub clipboard_tx: broadcast::Sender<ClipboardEvent>,
     pub frame_counter: u64,
     pub clock: Clock<Monotonic>,
 
     pub current_cursor_icon: Option<CursorImageStatus>,
+
+    /// Text most recently set as compositor-owned clipboard content.
+    /// Written to Wayland clients via `SelectionHandler::send_selection`.
+    pub clipboard_contents: Option<String>,
+    /// Text MIME type of a pending clipboard read request (set by `new_selection`).
+    /// Consumed in the frame timer to request data from the Wayland client.
+    pub pending_clipboard_mime: Option<String>,
+    /// Last clipboard text successfully broadcast to the frontend.
+    /// Shared with background reader threads to deduplicate and break feedback loops.
+    pub clipboard_sent_text: Arc<std::sync::Mutex<Option<String>>>,
 
     pub last_log_time: Instant,
     pub encoded_frame_count: u32,

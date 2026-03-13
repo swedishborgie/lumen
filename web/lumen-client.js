@@ -30,8 +30,9 @@ export const KEY_MAP = {
   ContextMenu:127,
 };
 
-// BTN_LEFT=272, BTN_RIGHT=273, BTN_MIDDLE=274
-export const BTN_CODES = [272, 273, 274];
+// Browser e.button: 0=left, 1=middle, 2=right
+// Linux:            BTN_LEFT=272, BTN_RIGHT=273, BTN_MIDDLE=274
+export const BTN_CODES = [272, 274, 273];
 
 export class LumenClient extends EventTarget {
   #pc          = null;
@@ -149,6 +150,17 @@ export class LumenClient extends EventTarget {
   sendInput(obj) {
     if (this.#dc?.readyState === 'open') {
       this.#dc.send(JSON.stringify(obj));
+    }
+  }
+
+  /**
+   * Set the compositor clipboard to the given text.
+   * Silently drops the request if the data channel is not open.
+   * @param {string} text
+   */
+  sendClipboardWrite(text) {
+    if (this.#dc?.readyState === 'open') {
+      this.#dc.send(JSON.stringify({ type: 'clipboard_write', text }));
     }
   }
 

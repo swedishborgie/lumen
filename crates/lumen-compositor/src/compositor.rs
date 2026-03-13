@@ -57,7 +57,7 @@ use tokio::sync::broadcast;
 use crate::input::InputEvent;
 use crate::render::render_and_capture;
 use crate::state::{AppState, ClientState, CompositorCommand};
-use crate::types::{CapturedFrame, CompositorConfig, CursorEvent};
+use crate::types::{CapturedFrame, CompositorConfig, CursorEvent, ClipboardEvent};
 
 /// A cheaply-cloneable handle for sending input events into the compositor.
 ///
@@ -76,6 +76,11 @@ impl InputSender {
     pub fn resize(&self, width: u32, height: u32) {
         let _ = self.0.send(CompositorCommand::Resize(width, height));
     }
+
+    /// Set the compositor clipboard to the given text.
+    pub fn clipboard_write(&self, text: String) {
+        let _ = self.0.send(CompositorCommand::ClipboardWrite(text));
+    }
 }
 
 /// Smithay-based Wayland compositor.
@@ -83,6 +88,7 @@ pub struct Compositor {
     config: CompositorConfig,
     frame_tx: broadcast::Sender<CapturedFrame>,
     cursor_tx: broadcast::Sender<CursorEvent>,
+    clipboard_tx: broadcast::Sender<ClipboardEvent>,
     cmd_tx: smithay::reexports::calloop::channel::Sender<CompositorCommand>,
     cmd_rx: Option<smithay::reexports::calloop::channel::Channel<CompositorCommand>>,
 }
@@ -91,13 +97,15 @@ impl Compositor {
     pub fn new(config: CompositorConfig) -> Result<Self> {
         let (frame_tx, _) = broadcast::channel(8);
         let (cursor_tx, _) = broadcast::channel(16);
+        let (clipboard_tx, _) = broadcast::channel(16);
         let (cmd_tx, cmd_rx) = smithay::reexports::calloop::channel::channel();
-        Ok(Self { config, frame_tx, cursor_tx, cmd_tx, cmd_rx: Some(cmd_rx) })
+        Ok(Self { config, frame_tx, cursor_tx, clipboard_tx, cmd_tx, cmd_rx: Some(cmd_rx) })
     }
 
     pub fn input_sender(&self) -> InputSender { InputSender(self.cmd_tx.clone()) }
     pub fn frame_receiver(&self) -> broadcast::Receiver<CapturedFrame> { self.frame_tx.subscribe() }
     pub fn cursor_receiver(&self) -> broadcast::Receiver<CursorEvent> { self.cursor_tx.subscribe() }
+    pub fn clipboard_receiver(&self) -> broadcast::Receiver<ClipboardEvent> { self.clipboard_tx.subscribe() }
     pub fn stop(&self) { let _ = self.cmd_tx.send(CompositorCommand::Stop); }
 
     /// Blocking compositor event loop. Call from a dedicated `std::thread`.
@@ -112,6 +120,7 @@ impl Compositor {
         let dri_node_path = self.config.render_node.clone();
         let frame_tx = self.frame_tx.clone();
         let cursor_tx = self.cursor_tx.clone();
+        let clipboard_tx = self.clipboard_tx.clone();
 
         let mut event_loop = EventLoop::<AppState>::try_new()
             .context("Failed to create calloop EventLoop")?;
@@ -207,8 +216,10 @@ impl Compositor {
             gles_renderer, pixman_renderer, gbm_device: gbm_device_raw, offscreen_buffer,
             offscreen_modifier,
             damage_tracker: None,
-            is_capturing: true, width, height, target_fps, frame_tx, cursor_tx,
+            is_capturing: true, width, height, target_fps, frame_tx, cursor_tx, clipboard_tx,
             frame_counter: 0, clock: Clock::new(), current_cursor_icon: None,
+            clipboard_contents: None, pending_clipboard_mime: None,
+            clipboard_sent_text: Arc::new(std::sync::Mutex::new(None)),
             last_log_time: Instant::now(), encoded_frame_count: 0, start_time: Instant::now(),
             use_gpu,
         };
@@ -287,6 +298,9 @@ impl Compositor {
                     CalloopEvent::Msg(CompositorCommand::Resize(w, h)) => {
                         crate::compositor::apply_resize(state, w, h);
                     }
+                    CalloopEvent::Msg(CompositorCommand::ClipboardWrite(text)) => {
+                        crate::compositor::apply_clipboard_write(state, text);
+                    }
                     CalloopEvent::Closed => {}
                 }
             })
@@ -315,6 +329,12 @@ impl Compositor {
                         state.damage_tracker = Some(dt);
                     }
                 }
+
+                // Read pending clipboard data from the Wayland client that set the selection.
+                // `pending_clipboard_mime` is set by `SelectionHandler::new_selection` and
+                // consumed here — after the selection is committed to the seat data — so that
+                // `request_data_device_client_selection` can find the active source.
+                crate::compositor::check_pending_clipboard_read(state);
 
                 let spent = t0.elapsed();
                 TimeoutAction::ToDuration(frame_interval.saturating_sub(spent))
@@ -411,6 +431,82 @@ pub(crate) fn apply_resize(state: &mut AppState, w: u32, h: u32) {
                 pending.states.set(xdg_toplevel::State::Activated);
             });
             toplevel.send_configure();
+        }
+    }
+}
+
+/// Set the compositor clipboard to `text`, making it available to Wayland clients that paste.
+///
+/// Stores the text in `AppState::clipboard_contents` (sent via `SelectionHandler::send_selection`)
+/// and registers the compositor as the active clipboard owner via `set_data_device_selection`.
+pub(crate) fn apply_clipboard_write(state: &mut AppState, text: String) {
+    use smithay::wayland::selection::data_device::set_data_device_selection;
+    // Record the text before setting the selection so that if the Wayland client
+    // echoes the selection back (common when the browser runs inside lumen), the
+    // deduplication in check_pending_clipboard_read will suppress the echo.
+    *state.clipboard_sent_text.lock().unwrap() = Some(text.clone());
+    state.clipboard_contents = Some(text);
+    set_data_device_selection::<AppState>(
+        &state.dh,
+        &state.seat,
+        vec![
+            "text/plain;charset=utf-8".to_string(),
+            "text/plain".to_string(),
+            "UTF8_STRING".to_string(),
+        ],
+        (),
+    );
+}
+
+/// If a clipboard read is pending (set by `SelectionHandler::new_selection`), request the data
+/// from the active Wayland client selection and spawn a thread to read it.
+///
+/// Called from the frame timer after the selection has been committed to seat data.
+pub(crate) fn check_pending_clipboard_read(state: &mut AppState) {
+    let mime_type = match state.pending_clipboard_mime.take() {
+        Some(m) => m,
+        None => return,
+    };
+
+    let (read_fd, write_fd) = match rustix::pipe::pipe() {
+        Ok(fds) => fds,
+        Err(e) => {
+            tracing::warn!("Failed to create pipe for clipboard read: {e}");
+            return;
+        }
+    };
+
+    use smithay::wayland::selection::data_device::request_data_device_client_selection;
+    tracing::debug!("check_pending_clipboard_read: requesting mime_type={}", mime_type);
+    match request_data_device_client_selection::<AppState>(&state.seat, mime_type, write_fd) {
+        Ok(()) => {
+            let clipboard_tx = state.clipboard_tx.clone();
+            let sent_text = state.clipboard_sent_text.clone();
+            std::thread::spawn(move || {
+                use std::io::Read;
+                let mut text = String::new();
+                // Blocking read: unblocks when the Wayland client writes data and closes its end.
+                if std::fs::File::from(read_fd).read_to_string(&mut text).is_ok() && !text.is_empty() {
+                    tracing::debug!("Clipboard read {} bytes", text.len());
+                    // Deduplicate: if the text matches what we last broadcast, this is an echo
+                    // (e.g. the browser running inside lumen reflecting our own clipboard_update
+                    // back via wl_data_device::set_selection). Skip to break the feedback loop.
+                    let mut guard = sent_text.lock().unwrap();
+                    if guard.as_deref() == Some(text.as_str()) {
+                        tracing::debug!("Clipboard dedup: skipping echo");
+                        return;
+                    }
+                    *guard = Some(text.clone());
+                    drop(guard);
+                    tracing::debug!("Clipboard broadcasting text");
+                    let _ = clipboard_tx.send(crate::types::ClipboardEvent::Text(text));
+                } else {
+                    tracing::debug!("Clipboard read empty or failed");
+                }
+            });
+        }
+        Err(e) => {
+            tracing::debug!("Clipboard read skipped: {e}");
         }
     }
 }

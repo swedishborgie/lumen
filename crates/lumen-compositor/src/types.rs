@@ -47,6 +47,15 @@ pub struct CapturedFrame {
     pub pts_ms: u64,
 }
 
+/// A clipboard update event emitted by the compositor when the Wayland selection changes.
+#[derive(Debug, Clone)]
+pub enum ClipboardEvent {
+    /// The clipboard now contains the given text.
+    Text(String),
+    /// The clipboard was cleared (no active selection).
+    Cleared,
+}
+
 /// A cursor update event emitted by the compositor whenever the pointer image changes.
 #[derive(Debug, Clone)]
 pub enum CursorEvent {

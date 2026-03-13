@@ -18,6 +18,8 @@ pub struct WebServerConfig {
     pub keyframe_flag: Arc<AtomicBool>,
     /// The most recent cursor state JSON, replayed to new sessions on DC open.
     pub last_cursor_json: Arc<tokio::sync::Mutex<Option<Vec<u8>>>>,
+    /// The most recent clipboard JSON, replayed to new sessions on DC open.
+    pub last_clipboard_json: Arc<tokio::sync::Mutex<Option<Vec<u8>>>>,
     /// Channel for forwarding resize requests (width, height) to the resize coordinator.
     pub resize_tx: tokio::sync::mpsc::Sender<(u32, u32)>,
 }

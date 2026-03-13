@@ -22,6 +22,8 @@ pub struct SignalingState {
     pub keyframe_flag: Arc<AtomicBool>,
     /// The most recent cursor state JSON, replayed to new sessions on DC open.
     pub last_cursor_json: Arc<tokio::sync::Mutex<Option<Vec<u8>>>>,
+    /// The most recent clipboard JSON, replayed to new sessions on DC open.
+    pub last_clipboard_json: Arc<tokio::sync::Mutex<Option<Vec<u8>>>>,
     /// Forwards resize requests to the resize coordinator task.
     pub resize_tx: mpsc::Sender<(u32, u32)>,
 }
@@ -81,6 +83,7 @@ async fn handle_socket(mut socket: WebSocket, state: SignalingState) {
                             state.input_tx.clone(),
                             state.keyframe_flag.clone(),
                             state.last_cursor_json.clone(),
+                            state.last_clipboard_json.clone(),
                         );
                         let resp = ServerMessage::Answer { sdp: answer_sdp, session_id: id.0 };
                         let _ = socket
@@ -122,9 +125,11 @@ fn spawn_drive_task(
     input_tx: mpsc::Sender<InputEvent>,
     keyframe_flag: Arc<AtomicBool>,
     last_cursor_json: Arc<tokio::sync::Mutex<Option<Vec<u8>>>>,
+    last_clipboard_json: Arc<tokio::sync::Mutex<Option<Vec<u8>>>>,
 ) {
     tokio::spawn(async move {
         let mut cursor_sent = false;
+        let mut clipboard_sent = false;
         loop {
             let session = match sessions.get_session(&id).await {
                 Some(s) => s,
@@ -156,13 +161,21 @@ fn spawn_drive_task(
                 keyframe_flag.store(true, Ordering::Relaxed);
             }
 
-            // Replay the last cursor state once when the data channel first opens,
-            // so reconnecting clients immediately see the correct cursor shape.
+            // Replay last cursor and clipboard state once when the data channel first opens.
             if dc_open && !cursor_sent {
                 cursor_sent = true;
                 if let Some(cursor_json) = last_cursor_json.lock().await.clone() {
                     if let Some(session) = sessions.get_session(&id).await {
                         session.lock().await.push_dc_message(cursor_json);
+                    }
+                }
+            }
+
+            if dc_open && !clipboard_sent {
+                clipboard_sent = true;
+                if let Some(clipboard_json) = last_clipboard_json.lock().await.clone() {
+                    if let Some(session) = sessions.get_session(&id).await {
+                        session.lock().await.push_dc_message(clipboard_json);
                     }
                 }
             }

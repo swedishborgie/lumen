@@ -57,6 +57,7 @@ tracing          = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow           = { workspace = true }
 base64           = { workspace = true }
+serde_json       = { workspace = true }
 clap             = { version = "4", features = ["derive", "env"] }
 
 [lints]

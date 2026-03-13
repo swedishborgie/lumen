@@ -20,6 +20,7 @@ impl WebServer {
             input_tx: self.config.input_tx.clone(),
             keyframe_flag: self.config.keyframe_flag.clone(),
             last_cursor_json: self.config.last_cursor_json.clone(),
+            last_clipboard_json: self.config.last_clipboard_json.clone(),
             resize_tx: self.config.resize_tx.clone(),
         };
 

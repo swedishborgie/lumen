@@ -13,4 +13,4 @@ pub mod types;
 
 pub use compositor::{Compositor, InputSender};
 pub use input::InputEvent;
-pub use types::{CapturedFrame, CompositorConfig, CursorEvent};
+pub use types::{CapturedFrame, ClipboardEvent, CompositorConfig, CursorEvent};

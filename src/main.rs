@@ -34,16 +34,19 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // If RUST_LOG is set, use it as-is. Otherwise fall back to per-crate info defaults.
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| {
+            tracing_subscriber::EnvFilter::new("")
+                .add_directive("lumen=info".parse().unwrap())
+                .add_directive("lumen_compositor=info".parse().unwrap())
+                .add_directive("lumen_audio=info".parse().unwrap())
+                .add_directive("lumen_encode=info".parse().unwrap())
+                .add_directive("lumen_webrtc=info".parse().unwrap())
+                .add_directive("lumen_web=info".parse().unwrap())
+        });
     tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("lumen=info".parse()?)
-                .add_directive("lumen_compositor=info".parse()?)
-                .add_directive("lumen_audio=info".parse()?)
-                .add_directive("lumen_encode=info".parse()?)
-                .add_directive("lumen_webrtc=info".parse()?)
-                .add_directive("lumen_web=info".parse()?),
-        )
+        .with_env_filter(env_filter)
         .init();
 
     let args = Args::parse();
@@ -59,6 +62,7 @@ async fn main() -> Result<()> {
     })?;
     let frame_rx = compositor.frame_receiver();
     let cursor_rx = compositor.cursor_receiver();
+    let clipboard_rx = compositor.clipboard_receiver();
     let compositor_input_tx = compositor.input_sender();
 
     // ── Audio ─────────────────────────────────────────────────────────────────
@@ -191,7 +195,14 @@ async fn main() -> Result<()> {
         let compositor_input_tx = compositor_input_tx.clone();
         tokio::spawn(async move {
             while let Some(ev) = input_rx.recv().await {
-                compositor_input_tx.send(ev);
+                match ev {
+                    lumen_compositor::InputEvent::ClipboardWrite { text } => {
+                        compositor_input_tx.clipboard_write(text);
+                    }
+                    other => {
+                        compositor_input_tx.send(other);
+                    }
+                }
             }
         });
     }
@@ -279,6 +290,29 @@ async fn main() -> Result<()> {
         });
     }
 
+    // ── Spawn: clipboard fan-out task ─────────────────────────────────────────
+    let last_clipboard_json: Arc<tokio::sync::Mutex<Option<Vec<u8>>>> =
+        Arc::new(tokio::sync::Mutex::new(None));
+    {
+        let session_manager = session_manager.clone();
+        let mut clipboard_rx = clipboard_rx;
+        let last_clipboard_json = last_clipboard_json.clone();
+        tokio::spawn(async move {
+            loop {
+                let ev = match clipboard_rx.recv().await {
+                    Ok(e) => e,
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(_) => break,
+                };
+                let json_opt = clipboard_event_to_json(&ev);
+                *last_clipboard_json.lock().await = json_opt.clone();
+                if let Some(json) = json_opt {
+                    session_manager.broadcast_dc_message(json).await;
+                }
+            }
+        });
+    }
+
     // ── Web server ────────────────────────────────────────────────────────────
     lumen_web::WebServer::new(lumen_web::WebServerConfig {
         bind_addr: args.bind_addr,
@@ -287,6 +321,7 @@ async fn main() -> Result<()> {
         input_tx,
         keyframe_flag,
         last_cursor_json,
+        last_clipboard_json,
         resize_tx,
     })
     .run()
@@ -305,5 +340,18 @@ fn cursor_event_to_json(ev: &lumen_compositor::CursorEvent) -> Vec<u8> {
                 r#"{{"type":"cursor_update","kind":"image","w":{width},"h":{height},"hotspot_x":{hotspot_x},"hotspot_y":{hotspot_y},"data":"{data}"}}"#
             ).into_bytes()
         }
+    }
+}
+
+/// Encode a `ClipboardEvent` as a JSON byte string for the data channel.
+/// Returns `None` for `Cleared` (no meaningful data to send to the browser).
+fn clipboard_event_to_json(ev: &lumen_compositor::ClipboardEvent) -> Option<Vec<u8>> {
+    use lumen_compositor::ClipboardEvent;
+    match ev {
+        ClipboardEvent::Text(text) => {
+            let text_json = serde_json::to_string(text).unwrap_or_default();
+            Some(format!(r#"{{"type":"clipboard_update","text":{text_json}}}"#).into_bytes())
+        }
+        ClipboardEvent::Cleared => None,
     }
 }

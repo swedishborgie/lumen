@@ -254,7 +254,82 @@ delegate_layer_shell!(AppState);
 impl OutputHandler for AppState {}
 delegate_output!(AppState);
 
-impl SelectionHandler for AppState { type SelectionUserData = (); }
+impl SelectionHandler for AppState {
+    type SelectionUserData = ();
+
+    fn new_selection(
+        &mut self,
+        ty: smithay::wayland::selection::SelectionTarget,
+        source: Option<smithay::wayland::selection::SelectionSource>,
+        _seat: smithay::input::Seat<Self>,
+    ) {
+        use smithay::wayland::selection::SelectionTarget;
+        use crate::types::ClipboardEvent;
+
+        if ty != SelectionTarget::Clipboard {
+            return;
+        }
+
+        match source {
+            None => {
+                tracing::debug!("Clipboard cleared");
+                self.pending_clipboard_mime = None;
+                let _ = self.clipboard_tx.send(ClipboardEvent::Cleared);
+            }
+            Some(ref src) => {
+                let mime_types = src.mime_types();
+                tracing::debug!("new_selection: mime_types={:?}", mime_types);
+                let preferred = [
+                    "text/plain;charset=utf-8",
+                    "text/plain",
+                    "UTF8_STRING",
+                    "STRING",
+                    "TEXT",
+                ];
+                self.pending_clipboard_mime = preferred
+                    .iter()
+                    .find(|m| mime_types.contains(&m.to_string()))
+                    .map(|s| s.to_string());
+                tracing::debug!("pending_clipboard_mime={:?}", self.pending_clipboard_mime);
+            }
+        }
+    }
+
+    fn send_selection(
+        &mut self,
+        ty: smithay::wayland::selection::SelectionTarget,
+        mime_type: String,
+        fd: std::os::unix::io::OwnedFd,
+        _seat: smithay::input::Seat<Self>,
+        _user_data: &(),
+    ) {
+        use smithay::wayland::selection::SelectionTarget;
+
+        if ty != SelectionTarget::Clipboard {
+            return;
+        }
+
+        let Some(ref text) = self.clipboard_contents else { return };
+
+        // Determine the encoding for the requested MIME type.
+        let data = if mime_type == "text/plain;charset=utf-8"
+            || mime_type == "text/plain"
+            || mime_type == "UTF8_STRING"
+            || mime_type == "STRING"
+            || mime_type == "TEXT"
+        {
+            text.as_bytes().to_vec()
+        } else {
+            return;
+        };
+
+        // Write in a background thread so we don't block the compositor event loop.
+        std::thread::spawn(move || {
+            use std::io::Write;
+            let _ = std::fs::File::from(fd).write_all(&data);
+        });
+    }
+}
 
 impl DataDeviceHandler for AppState {
     fn data_device_state(&mut self) -> &mut DataDeviceState { &mut self.data_device_state }

@@ -71,9 +71,22 @@ impl CompositorHandler for AppState {
     fn commit(&mut self, surface: &WlSurface) {
         on_commit_buffer_handler::<Self>(surface);
         self.space.refresh();
+
+        // Call on_commit() for any already-mapped window whose surface was committed.
+        // This updates the window's cached geometry/state so render_elements_for_output
+        // can produce elements for it. Must happen before the pending_windows check.
+        if let Some(window) = self.space.elements()
+            .find(|w| w.wl_surface().as_deref() == Some(surface))
+            .cloned()
+        {
+            window.on_commit();
+        }
+
+        // Map newly-configured windows into the space on their first commit.
         if let Some(window) = self.pending_windows.iter().find(|w| {
             w.wl_surface().map(|s| &*s == surface).unwrap_or(false)
         }).cloned() {
+            tracing::info!("Mapping window at (0,0)");
             self.space.map_element(window.clone(), (0, 0), true);
             self.pending_windows.retain(|w| w != &window);
             self.is_capturing = true;
@@ -136,6 +149,17 @@ delegate_seat!(AppState);
 impl XdgShellHandler for AppState {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState { &mut self.shell_state }
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
+        tracing::info!("New XDG toplevel window");
+        // XDG shell requires an initial configure before the client will
+        // commit its first buffer. Set the desired size and states, then
+        // send the configure so the client knows it can start rendering.
+        surface.with_pending_state(|state| {
+            use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
+            state.size = Some((self.width, self.height).into());
+            state.states.set(xdg_toplevel::State::Fullscreen);
+            state.states.set(xdg_toplevel::State::Activated);
+        });
+        surface.send_configure();
         self.pending_windows.push(Window::new_wayland_window(surface));
     }
     fn new_popup(&mut self, _surface: PopupSurface, _positioner: PositionerState) {}

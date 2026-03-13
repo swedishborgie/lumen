@@ -117,8 +117,10 @@ impl smithay::reexports::wayland_server::backend::ClientData for ClientState {
     fn disconnected(
         &self,
         _client_id: smithay::reexports::wayland_server::backend::ClientId,
-        _reason: smithay::reexports::wayland_server::backend::DisconnectReason,
-    ) {}
+        reason: smithay::reexports::wayland_server::backend::DisconnectReason,
+    ) {
+        tracing::info!("Wayland client disconnected: {:?}", reason);
+    }
 }
 
 /// Build a `Dmabuf` from a GBM buffer object.

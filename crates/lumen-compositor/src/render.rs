@@ -33,6 +33,11 @@ pub fn render_and_capture(state: &mut AppState, damage_tracker: &mut OutputDamag
         None => return,
     };
 
+    let window_count = state.space.elements().count();
+    if state.frame_counter % 150 == 0 {
+        tracing::debug!(window_count, "Rendering frame");
+    }
+
     if state.use_gpu {
         render_gles(state, damage_tracker, &output, now_ms, width, height);
     } else {
@@ -193,6 +198,21 @@ fn render_pixman(
 
     match render_result {
         Ok(_) => {
+            // Log element count and first pixel to diagnose black frames.
+            if state.frame_counter % 150 == 0 {
+                let first_pixel = if state.frame_buffer.len() >= 4 {
+                    format!("BGRA({},{},{},{})",
+                        state.frame_buffer[0], state.frame_buffer[1],
+                        state.frame_buffer[2], state.frame_buffer[3])
+                } else {
+                    "?".into()
+                };
+                tracing::info!(
+                    window_count = state.space.elements().count(),
+                    first_pixel = %first_pixel,
+                    "Pixman frame"
+                );
+            }
             let rgba = Bytes::copy_from_slice(&state.frame_buffer);
             let _ = state.frame_tx.send(CapturedFrame {
                 rgba_buffer: Some(rgba),
@@ -217,7 +237,14 @@ fn collect_elements_pixman(
     PixmanRenderer,
     smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement<PixmanRenderer>,
 >>> {
-    space.render_elements_for_output(renderer, output, 1.0)
-        .map_err(|e| tracing::warn!("render_elements_for_output (pixman) error: {:?}", e))
-        .ok()
+    match space.render_elements_for_output(renderer, output, 1.0) {
+        Ok(elements) => {
+            tracing::debug!(count = elements.len(), "Pixman render elements");
+            Some(elements)
+        }
+        Err(e) => {
+            tracing::warn!("render_elements_for_output (pixman) error: {:?}", e);
+            None
+        }
+    }
 }

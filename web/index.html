@@ -6,9 +6,27 @@
   <title>Lumen</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: #111; color: #eee; font-family: sans-serif; height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-    #video-container { position: relative; width: 100%; max-width: 1920px; }
-    video { width: 100%; display: block; background: #000; }
+    body { background: #111; color: #eee; font-family: sans-serif; min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 12px; gap: 8px; }
+    #video-container {
+      width: 100%;
+      max-width: 1920px;
+      aspect-ratio: 16 / 9;
+      background: #000;
+      flex-shrink: 0;
+      max-height: calc(100vh - 120px); /* leave room for stats/controls */
+    }
+    video {
+      width: 100%; height: 100%;
+      display: block;
+      object-fit: contain;
+      background: #000;
+    }
+    #stats {
+      margin-top: 8px; padding: 6px 10px; border-radius: 4px;
+      background: #1a1a1a; color: #0f0;
+      font: 12px/1.6 monospace; white-space: pre;
+      width: 100%; max-width: 1920px;
+    }
     #controls { margin-top: 10px; display: flex; gap: 10px; }
     button { padding: 8px 20px; border: none; border-radius: 4px; background: #444; color: #eee; cursor: pointer; font-size: 14px; }
     button:hover { background: #555; }
@@ -18,8 +36,10 @@
 </head>
 <body>
   <div id="video-container">
-    <video id="video" autoplay playsinline muted></video>
+    <video id="video" autoplay playsinline muted tabindex="0"
+           style="cursor: none; outline: none;"></video>
   </div>
+  <div id="stats">No stats yet</div>
   <div id="controls">
     <button id="btn-connect">Connect</button>
     <button id="btn-disconnect" disabled>Disconnect</button>
@@ -31,10 +51,130 @@
     const btnConn = document.getElementById('btn-connect');
     const btnDisc = document.getElementById('btn-disconnect');
     const status  = document.getElementById('status');
+    const statsEl = document.getElementById('stats');
 
     let pc  = null;
     let ws  = null;
-    let sessionId = null;
+    let dc  = null;
+    let sessionId  = null;
+    let statsTimer = null;
+    let remoteStream = null;
+
+    // ── Key map: browser KeyboardEvent.code → Linux evdev scancode ────────────
+    const KEY_MAP = {
+      Escape:13,Backquote:41,Digit1:2,Digit2:3,Digit3:4,Digit4:5,Digit5:6,
+      Digit6:7,Digit7:8,Digit8:9,Digit9:10,Digit0:11,Minus:12,Equal:13,
+      Backspace:14,Tab:15,KeyQ:16,KeyW:17,KeyE:18,KeyR:19,KeyT:20,KeyY:21,
+      KeyU:22,KeyI:23,KeyO:24,KeyP:25,BracketLeft:26,BracketRight:27,
+      Enter:28,ControlLeft:29,KeyA:30,KeyS:31,KeyD:32,KeyF:33,KeyG:34,
+      KeyH:35,KeyJ:36,KeyK:37,KeyL:38,Semicolon:39,Quote:40,ShiftLeft:42,
+      Backslash:43,KeyZ:44,KeyX:45,KeyC:46,KeyV:47,KeyB:48,KeyN:49,KeyM:50,
+      Comma:51,Period:52,Slash:53,ShiftRight:54,NumpadMultiply:55,AltLeft:56,
+      Space:57,CapsLock:58,F1:59,F2:60,F3:61,F4:62,F5:63,F6:64,F7:65,F8:66,
+      F9:67,F10:68,NumLock:69,ScrollLock:70,Numpad7:71,Numpad8:72,Numpad9:73,
+      NumpadSubtract:74,Numpad4:75,Numpad5:76,Numpad6:77,NumpadAdd:78,
+      Numpad1:79,Numpad2:80,Numpad3:81,Numpad0:82,NumpadDecimal:83,
+      IntlBackslash:86,F11:87,F12:88,NumpadEnter:96,ControlRight:97,
+      NumpadDivide:98,PrintScreen:99,AltRight:100,Home:102,ArrowUp:103,
+      PageUp:104,ArrowLeft:105,ArrowRight:106,End:107,ArrowDown:108,
+      PageDown:109,Insert:110,Delete:111,MetaLeft:125,MetaRight:126,
+      ContextMenu:127,
+    };
+    // BTN_LEFT=272, BTN_RIGHT=273, BTN_MIDDLE=274
+    const BTN_CODES = [272, 273, 274];
+
+    function sendInput(obj) {
+      if (dc && dc.readyState === 'open') dc.send(JSON.stringify(obj));
+    }
+
+    // Map video-element client coords → compositor pixel coords,
+    // accounting for object-fit:contain letterboxing/pillarboxing.
+    function toCompositorCoords(clientX, clientY) {
+      const rect = video.getBoundingClientRect();
+      const vw = video.videoWidth  || 1920;
+      const vh = video.videoHeight || 1080;
+      const elAspect  = rect.width / rect.height;
+      const vidAspect = vw / vh;
+      let offX = 0, offY = 0, drawW = rect.width, drawH = rect.height;
+      if (elAspect > vidAspect) {        // pillarbox
+        drawW = rect.height * vidAspect;
+        offX  = (rect.width - drawW) / 2;
+      } else {                           // letterbox
+        drawH = rect.width / vidAspect;
+        offY  = (rect.height - drawH) / 2;
+      }
+      return {
+        x: Math.max(0, Math.min(vw - 1, ((clientX - rect.left - offX) / drawW) * vw)),
+        y: Math.max(0, Math.min(vh - 1, ((clientY - rect.top  - offY) / drawH) * vh)),
+      };
+    }
+
+    // ── Input event listeners on the video element ─────────────────────────────
+    video.addEventListener('keydown', e => {
+      const sc = KEY_MAP[e.code];
+      if (sc !== undefined) {
+        e.preventDefault();
+        sendInput({ type: 'keyboard_key', scancode: sc, state: 1 });
+      }
+    });
+    video.addEventListener('keyup', e => {
+      const sc = KEY_MAP[e.code];
+      if (sc !== undefined) {
+        e.preventDefault();
+        sendInput({ type: 'keyboard_key', scancode: sc, state: 0 });
+      }
+    });
+    video.addEventListener('mousemove', e => {
+      const { x, y } = toCompositorCoords(e.clientX, e.clientY);
+      sendInput({ type: 'pointer_motion', x, y });
+    });
+    video.addEventListener('mousedown', e => {
+      video.focus();
+      const { x, y } = toCompositorCoords(e.clientX, e.clientY);
+      sendInput({ type: 'pointer_motion', x, y });
+      sendInput({ type: 'pointer_button', btn: BTN_CODES[e.button] ?? 272, state: 1 });
+      e.preventDefault();
+    });
+    video.addEventListener('mouseup', e => {
+      sendInput({ type: 'pointer_button', btn: BTN_CODES[e.button] ?? 272, state: 0 });
+    });
+    video.addEventListener('contextmenu', e => e.preventDefault());
+    video.addEventListener('wheel', e => {
+      e.preventDefault();
+      sendInput({ type: 'pointer_axis', x: e.deltaX / 20, y: e.deltaY / 20 });
+    }, { passive: false });
+
+    // ── Stats overlay ──────────────────────────────────────────────────────────
+    async function updateStats() {
+      if (!pc) return;
+      const reports = await pc.getStats();
+      let videoBytes = 0, audioBytess = 0, videoPackets = 0, videoLost = 0;
+      let rtt = null, jitter = null, decoderImpl = null;
+      let framesDecoded = 0, framesDropped = 0, framesReceived = 0;
+      reports.forEach(r => {
+        if (r.type === 'inbound-rtp' && r.kind === 'video') {
+          videoBytes   = r.bytesReceived ?? 0;
+          videoPackets = r.packetsReceived ?? 0;
+          videoLost    = r.packetsLost ?? 0;
+          framesDecoded  = r.framesDecoded ?? 0;
+          framesDropped  = r.framesDropped ?? 0;
+          framesReceived = r.framesReceived ?? 0;
+          jitter       = r.jitter != null ? (r.jitter * 1000).toFixed(1) + ' ms' : '—';
+          decoderImpl  = r.decoderImplementation ?? '—';
+        }
+        if (r.type === 'remote-inbound-rtp' && r.kind === 'video') {
+          rtt = r.roundTripTime != null ? (r.roundTripTime * 1000).toFixed(1) + ' ms' : null;
+        }
+      });
+      const kb = (videoBytes / 1024).toFixed(1);
+      const lines = [
+        `Video recv  : ${kb} KB  |  pkts ${videoPackets}  lost ${videoLost}`,
+        `Frames      : recv ${framesReceived}  decoded ${framesDecoded}  dropped ${framesDropped}`,
+        `Decoder     : ${decoderImpl}`,
+        `Jitter      : ${jitter ?? '—'}${rtt ? '   RTT: ' + rtt : ''}`,
+      ];
+      statsEl.textContent = lines.join('\n');
+    }
 
     function setStatus(msg) { status.textContent = msg; console.log('[lumen]', msg); }
 
@@ -61,20 +201,41 @@
         bundlePolicy: 'max-bundle',
       });
 
+      // Create the MediaStream up-front and bind it to the video element now.
+      // e.streams[0] is undefined when the server SDP omits msid stream IDs,
+      // so we build our own stream and add tracks as they arrive.
+      remoteStream = new MediaStream();
+      video.srcObject = remoteStream;
+
       pc.ontrack = (e) => {
-        setStatus('Stream active');
-        video.srcObject = e.streams[0];
+        setStatus(`Stream active ${e.streams.length}`);
+        remoteStream.addTrack(e.track);
+        console.log('[lumen] Track added:', e.track.kind, e.track.id,
+          'streams:', e.streams.length, e.streams[0]?.id);
       };
 
       pc.onicecandidate = (e) => {
-        if (e.candidate && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({
-            type: 'candidate',
-            candidate: e.candidate.candidate,
-            sdp_mid: e.candidate.sdpMid,
-            sdp_m_line_index: e.candidate.sdpMLineIndex,
-          }));
+        if (e.candidate) {
+          console.log('[lumen] Local ICE candidate:', e.candidate.candidate);
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+              type: 'candidate',
+              candidate: e.candidate.candidate,
+              sdp_mid: e.candidate.sdpMid,
+              sdp_m_line_index: e.candidate.sdpMLineIndex,
+            }));
+          }
+        } else {
+          console.log('[lumen] ICE gathering complete');
         }
+      };
+
+      pc.onicegatheringstatechange = () => {
+        console.log('[lumen] ICE gathering state:', pc.iceGatheringState);
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        console.log('[lumen] ICE connection state:', pc.iceConnectionState);
       };
 
       pc.onconnectionstatechange = () => {
@@ -87,8 +248,13 @@
       pc.addTransceiver('audio', { direction: 'recvonly' });
 
       // Optionally add a data channel for input forwarding.
-      const dc = pc.createDataChannel('input');
-      dc.onopen = () => setStatus('Connected (data channel open)');
+      dc = pc.createDataChannel('input');
+      dc.onopen = () => {
+        setStatus('Connected (data channel open)');
+        video.focus();
+        statsTimer = setInterval(updateStats, 1000);
+      };
+      dc.onclose = () => { dc = null; };
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
@@ -97,9 +263,11 @@
         const msg = JSON.parse(evt.data);
         if (msg.type === 'answer') {
           sessionId = msg.session_id;
+          console.log('[lumen] Received answer SDP:\n', msg.sdp);
           await pc.setRemoteDescription({ type: 'answer', sdp: msg.sdp });
           setStatus('Waiting for media…');
         } else if (msg.type === 'candidate') {
+          console.log('[lumen] Remote ICE candidate:', msg.candidate);
           await pc.addIceCandidate({ candidate: msg.candidate });
         } else if (msg.type === 'error') {
           setStatus(`Server error: ${msg.message}`);
@@ -111,9 +279,13 @@
     }
 
     function cleanup() {
+      if (statsTimer) { clearInterval(statsTimer); statsTimer = null; }
+      statsEl.textContent = 'No stats yet';
+      if (dc)  { dc.close();  dc = null; }
       if (pc)  { pc.close();  pc = null; }
       if (ws)  { ws.close();  ws = null; }
       video.srcObject = null;
+      remoteStream = null;
       sessionId = null;
       btnConn.disabled = false;
       btnDisc.disabled = true;

@@ -22,8 +22,8 @@ impl WebServer {
         };
 
         let app = Router::new()
-            .route("/ws", get(ws_handler))
-            .nest_service("/", ServeDir::new(&self.config.static_dir))
+            .route("/ws/signal", get(ws_handler))
+            .fallback_service(ServeDir::new(&self.config.static_dir))
             .layer(CorsLayer::permissive())
             .layer(TraceLayer::new_for_http())
             .with_state(state);

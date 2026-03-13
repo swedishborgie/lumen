@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::Result;
 use tokio::sync::Mutex;
@@ -10,6 +11,9 @@ use crate::types::{SessionConfig, SessionId};
 pub struct SessionManager {
     config: SessionConfig,
     sessions: Arc<Mutex<HashMap<SessionId, Arc<Mutex<WebRtcSession>>>>>,
+    /// Number of currently active sessions. Updated atomically so the encoder
+    /// task can check cheaply without blocking on the async mutex.
+    peer_count: Arc<AtomicUsize>,
 }
 
 impl SessionManager {
@@ -17,7 +21,14 @@ impl SessionManager {
         Arc::new(Self {
             config,
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            peer_count: Arc::new(AtomicUsize::new(0)),
         })
+    }
+
+    /// A cheaply-cloneable handle to the live peer count.
+    /// The encoder task uses this to skip encoding when no one is watching.
+    pub fn peer_count(&self) -> Arc<AtomicUsize> {
+        self.peer_count.clone()
     }
 
     /// Accept a browser SDP offer, create a new session, and return the
@@ -27,6 +38,7 @@ impl SessionManager {
         let id = SessionId::new();
         let session = Arc::new(Mutex::new(session));
         self.sessions.lock().await.insert(id.clone(), session);
+        self.peer_count.fetch_add(1, Ordering::Relaxed);
         Ok((id, answer_sdp))
     }
 
@@ -35,7 +47,10 @@ impl SessionManager {
     }
 
     pub async fn remove_session(&self, id: &SessionId) {
-        self.sessions.lock().await.remove(id);
+        let removed = self.sessions.lock().await.remove(id).is_some();
+        if removed {
+            self.peer_count.fetch_sub(1, Ordering::Relaxed);
+        }
     }
 
     /// Return all active sessions (for media fan-out).

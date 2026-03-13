@@ -114,30 +114,45 @@ async fn main() -> Result<()> {
     {
         let encoded_tx = encoded_tx.clone();
         let keyframe_flag = keyframe_flag.clone();
+        let peer_count = session_manager.peer_count();
         tokio::task::spawn_blocking(move || {
             let mut encoder = match lumen_encode::create_encoder(&encoder_config) {
                 Ok(e) => e,
                 Err(e) => { tracing::error!("Encoder init: {e:#}"); return; }
             };
             let mut frame_rx = frame_rx;
+            let mut encoded_count: u64 = 0;
             loop {
                 let frame = match frame_rx.blocking_recv() {
                     Ok(f) => f,
                     Err(broadcast::error::RecvError::Lagged(n)) => {
-                        tracing::warn!("Encoder lagged {n} frames");
+                        tracing::debug!("Encoder dropped {n} frames (channel full)");
                         continue;
                     }
                     Err(_) => break,
                 };
+                // Skip encoding when nobody is watching.
+                if peer_count.load(Ordering::Relaxed) == 0 {
+                    continue;
+                }
                 // Service any pending keyframe request before encoding.
                 if keyframe_flag.swap(false, Ordering::Relaxed) {
                     encoder.request_keyframe();
                 }
                 match encoder.encode(frame) {
                     Ok(Some(ef)) => {
+                        encoded_count += 1;
+                        if encoded_count == 1 || encoded_count % 150 == 0 {
+                            tracing::info!(encoded_count, keyframe = ef.is_keyframe,
+                                bytes = ef.data.len(), "Encoded frame");
+                        }
                         let _ = encoded_tx.send(Arc::new(ef));
                     }
-                    Ok(None) => {}
+                    Ok(None) => {
+                        if encoded_count == 0 {
+                            tracing::debug!("Encoder returned None (buffering)");
+                        }
+                    }
                     Err(e) => tracing::warn!("Encode error: {e:#}"),
                 }
             }

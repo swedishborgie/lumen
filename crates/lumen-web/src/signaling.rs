@@ -68,6 +68,7 @@ async fn handle_socket(mut socket: WebSocket, state: SignalingState) {
                 match state.sessions.create_session(&sdp).await {
                     Ok((id, answer_sdp)) => {
                         session_id = Some(id.clone());
+                        tracing::debug!("Answer SDP:\n{}", answer_sdp);
                         // Spawn the drive task, forwarding input and keyframe signals.
                         spawn_drive_task(
                             state.sessions.clone(),
@@ -96,10 +97,6 @@ async fn handle_socket(mut socket: WebSocket, state: SignalingState) {
         }
     }
 
-    // Clean up session on disconnect.
-    if let Some(id) = session_id {
-        state.sessions.remove_session(&id).await;
-    }
     tracing::info!("Signaling connection closed");
 }
 
@@ -141,11 +138,14 @@ fn spawn_drive_task(
             }
 
             if state == lumen_webrtc::SessionState::Closed {
-                sessions.remove_session(&id).await;
+                tracing::info!("WebRTC peer disconnected");
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(1)).await;
         }
+        // Always clean up — whether the peer disconnected cleanly, the drive
+        // task errored, or the session was already removed externally.
+        sessions.remove_session(&id).await;
     });
 }
 

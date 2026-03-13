@@ -20,6 +20,8 @@ use crate::types::SessionConfig;
 pub struct WebRtcSession {
     rtc: Rtc,
     socket: Arc<UdpSocket>,
+    /// The real IP:port addresses of our local ICE candidates (no 0.0.0.0).
+    local_candidates: Vec<std::net::SocketAddr>,
     /// Video track mid; populated on first `Event::MediaAdded` for video.
     video_mid: Option<Mid>,
     /// Audio track mid; populated on first `Event::MediaAdded` for audio.
@@ -37,14 +39,37 @@ impl WebRtcSession {
         let socket = UdpSocket::bind(config.bind_addr)
             .with_context(|| format!("Failed to bind UDP on {}", config.bind_addr))?;
         socket.set_nonblocking(true)?;
-        let local_addr = socket.local_addr()?;
+        let port = socket.local_addr()?.port();
         let socket = Arc::new(socket);
+
+        // Discover the real outbound IP by connecting a probe socket — this
+        // never sends any data but causes the OS to select a source address.
+        let outbound_ip = {
+            let probe = UdpSocket::bind("0.0.0.0:0")?;
+            probe.connect("8.8.8.8:80")?;
+            probe.local_addr()?.ip()
+        };
 
         let mut rtc = Rtc::new(Instant::now());
 
-        let candidate = Candidate::host(local_addr, "udp")
-            .map_err(|e| anyhow!("ICE candidate error: {:?}", e))?;
-        rtc.add_local_candidate(candidate);
+        let loopback: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let loopback_addr = std::net::SocketAddr::new(loopback, port);
+        let outbound_addr = std::net::SocketAddr::new(outbound_ip, port);
+
+        let mut local_candidates = Vec::new();
+
+        // Add loopback candidate for same-machine (localhost) connections.
+        if let Ok(c) = Candidate::host(loopback_addr, "udp") {
+            rtc.add_local_candidate(c);
+            local_candidates.push(loopback_addr);
+        }
+        // Add LAN candidate for remote connections.
+        if outbound_ip != loopback {
+            if let Ok(c) = Candidate::host(outbound_addr, "udp") {
+                rtc.add_local_candidate(c);
+                local_candidates.push(outbound_addr);
+            }
+        }
 
         let offer = SdpOffer::from_sdp_string(offer_sdp)
             .map_err(|e| anyhow!("SDP parse error: {:?}", e))?;
@@ -60,6 +85,7 @@ impl WebRtcSession {
             Self {
                 rtc,
                 socket,
+                local_candidates,
                 video_mid: None,
                 audio_mid: None,
                 input_events: Vec::new(),
@@ -74,7 +100,14 @@ impl WebRtcSession {
     pub fn push_video(&mut self, frame: &EncodedFrame) -> Result<()> {
         let mid = match self.video_mid {
             Some(m) if self.connected => m,
-            _ => return Ok(()),
+            Some(_) => {
+                tracing::debug!("push_video: not yet connected, dropping frame");
+                return Ok(());
+            }
+            None => {
+                tracing::debug!("push_video: no video_mid yet, dropping frame");
+                return Ok(());
+            }
         };
         let pts_90k = frame.pts_ms * 90;
         let rtp_time = MediaTime::new(pts_90k, Frequency::NINETY_KHZ);
@@ -84,6 +117,7 @@ impl WebRtcSession {
             .find(|p| matches!(p.spec().codec, Codec::H264))
             .map(PayloadParams::pt)
             .ok_or_else(|| anyhow!("No H264 PT negotiated"))?;
+        tracing::debug!(pts_ms = frame.pts_ms, keyframe = frame.is_keyframe, "Sending video RTP");
         writer.write(pt, Instant::now(), rtp_time, frame.data.to_vec())
             .map_err(|e| anyhow!("Video write error: {:?}", e))
     }
@@ -119,20 +153,37 @@ impl WebRtcSession {
         Ok(())
     }
 
+    /// Resolve which local candidate address a packet from `source_ip` arrived on.
+    ///
+    /// Since the socket is bound to `0.0.0.0`, `local_addr()` returns `0.0.0.0:port`
+    /// which str0m doesn't recognise. We pick the registered candidate whose IP
+    /// is in the same address family and scope (loopback ↔ loopback, else LAN).
+    fn resolve_local_addr(&self, source_ip: std::net::IpAddr) -> std::net::SocketAddr {
+        let prefer_loopback = source_ip.is_loopback();
+        self.local_candidates
+            .iter()
+            .find(|a| a.ip().is_loopback() == prefer_loopback)
+            .or_else(|| self.local_candidates.first())
+            .copied()
+            .unwrap_or_else(|| self.socket.local_addr().unwrap())
+    }
+
     /// Drive the str0m I/O state machine once. Must be called in a tight loop.
     pub async fn drive(&mut self) -> Result<SessionState> {
         let now = Instant::now();
-        let local_addr = self.socket.local_addr()?;
 
         // Drain incoming UDP packets (non-blocking).
         let mut buf = [0u8; 2048];
         loop {
             match self.socket.recv_from(&mut buf) {
                 Ok((n, remote_addr)) => {
+                    // Map the wildcard-bound socket address to the matching real
+                    // local candidate IP so str0m can find the right candidate pair.
+                    let destination = self.resolve_local_addr(remote_addr.ip());
                     let recv = Receive {
                         proto: Protocol::Udp,
                         source: remote_addr,
-                        destination: local_addr,
+                        destination,
                         contents: buf[..n].try_into()
                             .map_err(|_| anyhow!("Datagram too small"))?,
                     };

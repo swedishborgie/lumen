@@ -182,7 +182,7 @@ impl Compositor {
             xdg_decoration_state, xdg_activation_state, primary_selection_state, popups,
             frame_buffer: vec![0u8; usize::try_from(width * height * 4).expect("frame buffer size fits usize")],
             gles_renderer, pixman_renderer, gbm_device: gbm_device_raw, offscreen_buffer,
-            is_capturing: false, width, height, target_fps, frame_tx,
+            is_capturing: true, width, height, target_fps, frame_tx,
             frame_counter: 0, clock: Clock::new(), current_cursor_icon: None,
             last_log_time: Instant::now(), encoded_frame_count: 0, start_time: Instant::now(),
             use_gpu,
@@ -237,6 +237,7 @@ impl Compositor {
         std::env::set_var("WAYLAND_DISPLAY", &socket_name);
         event_loop.handle()
             .insert_source(socket_source, |client_stream, _, state| {
+                tracing::info!("New Wayland client connected");
                 if let Err(e) = state.dh.insert_client(client_stream, Arc::new(ClientState::default())) {
                     tracing::error!("Failed to add Wayland client: {:?}", e);
                 }
@@ -294,6 +295,11 @@ impl Compositor {
         while !stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
             event_loop.dispatch(Some(Duration::from_millis(4)), &mut state)
                 .context("Event loop dispatch error")?;
+            state.space.refresh();
+            state.popups.cleanup();
+            if let Err(e) = state.dh.flush_clients() {
+                tracing::warn!("Wayland flush error: {e}");
+            }
         }
 
         tracing::info!("Compositor stopped.");

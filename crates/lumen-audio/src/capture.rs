@@ -84,7 +84,19 @@ impl AudioCapture {
             bail!("Invalid PulseAudio sample spec: rate={sample_rate} channels={channels}");
         }
 
-        let device_cstr = self.config.device_name.as_deref();
+        // Resolve device: use the configured name, or auto-detect the monitor
+        // of the default output sink so desktop application audio is captured
+        // rather than the microphone (the PA default input source).
+        let resolved_device: Option<String> = self.config.device_name.clone()
+            .or_else(default_monitor_source);
+        if let Some(ref name) = resolved_device {
+            tracing::info!("AudioCapture using source: {}", name);
+        } else {
+            tracing::warn!("AudioCapture: could not detect default monitor source; \
+                falling back to PulseAudio default input (likely microphone). \
+                Set LUMEN_AUDIO_DEVICE to a .monitor source for desktop audio.");
+        }
+        let device_cstr = resolved_device.as_deref();
         let pa = Simple::new(
             None,                    // server  — None = local
             "lumen",                 // application name
@@ -177,4 +189,25 @@ impl AudioCapture {
         tracing::info!("AudioCapture stopped");
         Ok(())
     }
+}
+
+/// Query PulseAudio/PipeWire for the default output sink and return its
+/// monitor source name (e.g. `"alsa_output.pci-0000_1f_04.analog-stereo.monitor"`).
+///
+/// This is the correct source for capturing desktop application audio rather
+/// than the microphone. Returns `None` if `pactl` is unavailable or fails.
+fn default_monitor_source() -> Option<String> {
+    let output = std::process::Command::new("pactl")
+        .arg("get-default-sink")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let sink = String::from_utf8(output.stdout).ok()?;
+    let sink = sink.trim();
+    if sink.is_empty() {
+        return None;
+    }
+    Some(format!("{sink}.monitor"))
 }

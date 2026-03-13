@@ -60,14 +60,21 @@ export class LumenUI {
         if (this.#statsTimer) { clearInterval(this.#statsTimer); this.#statsTimer = null; }
         stats.textContent  = 'No stats yet';
         video.srcObject    = null;
+        video.muted        = true;
         video.style.cursor = 'default';
       }
     });
 
-    this.#client.addEventListener('track', () => {
+    this.#client.addEventListener('track', (e) => {
       // Keep video element's srcObject in sync with the client's stream.
       if (video.srcObject !== this.#client.stream) {
         video.srcObject = this.#client.stream;
+      }
+      // Unmute when the audio track arrives. The video element starts muted to
+      // satisfy browser autoplay policy; by the time media flows the user has
+      // already interacted with the page (explicit Connect click or navigation).
+      if (e.detail.kind === 'audio') {
+        video.muted = false;
       }
     });
 

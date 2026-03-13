@@ -3,9 +3,10 @@ use bytes::Bytes;
 /// Configuration for the PulseAudio capture and Opus encoder.
 #[derive(Debug, Clone)]
 pub struct AudioConfig {
-    /// PulseAudio source name. `None` uses the system default (usually the
-    /// default microphone). For desktop audio capture pass a monitor source
-    /// such as `"alsa_output.pci-0000_1f_04.analog-stereo.monitor"`.
+    /// PulseAudio source name. `None` auto-detects the monitor of the default
+    /// output sink (i.e. captures desktop application audio). Override with an
+    /// explicit source such as `"alsa_output.pci-0000_1f_04.analog-stereo.monitor"`
+    /// or `"alsa_input.pci-0000_1f_04.analog-stereo"` for microphone capture.
     pub device_name: Option<String>,
     /// Sample rate in Hz (default: 48000).
     pub sample_rate: u32,

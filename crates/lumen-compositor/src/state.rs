@@ -88,6 +88,7 @@ pub struct AppState {
     pub pixman_renderer: Option<PixmanRenderer>,
     pub gbm_device: Option<RawGbmDevice<File>>,
     pub offscreen_buffer: Option<(BufferObject<()>, Dmabuf)>,
+    pub offscreen_modifier: u64,
     pub use_gpu: bool,
     pub frame_buffer: Vec<u8>,
 

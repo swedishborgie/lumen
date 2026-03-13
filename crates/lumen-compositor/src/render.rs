@@ -103,6 +103,7 @@ fn render_gles(
             let _ = state.frame_tx.send(CapturedFrame {
                 rgba_buffer: None,
                 dmabuf: Some(dmabuf_clone),
+                drm_modifier: state.offscreen_modifier,
                 width,
                 height,
                 pts_ms: now_ms,
@@ -217,6 +218,7 @@ fn render_pixman(
             let _ = state.frame_tx.send(CapturedFrame {
                 rgba_buffer: Some(rgba),
                 dmabuf: None,
+                drm_modifier: 0,
                 width,
                 height,
                 pts_ms: now_ms,

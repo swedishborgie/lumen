@@ -39,6 +39,8 @@ pub struct CapturedFrame {
     pub rgba_buffer: Option<Bytes>,
     /// DMA-BUF handle for zero-copy GPU→VA-API path.
     pub dmabuf: Option<Dmabuf>,
+    /// DRM format modifier for the DMA-BUF (valid when `dmabuf` is `Some`).
+    pub drm_modifier: u64,
     pub width: u32,
     pub height: u32,
     /// Presentation timestamp in milliseconds.

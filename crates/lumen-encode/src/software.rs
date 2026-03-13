@@ -27,7 +27,7 @@ pub struct SoftwareEncoder {
 }
 
 // x264_t is not Send by default (raw pointer), but we use it exclusively from
-// a single thread so this is safe.
+// a single thread, so this is safe.
 unsafe impl Send for SoftwareEncoder {}
 
 impl SoftwareEncoder {

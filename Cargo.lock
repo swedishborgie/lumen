@@ -1305,6 +1305,7 @@ dependencies = [
  "bytes",
  "ffmpeg-next",
  "ffmpeg-sys-next",
+ "libc",
  "lumen-compositor",
  "rayon",
  "thiserror 2.0.18",

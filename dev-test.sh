@@ -10,11 +10,25 @@ LUMEN_BIN="$SCRIPT_DIR/target/debug/lumen"
 echo "==> Building lumen..."
 cargo build --manifest-path "$SCRIPT_DIR/Cargo.toml"
 
+# ── Auto-detect iGPU render node ──────────────────────────────────────────────
+# Pass --dri-node automatically if the caller hasn't already provided one and
+# LUMEN_DRI_NODE isn't set in the environment.
+DRI_ARGS=()
+if [[ -z "${LUMEN_DRI_NODE:-}" ]] && [[ ! " $* " =~ " --dri-node " ]]; then
+    RENDER_NODE="$(ls /dev/dri/renderD* 2>/dev/null | head -1)"
+    if [[ -n "$RENDER_NODE" ]]; then
+        echo "==> Auto-detected render node: $RENDER_NODE (use --dri-node to override)"
+        DRI_ARGS=(--dri-node "$RENDER_NODE")
+    else
+        echo "==> No /dev/dri/renderD* found, falling back to CPU (Pixman) renderer"
+    fi
+fi
+
 # ── Start lumen ────────────────────────────────────────────────────────────────
 LOG_FILE="$(mktemp /tmp/lumen-XXXXXX.log)"
 echo "==> Starting lumen (log: $LOG_FILE)"
-echo "    Extra args: $*"
-"$LUMEN_BIN" "$@" >"$LOG_FILE" 2>&1 &
+echo "    Extra args: ${DRI_ARGS[*]} $*"
+"$LUMEN_BIN" "${DRI_ARGS[@]}" "$@" >"$LOG_FILE" 2>&1 &
 LUMEN_PID=$!
 
 # Ensure lumen is killed when this script exits

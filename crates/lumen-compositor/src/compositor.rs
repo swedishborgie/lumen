@@ -120,6 +120,7 @@ impl Compositor {
         let mut gles_renderer: Option<GlesRenderer> = None;
         let mut pixman_renderer: Option<PixmanRenderer> = None;
         let mut offscreen_buffer = None;
+        let mut offscreen_modifier: u64 = 0;
         let mut gbm_device_raw = None;
         let mut dmabuf_state = DmabufState::new();
         let mut dmabuf_global = None;
@@ -148,6 +149,7 @@ impl Compositor {
             let bo = gbm_alloc
                 .create_buffer_object(width.cast_unsigned(), height.cast_unsigned(), GbmFormat::Argb8888, BufferObjectFlags::RENDERING)
                 .context("Failed to create GBM BO")?;
+            offscreen_modifier = u64::from(bo.modifier());
             let dmabuf = crate::state::create_dmabuf_from_bo(&bo);
             offscreen_buffer = Some((bo, dmabuf));
             gbm_device_raw = Some(gbm_alloc);
@@ -197,6 +199,7 @@ impl Compositor {
             xdg_decoration_state, xdg_activation_state, primary_selection_state, popups,
             frame_buffer: vec![0u8; usize::try_from(width * height * 4).expect("frame buffer size fits usize")],
             gles_renderer, pixman_renderer, gbm_device: gbm_device_raw, offscreen_buffer,
+            offscreen_modifier,
             is_capturing: true, width, height, target_fps, frame_tx, cursor_tx,
             frame_counter: 0, clock: Clock::new(), current_cursor_icon: None,
             last_log_time: Instant::now(), encoded_frame_count: 0, start_time: Instant::now(),

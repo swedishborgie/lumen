@@ -44,7 +44,7 @@ use smithay::{
 use tokio::sync::broadcast;
 
 use crate::input::InputEvent;
-use crate::types::CapturedFrame;
+use crate::types::{CapturedFrame, CursorEvent};
 
 /// Internal commands sent into the calloop event loop.
 pub enum CompositorCommand {
@@ -96,6 +96,7 @@ pub struct AppState {
     pub height: i32,
     pub target_fps: f64,
     pub frame_tx: broadcast::Sender<CapturedFrame>,
+    pub cursor_tx: broadcast::Sender<CursorEvent>,
     pub frame_counter: u64,
     pub clock: Clock<Monotonic>,
 

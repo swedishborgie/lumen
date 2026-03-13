@@ -1,6 +1,7 @@
 use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
 
 use anyhow::Result;
+use base64::Engine as _;
 use clap::Parser;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -40,7 +41,7 @@ async fn main() -> Result<()> {
                 .add_directive("lumen_compositor=info".parse()?)
                 .add_directive("lumen_audio=info".parse()?)
                 .add_directive("lumen_encode=info".parse()?)
-                .add_directive("lumen_webrtc=debug".parse()?)
+                .add_directive("lumen_webrtc=info".parse()?)
                 .add_directive("lumen_web=info".parse()?),
         )
         .init();
@@ -57,6 +58,7 @@ async fn main() -> Result<()> {
         ..Default::default()
     })?;
     let frame_rx = compositor.frame_receiver();
+    let cursor_rx = compositor.cursor_receiver();
     let compositor_input_tx = compositor.input_sender();
 
     // ── Audio ─────────────────────────────────────────────────────────────────
@@ -212,6 +214,23 @@ async fn main() -> Result<()> {
         });
     }
 
+    // ── Spawn: cursor fan-out task ────────────────────────────────────────────
+    {
+        let session_manager = session_manager.clone();
+        let mut cursor_rx = cursor_rx;
+        tokio::spawn(async move {
+            loop {
+                let ev = match cursor_rx.recv().await {
+                    Ok(e) => e,
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(_) => break,
+                };
+                let json = cursor_event_to_json(&ev);
+                session_manager.broadcast_dc_message(json).await;
+            }
+        });
+    }
+
     // ── Web server ────────────────────────────────────────────────────────────
     lumen_web::WebServer::new(lumen_web::WebServerConfig {
         bind_addr: args.bind_addr,
@@ -222,4 +241,19 @@ async fn main() -> Result<()> {
     })
     .run()
     .await
+}
+
+/// Encode a `CursorEvent` as a JSON byte string suitable for the data channel.
+fn cursor_event_to_json(ev: &lumen_compositor::CursorEvent) -> Vec<u8> {
+    use lumen_compositor::CursorEvent;
+    match ev {
+        CursorEvent::Default => br#"{"type":"cursor_update","kind":"default"}"#.to_vec(),
+        CursorEvent::Hidden  => br#"{"type":"cursor_update","kind":"hidden"}"#.to_vec(),
+        CursorEvent::Image { width, height, hotspot_x, hotspot_y, rgba } => {
+            let data = base64::engine::general_purpose::STANDARD.encode(rgba);
+            format!(
+                r#"{{"type":"cursor_update","kind":"image","w":{width},"h":{height},"hotspot_x":{hotspot_x},"hotspot_y":{hotspot_y},"data":"{data}"}}"#
+            ).into_bytes()
+        }
+    }
 }

@@ -137,6 +137,71 @@ impl SeatHandler for AppState {
     fn seat_state(&mut self) -> &mut SeatState<AppState> { &mut self.seat_state }
     fn focus_changed(&mut self, _seat: &Seat<Self>, _focused: Option<&WlSurface>) {}
     fn cursor_image(&mut self, _seat: &Seat<Self>, image: CursorImageStatus) {
+        use smithay::backend::renderer::utils::RendererSurfaceStateUserData;
+        use smithay::input::pointer::CursorImageSurfaceData;
+        use smithay::wayland::compositor::with_states;
+        use smithay::wayland::shm::with_buffer_contents;
+        use bytes::Bytes;
+        use crate::types::CursorEvent;
+
+        let event = match &image {
+            // Named cursor (including the default arrow) → let the browser show its own cursor.
+            CursorImageStatus::Named(_) => CursorEvent::Default,
+            CursorImageStatus::Hidden => CursorEvent::Hidden,
+            CursorImageStatus::Surface(surface) => {
+                // Read hotspot from CursorImageSurfaceData (type alias = Mutex<CursorImageAttributes>).
+                let (hotspot_x, hotspot_y) = with_states(surface, |states| {
+                    states.data_map
+                        .get::<CursorImageSurfaceData>()
+                        .and_then(|m| m.lock().ok())
+                        .map(|attrs| (attrs.hotspot.x, attrs.hotspot.y))
+                        .unwrap_or((0, 0))
+                });
+
+                // Read RGBA pixels from the committed SHM buffer via the renderer surface state.
+                let pixel_result = with_states(surface, |states| {
+                    let state = states.data_map.get::<RendererSurfaceStateUserData>()?;
+                    let locked = state.lock().ok()?;
+                    let wl_buffer = locked.buffer()?.clone();
+                    drop(locked);
+
+                    // SAFETY: ptr is valid for `len` bytes for the duration of this closure.
+                    let result = with_buffer_contents(&wl_buffer, |ptr, _len, spec| {
+                        let width  = spec.width as u32;
+                        let height = spec.height as u32;
+                        let stride = spec.stride as usize;
+                        let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+                        for row in 0..height as usize {
+                            for col in 0..width as usize {
+                                // WL_SHM_FORMAT_ARGB8888 on LE: stored as [B, G, R, A]
+                                let px = unsafe { ptr.add(row * stride + col * 4) };
+                                unsafe {
+                                    rgba.push(*px.add(2)); // R
+                                    rgba.push(*px.add(1)); // G
+                                    rgba.push(*px       ); // B
+                                    rgba.push(*px.add(3)); // A
+                                }
+                            }
+                        }
+                        (width, height, rgba)
+                    });
+                    result.ok()
+                });
+
+                match pixel_result {
+                    Some((width, height, rgba)) => CursorEvent::Image {
+                        width,
+                        height,
+                        hotspot_x,
+                        hotspot_y,
+                        rgba: Bytes::from(rgba),
+                    },
+                    None => CursorEvent::Default,
+                }
+            }
+        };
+
+        let _ = self.cursor_tx.send(event);
         self.current_cursor_icon = Some(image);
     }
 }

@@ -44,3 +44,21 @@ pub struct CapturedFrame {
     /// Presentation timestamp in milliseconds.
     pub pts_ms: u64,
 }
+
+/// A cursor update event emitted by the compositor whenever the pointer image changes.
+#[derive(Debug, Clone)]
+pub enum CursorEvent {
+    /// The compositor default cursor should be shown.
+    Default,
+    /// The cursor should be hidden.
+    Hidden,
+    /// A custom cursor image from a Wayland client surface.
+    Image {
+        width: u32,
+        height: u32,
+        hotspot_x: i32,
+        hotspot_y: i32,
+        /// Raw RGBA8888 pixel data, row-major.
+        rgba: Bytes,
+    },
+}

@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::net::UdpSocket;
 use std::sync::Arc;
 use std::time::Instant;
@@ -8,6 +9,7 @@ use lumen_compositor::InputEvent;
 use lumen_encode::EncodedFrame;
 use str0m::{
     change::SdpOffer,
+    channel::ChannelId,
     format::{Codec, PayloadParams},
     media::{Frequency, MediaKind, MediaTime, Mid},
     net::{Protocol, Receive},
@@ -27,6 +29,10 @@ pub struct WebRtcSession {
     /// Audio track mid; populated on first `Event::MediaAdded` for audio.
     audio_mid: Option<Mid>,
     input_events: Vec<InputEvent>,
+    /// Outbound data channel messages queued for sending.
+    pending_dc_out: VecDeque<Vec<u8>>,
+    /// The data channel ID, populated when the browser opens the channel.
+    dc_channel_id: Option<ChannelId>,
     connected: bool,
     /// Whether a keyframe was requested by the peer since last drain.
     pub keyframe_requested: bool,
@@ -89,6 +95,8 @@ impl WebRtcSession {
                 video_mid: None,
                 audio_mid: None,
                 input_events: Vec::new(),
+                pending_dc_out: VecDeque::new(),
+                dc_channel_id: None,
                 connected: false,
                 keyframe_requested: false,
             },
@@ -143,6 +151,11 @@ impl WebRtcSession {
     /// Drain any [`InputEvent`]s received from the browser via the data channel.
     pub fn drain_input_events(&mut self) -> Vec<InputEvent> {
         std::mem::take(&mut self.input_events)
+    }
+
+    /// Queue a message to be sent to the browser via the data channel.
+    pub fn push_dc_message(&mut self, data: Vec<u8>) {
+        self.pending_dc_out.push_back(data);
     }
 
     /// Add a remote ICE candidate received over the signaling channel.
@@ -207,6 +220,7 @@ impl WebRtcSession {
                 }
                 Ok(Output::Event(Event::ChannelOpen(cid, label))) => {
                     tracing::info!("Data channel opened: id={:?} label={:?}", cid, label);
+                    self.dc_channel_id = Some(cid);
                 }
                 Ok(Output::Event(Event::MediaAdded(added))) => {
                     match added.kind {
@@ -243,6 +257,22 @@ impl WebRtcSession {
                 Ok(Output::Timeout(_)) => break,
                 Err(e) => {
                     tracing::debug!("str0m error: {:?}", e);
+                    break;
+                }
+            }
+        }
+
+        // Send any queued outbound data channel messages.
+        if let Some(cid) = self.dc_channel_id {
+            while let Some(data) = self.pending_dc_out.pop_front() {
+                if let Some(mut ch) = self.rtc.channel(cid) {
+                    if ch.write(false, &data).is_err() {
+                        // Channel not ready yet; re-queue and stop for this drive cycle.
+                        self.pending_dc_out.push_front(data);
+                        break;
+                    }
+                } else {
+                    self.pending_dc_out.push_front(data);
                     break;
                 }
             }

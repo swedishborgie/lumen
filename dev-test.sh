@@ -71,7 +71,7 @@ fi
 # ── Launch terminal emulator ───────────────────────────────────────────────────
 # Prefer foot (minimal, reliable Wayland-native), then kitty, then ghostty.
 TERM_CMD=""
-for candidate in foot kitty ghostty; do
+for candidate in ghostty foot kitty; do
     if command -v "$candidate" &>/dev/null; then
         TERM_CMD="$candidate"
         break
@@ -92,7 +92,6 @@ echo ""
 env -u DISPLAY \
     WAYLAND_DISPLAY="$WAYLAND_SOCK" \
     XDG_RUNTIME_DIR="$RUNTIME_DIR" \
-    WAYLAND_DEBUG=client \
     "$TERM_CMD" >"$TERM_LOG" 2>&1 &
 TERM_PID=$!
 

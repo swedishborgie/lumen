@@ -57,4 +57,12 @@ impl SessionManager {
     pub async fn all_sessions(&self) -> Vec<Arc<Mutex<WebRtcSession>>> {
         self.sessions.lock().await.values().cloned().collect()
     }
+
+    /// Send a data channel message to every connected session.
+    pub async fn broadcast_dc_message(&self, data: Vec<u8>) {
+        let sessions = self.sessions.lock().await;
+        for session in sessions.values() {
+            session.lock().await.push_dc_message(data.clone());
+        }
+    }
 }

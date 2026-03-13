@@ -57,7 +57,7 @@ use tokio::sync::broadcast;
 use crate::input::InputEvent;
 use crate::render::render_and_capture;
 use crate::state::{AppState, ClientState, CompositorCommand};
-use crate::types::{CapturedFrame, CompositorConfig};
+use crate::types::{CapturedFrame, CompositorConfig, CursorEvent};
 
 /// A cheaply-cloneable handle for sending input events into the compositor.
 ///
@@ -76,6 +76,7 @@ impl InputSender {
 pub struct Compositor {
     config: CompositorConfig,
     frame_tx: broadcast::Sender<CapturedFrame>,
+    cursor_tx: broadcast::Sender<CursorEvent>,
     cmd_tx: smithay::reexports::calloop::channel::Sender<CompositorCommand>,
     cmd_rx: Option<smithay::reexports::calloop::channel::Channel<CompositorCommand>>,
 }
@@ -83,12 +84,14 @@ pub struct Compositor {
 impl Compositor {
     pub fn new(config: CompositorConfig) -> Result<Self> {
         let (frame_tx, _) = broadcast::channel(8);
+        let (cursor_tx, _) = broadcast::channel(16);
         let (cmd_tx, cmd_rx) = smithay::reexports::calloop::channel::channel();
-        Ok(Self { config, frame_tx, cmd_tx, cmd_rx: Some(cmd_rx) })
+        Ok(Self { config, frame_tx, cursor_tx, cmd_tx, cmd_rx: Some(cmd_rx) })
     }
 
     pub fn input_sender(&self) -> InputSender { InputSender(self.cmd_tx.clone()) }
     pub fn frame_receiver(&self) -> broadcast::Receiver<CapturedFrame> { self.frame_tx.subscribe() }
+    pub fn cursor_receiver(&self) -> broadcast::Receiver<CursorEvent> { self.cursor_tx.subscribe() }
     pub fn stop(&self) { let _ = self.cmd_tx.send(CompositorCommand::Stop); }
 
     /// Blocking compositor event loop. Call from a dedicated `std::thread`.
@@ -102,6 +105,7 @@ impl Compositor {
         let target_fps = self.config.target_fps;
         let dri_node_path = self.config.render_node.clone();
         let frame_tx = self.frame_tx.clone();
+        let cursor_tx = self.cursor_tx.clone();
 
         let mut event_loop = EventLoop::<AppState>::try_new()
             .context("Failed to create calloop EventLoop")?;
@@ -193,7 +197,7 @@ impl Compositor {
             xdg_decoration_state, xdg_activation_state, primary_selection_state, popups,
             frame_buffer: vec![0u8; usize::try_from(width * height * 4).expect("frame buffer size fits usize")],
             gles_renderer, pixman_renderer, gbm_device: gbm_device_raw, offscreen_buffer,
-            is_capturing: true, width, height, target_fps, frame_tx,
+            is_capturing: true, width, height, target_fps, frame_tx, cursor_tx,
             frame_counter: 0, clock: Clock::new(), current_cursor_icon: None,
             last_log_time: Instant::now(), encoded_frame_count: 0, start_time: Instant::now(),
             use_gpu,

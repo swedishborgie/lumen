@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::sync::Arc;
+use std::sync::{mpsc::SyncSender, Arc};
 use std::time::Instant;
 
 use gbm::{BufferObject, Device as RawGbmDevice};
@@ -120,6 +120,10 @@ pub struct AppState {
     /// Last clipboard text successfully broadcast to the frontend.
     /// Shared with background reader threads to deduplicate and break feedback loops.
     pub clipboard_sent_text: Arc<std::sync::Mutex<Option<String>>>,
+    /// Sender to the clipboard bridge task (if `--inner-display` is configured).
+    /// `apply_clipboard_write` pushes text here so the bridge can forward it to the
+    /// inner compositor via `zwlr_data_control_manager_v1`.
+    pub bridge_write_tx: Option<SyncSender<String>>,
 
     pub last_log_time: Instant,
     pub encoded_frame_count: u32,

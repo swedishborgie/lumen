@@ -19,6 +19,10 @@
       <button id="btn-disconnect" disabled>Disconnect</button>
     </div>
     <div id="status">Idle</div>
+    <div id="clipboard-section">
+      <div class="tray-label">Clipboard</div>
+      <textarea id="clipboard-input" placeholder="Paste or type here to send to compositor. Updated automatically when compositor clipboard changes." rows="5" spellcheck="false"></textarea>
+    </div>
     <div id="stats">No stats yet</div>
   </div>
 
@@ -28,11 +32,12 @@
 
     const client = new LumenClient();
     new LumenUI(client, {
-      video:         document.getElementById('video'),
-      stats:         document.getElementById('stats'),
-      btnConnect:    document.getElementById('btn-connect'),
-      btnDisconnect: document.getElementById('btn-disconnect'),
-      statusEl:      document.getElementById('status'),
+      video:          document.getElementById('video'),
+      stats:          document.getElementById('stats'),
+      btnConnect:     document.getElementById('btn-connect'),
+      btnDisconnect:  document.getElementById('btn-disconnect'),
+      statusEl:       document.getElementById('status'),
+      clipboardInput: document.getElementById('clipboard-input'),
     });
 
     // Auto-connect on page load.

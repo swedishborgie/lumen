@@ -25,7 +25,8 @@ export class LumenUI {
    *           stats: HTMLElement,
    *           btnConnect: HTMLButtonElement,
    *           btnDisconnect: HTMLButtonElement,
-   *           statusEl: HTMLElement }} elements
+   *           statusEl: HTMLElement,
+   *           clipboardInput: HTMLTextAreaElement }} elements
    */
   constructor(client, elements) {
     this.#client = client;
@@ -34,6 +35,7 @@ export class LumenUI {
     this.#bindClientEvents();
     this.#bindInputEvents();
     this.#bindControlEvents();
+    this.#bindClipboardPanel();
     this.#bindResizeObserver();
   }
 
@@ -134,16 +136,6 @@ export class LumenUI {
       e.preventDefault();
       this.#client.sendInput({ type: 'pointer_axis', x: e.deltaX / 20, y: e.deltaY / 20 });
     }, { passive: false });
-
-    // Sync browser clipboard to compositor when the user pastes into the video element.
-    // The paste event fires synchronously with clipboard data available, before the
-    // Ctrl+V key events reach the compositor.
-    video.addEventListener('paste', (e) => {
-      const text = e.clipboardData?.getData('text/plain');
-      console.log('[lumen] paste event, text length=%d, preview=%s',
-        text?.length ?? 0, JSON.stringify(text?.slice(0, 80) ?? ''));
-      if (text) this.#client.sendClipboardWrite(text);
-    });
   }
 
   // ── control button bindings ──────────────────────────────────────────────────
@@ -152,6 +144,28 @@ export class LumenUI {
     const { btnConnect, btnDisconnect } = this.#els;
     btnConnect.addEventListener('click',    () => this.#client.connect());
     btnDisconnect.addEventListener('click', () => this.#client.disconnect());
+  }
+
+  // ── clipboard panel (browser → compositor) ───────────────────────────────────
+
+  #clipboardDebounceTimer = null;
+
+  #bindClipboardPanel() {
+    const { clipboardInput } = this.#els;
+
+    // Auto-send 300 ms after the user stops typing or immediately after paste.
+    // Programmatic updates to .value (from #applyClipboard) do not fire 'input',
+    // so there is no echo risk.
+    clipboardInput.addEventListener('input', () => {
+      clearTimeout(this.#clipboardDebounceTimer);
+      this.#clipboardDebounceTimer = setTimeout(() => {
+        const text = clipboardInput.value;
+        if (!text) return;
+        console.log('[lumen] sending clipboard to compositor, length=%d, preview=%s',
+          text.length, JSON.stringify(text.slice(0, 80)));
+        this.#client.sendClipboardWrite(text);
+      }, 300);
+    });
   }
 
   // ── stats display ────────────────────────────────────────────────────────────
@@ -236,16 +250,15 @@ export class LumenUI {
 
   /**
    * Apply a clipboard_update message from the compositor.
-   * Writes the text to the browser's clipboard so it is immediately available
-   * for pasting outside the remote session.
+   * Populates the clipboard panel textarea so the user can see and copy the text.
+   * Note: setting .value programmatically does not fire 'input', so this will
+   * not echo back to the compositor.
    */
   #applyClipboard(msg) {
     if (typeof msg.text !== 'string') return;
     console.log('[lumen] clipboard_update received, length=%d, preview=%s',
       msg.text.length, JSON.stringify(msg.text.slice(0, 80)));
-    navigator.clipboard.writeText(msg.text)
-      .then(() => console.log('[lumen] navigator.clipboard.writeText succeeded'))
-      .catch((err) => console.warn('[lumen] navigator.clipboard.writeText failed:', err));
+    this.#els.clipboardInput.value = msg.text;
   }
 
   // ── coordinate mapping ────────────────────────────────────────────────────────

@@ -24,11 +24,33 @@ if [[ -z "${LUMEN_DRI_NODE:-}" ]] && [[ ! " $* " =~ " --dri-node " ]]; then
     fi
 fi
 
+# ── Auto-detect client and determine if clipboard bridge is needed ─────────────
+# Do this before starting lumen so we can pass --inner-display at launch time.
+# labwc is preferred: wlroots-based, supports zwlr_data_control_manager_v1 for
+# clipboard bridging, runs borderless in nested mode (no window decorations),
+# and auto-detects the Wayland backend from WAYLAND_DISPLAY.
+INNER_DISPLAY_ARGS=()
+TERM_CMD=""
+for candidate in labwc weston foot kitty ghostty; do
+    if command -v "$candidate" &>/dev/null; then
+        TERM_CMD="$candidate"
+        break
+    fi
+done
+if [[ "$TERM_CMD" == "labwc" || "$TERM_CMD" == "weston" ]]; then
+    # Use auto-discovery: the bridge scans XDG_RUNTIME_DIR for a Wayland socket
+    # that advertises zwlr_data_control_manager_v1, so we don't need to predict
+    # the socket name labwc will pick.
+    INNER_DISPLAY_ARGS=(--inner-display auto)
+    echo "==> $TERM_CMD detected: clipboard bridge will auto-discover inner socket"
+fi
+
 # ── Start lumen ────────────────────────────────────────────────────────────────
+
 LOG_FILE="$(mktemp /tmp/lumen-XXXXXX.log)"
 echo "==> Starting lumen (log: $LOG_FILE)"
-echo "    Extra args: ${DRI_ARGS[*]} $*"
-"$LUMEN_BIN" "${DRI_ARGS[@]}" "$@" >"$LOG_FILE" 2>&1 &
+echo "    Extra args: ${DRI_ARGS[*]} ${INNER_DISPLAY_ARGS[*]} $*"
+"$LUMEN_BIN" "${DRI_ARGS[@]}" "${INNER_DISPLAY_ARGS[@]}" "$@" >"$LOG_FILE" 2>&1 &
 LUMEN_PID=$!
 
 # Ensure lumen is killed when this script exits
@@ -83,16 +105,9 @@ else
 fi
 
 # ── Launch client ─────────────────────────────────────────────────────────────
-# Prefer weston (nested desktop), then foot, kitty, ghostty as fallback terminals.
-TERM_CMD=""
-for candidate in weston foot kitty ghostty; do
-    if command -v "$candidate" &>/dev/null; then
-        TERM_CMD="$candidate"
-        break
-    fi
-done
+# TERM_CMD was already detected above (before lumen start).
 if [[ -z "$TERM_CMD" ]]; then
-    echo "ERROR: no supported client found (weston / foot / kitty / ghostty)"
+    echo "ERROR: no supported client found (labwc / weston / foot / kitty / ghostty)"
     exit 1
 fi
 
@@ -101,7 +116,9 @@ echo "==> Launching $TERM_CMD on WAYLAND_DISPLAY=$WAYLAND_SOCK  (log: $TERM_LOG)
 echo "    Web UI at: http://localhost:8080  (or --bind to override)"
 echo ""
 
-# Build launch args (weston needs --backend=wayland for nested mode)
+# Build launch args per compositor:
+# - labwc: auto-detects nested mode from WAYLAND_DISPLAY; no extra args needed.
+# - weston: requires --backend=wayland for nested mode.
 TERM_ARGS=()
 if [[ "$TERM_CMD" == "weston" ]]; then
     TERM_ARGS=(--backend=wayland)

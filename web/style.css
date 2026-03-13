@@ -78,6 +78,21 @@ video {
   font: 11px/1.5 monospace; white-space: pre;
   overflow-x: auto;
 }
+#clipboard-section { display: flex; flex-direction: column; gap: 8px; }
+.tray-label { font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: 0.05em; }
+#clipboard-input {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  color: #eee;
+  font: 13px/1.5 monospace;
+  padding: 8px;
+  resize: vertical;
+  outline: none;
+}
+#clipboard-input:focus { border-color: rgba(255, 255, 255, 0.35); }
+#clipboard-input::placeholder { color: #555; }
 #controls { display: flex; flex-direction: column; gap: 10px; }
 button { padding: 10px; border: none; border-radius: 4px; background: #444; color: #eee; cursor: pointer; font-size: 14px; width: 100%; }
 button:hover { background: #555; }

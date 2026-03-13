@@ -147,12 +147,14 @@ flowchart LR
 | `xdg_shell` | Toplevel windows and popups |
 | `xdg_output` | Output geometry reporting |
 | `wlr_layer_shell` | Layer-surface (panels, overlays) |
-| `wl_data_device` | Clipboard (copy/paste) |
+| `wl_data_device` | Clipboard (copy/paste) for running Wayland clients |
+| `wlr_data_control` | Programmatic clipboard read/write (used by the browser clipboard bridge) |
 | `zwp_linux_dmabuf` | DMA-BUF buffer import/export |
 | `xdg_decoration` | Server-side window decorations |
 
 ## Design Notes
 
+- **Clipboard bridge**: The `ClipboardBridge` (`clipboard_bridge.rs`) connects to an outer Wayland compositor as a client and uses `zwlr_data_control_manager_v1` to read and write the clipboard without user interaction. This is how the compositor detects clipboard changes to broadcast as `ClipboardEvent`, and how `clipboard_write` input events set the Wayland selection so remote applications can paste. A deduplication guard prevents writes made by the bridge from echoing back as new `ClipboardEvent` broadcasts.
 - **Dedicated OS thread**: The compositor runs its calloop event loop on its own thread, isolated from the Tokio async runtime. This avoids blocking the async runtime with potentially long rendering operations.
 - **Broadcast channels**: `CapturedFrame`, `CursorEvent`, and `ClipboardEvent` are published on `tokio::broadcast` channels so multiple consumers (encoder, statistics, etc.) can subscribe without coordination.
 - **calloop channel bridge**: The async world sends `InputEvent`s to the compositor via a `calloop` channel, which integrates cleanly with the compositor's event loop without polling.

@@ -16,8 +16,9 @@ smithay = { git = "https://github.com/Smithay/smithay", default-features = false
     "wayland_frontend",
 ] }
 wayland-server = "0.31"
+wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["server"] }
-wayland-protocols-wlr = { version = "0.3", features = ["server"] }
+wayland-protocols-wlr = { version = "0.3", features = ["server", "client"] }
 calloop = { version = "0.14", features = ["executor"] }
 calloop-wayland-source = "0.4"
 rustix = { version = "1", features = ["pipe"] }

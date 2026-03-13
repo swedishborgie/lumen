@@ -220,6 +220,7 @@ impl Compositor {
             frame_counter: 0, clock: Clock::new(), current_cursor_icon: None,
             clipboard_contents: None, pending_clipboard_mime: None,
             clipboard_sent_text: Arc::new(std::sync::Mutex::new(None)),
+            bridge_write_tx: None,
             last_log_time: Instant::now(), encoded_frame_count: 0, start_time: Instant::now(),
             use_gpu,
         };
@@ -305,6 +306,29 @@ impl Compositor {
                 }
             })
             .expect("Failed to insert command channel source");
+
+        // -----------------------------------------------------------------------
+        // Clipboard bridge (optional, requires --inner-display)
+        // -----------------------------------------------------------------------
+        if let Some(inner_display) = self.config.inner_display.clone() {
+            let (bridge_write_tx, bridge_write_rx) = std::sync::mpsc::sync_channel::<String>(8);
+            state.bridge_write_tx = Some(bridge_write_tx);
+            let clipboard_tx = self.clipboard_tx.clone();
+            let clipboard_sent_text = Arc::clone(&state.clipboard_sent_text);
+            // The compositor runs on a bare std::thread (no Tokio runtime), so we
+            // spawn a plain OS thread rather than tokio::task::spawn_blocking.
+            std::thread::Builder::new()
+                .name("clipboard-bridge".into())
+                .spawn(move || {
+                    crate::clipboard_bridge::run(
+                        inner_display,
+                        clipboard_tx,
+                        clipboard_sent_text,
+                        bridge_write_rx,
+                    );
+                })
+                .expect("Failed to spawn clipboard bridge thread");
+        }
 
         // -----------------------------------------------------------------------
         // Frame timer
@@ -439,13 +463,15 @@ pub(crate) fn apply_resize(state: &mut AppState, w: u32, h: u32) {
 ///
 /// Stores the text in `AppState::clipboard_contents` (sent via `SelectionHandler::send_selection`)
 /// and registers the compositor as the active clipboard owner via `set_data_device_selection`.
+/// If a clipboard bridge is active, also forwards the text to the inner compositor.
 pub(crate) fn apply_clipboard_write(state: &mut AppState, text: String) {
+    tracing::debug!("apply_clipboard_write: {} bytes", text.len());
     use smithay::wayland::selection::data_device::set_data_device_selection;
     // Record the text before setting the selection so that if the Wayland client
     // echoes the selection back (common when the browser runs inside lumen), the
     // deduplication in check_pending_clipboard_read will suppress the echo.
     *state.clipboard_sent_text.lock().unwrap() = Some(text.clone());
-    state.clipboard_contents = Some(text);
+    state.clipboard_contents = Some(text.clone());
     set_data_device_selection::<AppState>(
         &state.dh,
         &state.seat,
@@ -456,6 +482,10 @@ pub(crate) fn apply_clipboard_write(state: &mut AppState, text: String) {
         ],
         (),
     );
+    // Forward to the inner compositor so apps running inside it can paste.
+    if let Some(ref tx) = state.bridge_write_tx {
+        let _ = tx.try_send(text);
+    }
 }
 
 /// If a clipboard read is pending (set by `SelectionHandler::new_selection`), request the data

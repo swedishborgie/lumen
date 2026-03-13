@@ -267,6 +267,7 @@ impl SelectionHandler for AppState {
         use crate::types::ClipboardEvent;
 
         if ty != SelectionTarget::Clipboard {
+            tracing::trace!("new_selection: ignoring non-clipboard target {:?}", ty);
             return;
         }
 
@@ -305,11 +306,17 @@ impl SelectionHandler for AppState {
     ) {
         use smithay::wayland::selection::SelectionTarget;
 
+        tracing::debug!("send_selection: ty={:?} mime_type={:?}", ty, mime_type);
+
         if ty != SelectionTarget::Clipboard {
+            tracing::trace!("send_selection: ignoring non-clipboard target {:?}", ty);
             return;
         }
 
-        let Some(ref text) = self.clipboard_contents else { return };
+        let Some(ref text) = self.clipboard_contents else {
+            tracing::debug!("send_selection: no clipboard contents, ignoring request");
+            return;
+        };
 
         // Determine the encoding for the requested MIME type.
         let data = if mime_type == "text/plain;charset=utf-8"
@@ -320,8 +327,11 @@ impl SelectionHandler for AppState {
         {
             text.as_bytes().to_vec()
         } else {
+            tracing::debug!("send_selection: unsupported mime_type={:?}, ignoring", mime_type);
             return;
         };
+
+        tracing::debug!("send_selection: serving {} bytes for mime_type={:?}", data.len(), mime_type);
 
         // Write in a background thread so we don't block the compositor event loop.
         std::thread::spawn(move || {

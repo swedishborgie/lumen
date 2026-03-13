@@ -16,6 +16,10 @@ pub struct CompositorConfig {
     /// DRM render node path (e.g. `/dev/dri/renderD128`).
     /// `None` falls back to the software (Pixman) renderer.
     pub render_node: Option<PathBuf>,
+    /// Wayland socket name of a nested inner compositor (e.g. `"wayland-inner"`).
+    /// When set, a clipboard bridge task connects to that socket using
+    /// `zwlr_data_control_manager_v1` to sync clipboard bidirectionally.
+    pub inner_display: Option<String>,
 }
 
 impl Default for CompositorConfig {
@@ -26,6 +30,7 @@ impl Default for CompositorConfig {
             scale: 1.0,
             target_fps: 30.0,
             render_node: None,
+            inner_display: None,
         }
     }
 }

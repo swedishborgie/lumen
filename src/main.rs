@@ -26,6 +26,11 @@ struct Args {
     audio_device: Option<String>,
     #[arg(long, env = "LUMEN_DRI_NODE")]
     dri_node: Option<PathBuf>,
+    /// Wayland socket name of a nested inner compositor whose clipboard should be bridged
+    /// (e.g. `wayland-inner`). When set, lumen connects as a client and syncs clipboard
+    /// bidirectionally via `zwlr_data_control_manager_v1`.
+    #[arg(long, env = "LUMEN_INNER_DISPLAY")]
+    inner_display: Option<String>,
     #[arg(long, env = "LUMEN_ICE_SERVERS", default_value = "stun:stun.l.google.com:19302")]
     ice_servers: String,
     #[arg(long, env = "LUMEN_STATIC_DIR", default_value = "./web")]
@@ -34,7 +39,8 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // If RUST_LOG is set, use it as-is. Otherwise fall back to per-crate info defaults.
+    // If RUST_LOG is set, use it as-is. Otherwise fall back to per-crate info defaults with
+    // targeted Smithay selection/keyboard debug enabled for clipboard troubleshooting.
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| {
             tracing_subscriber::EnvFilter::new("")
@@ -58,6 +64,7 @@ async fn main() -> Result<()> {
         height: args.height,
         target_fps: args.fps,
         render_node: args.dri_node.clone(),
+        inner_display: args.inner_display.clone(),
         ..Default::default()
     })?;
     let frame_rx = compositor.frame_receiver();
@@ -174,7 +181,7 @@ async fn main() -> Result<()> {
                     Ok(Some(ef)) => {
                         encoded_count += 1;
                         if encoded_count == 1 || encoded_count % 150 == 0 {
-                            tracing::info!(encoded_count, keyframe = ef.is_keyframe,
+                            tracing::debug!(encoded_count, keyframe = ef.is_keyframe,
                                 bytes = ef.data.len(), "Encoded frame");
                         }
                         let _ = encoded_tx.send(Arc::new(ef));

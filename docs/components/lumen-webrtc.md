@@ -153,6 +153,7 @@ The data channel (named `"input"`) carries JSON messages in both directions.
 { "type": "pointer_motion",  "x": 640.0, "y": 400.0 }
 { "type": "pointer_button",  "btn": 272, "state": 1 }
 { "type": "pointer_axis",    "x": 0.0, "y": -3.0 }
+{ "type": "clipboard_write", "text": "Hello, compositor!" }
 ```
 
 **Server → Browser** (cursor and clipboard):

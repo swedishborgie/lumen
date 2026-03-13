@@ -4,6 +4,7 @@
 //! Communicates via Tokio channels so it can run on a dedicated OS thread
 //! while the rest of the application uses an async runtime.
 
+pub mod clipboard_bridge;
 pub mod compositor;
 pub mod handlers;
 pub mod input;

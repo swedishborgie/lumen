@@ -128,7 +128,7 @@ The browser client lives in `web/` at the repository root.
 
 | File | Purpose |
 |------|---------|
-| `index.html` | Entry point; video element, Connect/Disconnect buttons, statistics display |
+| `index.html` | Entry point; video element, Connect/Disconnect buttons, clipboard panel, statistics display |
 | `lumen-client.js` | `LumenClient` — all WebRTC logic |
 | `lumen-ui.js` | `LumenUI` — UI controller, wires client events to DOM |
 | `style.css` | Page styling |
@@ -188,6 +188,15 @@ Keyboard, mouse, and scroll events are captured from the video element and sent 
 | `wheel` | `{ type: "pointer_axis", x: <delta>, y: <delta> }` |
 
 Mouse buttons are mapped to Linux `BTN_*` codes (BTN_LEFT=272, BTN_RIGHT=273, BTN_MIDDLE=274). Keyboard keys are mapped via a static `KEY_MAP` table from DOM key names to Linux evdev scancodes.
+
+### Clipboard Panel
+
+The sidebar contains a shared clipboard textarea that acts as a two-way bridge between the browser and the compositor:
+
+- **Compositor → browser**: When the compositor emits a `clipboard_update` message (e.g., the user copies text inside a remote application), the text is written into the textarea. The user can then copy it locally.
+- **Browser → compositor**: Any change to the textarea (typing or pasting) is debounced 300 ms and sent as a `clipboard_write` data channel message. The compositor sets its Wayland selection to the received text, making it immediately available for pasting in remote applications.
+
+A deduplication check in the compositor prevents the clipboard from echoing back to the browser after a `clipboard_write`, avoiding feedback loops. The textarea is also pre-populated on new connections via the `last_clipboard_json` state-replay mechanism.
 
 ## Technology Stack
 

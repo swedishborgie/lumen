@@ -158,6 +158,11 @@ impl WebRtcSession {
         self.pending_dc_out.push_back(data);
     }
 
+    /// Returns true once the browser data channel is open and ready.
+    pub fn is_dc_open(&self) -> bool {
+        self.dc_channel_id.is_some()
+    }
+
     /// Add a remote ICE candidate received over the signaling channel.
     pub fn add_remote_candidate(&mut self, candidate_str: &str) -> Result<()> {
         let c = Candidate::from_sdp_string(candidate_str)

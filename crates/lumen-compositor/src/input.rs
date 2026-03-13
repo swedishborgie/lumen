@@ -101,6 +101,7 @@ fn inject_pointer_motion(state: &mut AppState, serial: Serial, time: u32, x: f64
         });
 
     pointer.motion(state, focus, &MotionEvent { location, serial, time });
+    pointer.frame(state);
 }
 
 fn inject_pointer_button(state: &mut AppState, serial: Serial, time: u32, btn: u32, btn_state: u32) {

@@ -20,6 +20,8 @@ pub struct SignalingState {
     pub input_tx: mpsc::Sender<InputEvent>,
     /// Notifies the encoder task that a keyframe is needed.
     pub keyframe_flag: Arc<AtomicBool>,
+    /// The most recent cursor state JSON, replayed to new sessions on DC open.
+    pub last_cursor_json: Arc<tokio::sync::Mutex<Option<Vec<u8>>>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -75,6 +77,7 @@ async fn handle_socket(mut socket: WebSocket, state: SignalingState) {
                             id.clone(),
                             state.input_tx.clone(),
                             state.keyframe_flag.clone(),
+                            state.last_cursor_json.clone(),
                         );
                         let resp = ServerMessage::Answer { sdp: answer_sdp, session_id: id.0 };
                         let _ = socket
@@ -105,14 +108,16 @@ fn spawn_drive_task(
     id: SessionId,
     input_tx: mpsc::Sender<InputEvent>,
     keyframe_flag: Arc<AtomicBool>,
+    last_cursor_json: Arc<tokio::sync::Mutex<Option<Vec<u8>>>>,
 ) {
     tokio::spawn(async move {
+        let mut cursor_sent = false;
         loop {
             let session = match sessions.get_session(&id).await {
                 Some(s) => s,
                 None => break,
             };
-            let (state, input_events, kf_requested) = {
+            let (state, input_events, kf_requested, dc_open) = {
                 let mut s = session.lock().await;
                 let drive_state = match s.drive().await {
                     Ok(st) => st,
@@ -124,7 +129,8 @@ fn spawn_drive_task(
                 let events = s.drain_input_events();
                 let kf = s.keyframe_requested;
                 if kf { s.keyframe_requested = false; }
-                (drive_state, events, kf)
+                let dc_open = s.is_dc_open();
+                (drive_state, events, kf, dc_open)
             };
 
             // Forward input events to compositor (best-effort, don't block).
@@ -135,6 +141,17 @@ fn spawn_drive_task(
             // Signal encoder to produce a keyframe.
             if kf_requested {
                 keyframe_flag.store(true, Ordering::Relaxed);
+            }
+
+            // Replay the last cursor state once when the data channel first opens,
+            // so reconnecting clients immediately see the correct cursor shape.
+            if dc_open && !cursor_sent {
+                cursor_sent = true;
+                if let Some(cursor_json) = last_cursor_json.lock().await.clone() {
+                    if let Some(session) = sessions.get_session(&id).await {
+                        session.lock().await.push_dc_message(cursor_json);
+                    }
+                }
             }
 
             if state == lumen_webrtc::SessionState::Closed {

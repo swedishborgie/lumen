@@ -49,6 +49,7 @@ export class LumenUI {
 
       if (state === 'connected') {
         video.focus();
+        video.style.cursor = 'default';
         this.#statsTimer = setInterval(() => this.#updateStats(), 1000);
       } else if (state === 'idle') {
         if (this.#statsTimer) { clearInterval(this.#statsTimer); this.#statsTimer = null; }
@@ -90,20 +91,21 @@ export class LumenUI {
       this.#client.sendInput({ type: 'keyboard_key', scancode: sc, state: 0 });
     });
 
-    video.addEventListener('mousemove', (e) => {
+    video.addEventListener('pointermove', (e) => {
       const { x, y } = this.#toCompositorCoords(e.clientX, e.clientY);
       this.#client.sendInput({ type: 'pointer_motion', x, y });
     });
 
-    video.addEventListener('mousedown', (e) => {
+    video.addEventListener('pointerdown', (e) => {
       video.focus();
+      video.setPointerCapture(e.pointerId);
       const { x, y } = this.#toCompositorCoords(e.clientX, e.clientY);
       this.#client.sendInput({ type: 'pointer_motion', x, y });
       this.#client.sendInput({ type: 'pointer_button', btn: BTN_CODES[e.button] ?? 272, state: 1 });
       e.preventDefault();
     });
 
-    video.addEventListener('mouseup', (e) => {
+    video.addEventListener('pointerup', (e) => {
       this.#client.sendInput({ type: 'pointer_button', btn: BTN_CODES[e.button] ?? 272, state: 0 });
     });
 

@@ -16,4 +16,6 @@ pub struct WebServerConfig {
     pub input_tx: tokio::sync::mpsc::Sender<InputEvent>,
     /// Flag set when any peer has requested a keyframe.
     pub keyframe_flag: Arc<AtomicBool>,
+    /// The most recent cursor state JSON, replayed to new sessions on DC open.
+    pub last_cursor_json: Arc<tokio::sync::Mutex<Option<Vec<u8>>>>,
 }

@@ -215,9 +215,12 @@ async fn main() -> Result<()> {
     }
 
     // ── Spawn: cursor fan-out task ────────────────────────────────────────────
+    let last_cursor_json: Arc<tokio::sync::Mutex<Option<Vec<u8>>>> =
+        Arc::new(tokio::sync::Mutex::new(None));
     {
         let session_manager = session_manager.clone();
         let mut cursor_rx = cursor_rx;
+        let last_cursor_json = last_cursor_json.clone();
         tokio::spawn(async move {
             loop {
                 let ev = match cursor_rx.recv().await {
@@ -226,6 +229,7 @@ async fn main() -> Result<()> {
                     Err(_) => break,
                 };
                 let json = cursor_event_to_json(&ev);
+                *last_cursor_json.lock().await = Some(json.clone());
                 session_manager.broadcast_dc_message(json).await;
             }
         });
@@ -238,6 +242,7 @@ async fn main() -> Result<()> {
         session_manager,
         input_tx,
         keyframe_flag,
+        last_cursor_json,
     })
     .run()
     .await

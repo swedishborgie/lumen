@@ -19,6 +19,7 @@ impl WebServer {
             sessions: self.config.session_manager.clone(),
             input_tx: self.config.input_tx.clone(),
             keyframe_flag: self.config.keyframe_flag.clone(),
+            last_cursor_json: self.config.last_cursor_json.clone(),
         };
 
         let app = Router::new()

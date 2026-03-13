@@ -40,7 +40,7 @@ async fn main() -> Result<()> {
                 .add_directive("lumen_compositor=info".parse()?)
                 .add_directive("lumen_audio=info".parse()?)
                 .add_directive("lumen_encode=info".parse()?)
-                .add_directive("lumen_webrtc=info".parse()?)
+                .add_directive("lumen_webrtc=debug".parse()?)
                 .add_directive("lumen_web=info".parse()?),
         )
         .init();
@@ -162,7 +162,7 @@ async fn main() -> Result<()> {
     // ── Spawn: input forwarding task ──────────────────────────────────────────
     tokio::spawn(async move {
         while let Some(ev) = input_rx.recv().await {
-            compositor_input_tx.send(ev).await.ok();
+            compositor_input_tx.send(ev);
         }
     });
 

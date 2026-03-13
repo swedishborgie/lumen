@@ -62,7 +62,7 @@
 
     // ── Key map: browser KeyboardEvent.code → Linux evdev scancode ────────────
     const KEY_MAP = {
-      Escape:13,Backquote:41,Digit1:2,Digit2:3,Digit3:4,Digit4:5,Digit5:6,
+      Escape:1,Backquote:41,Digit1:2,Digit2:3,Digit3:4,Digit4:5,Digit5:6,
       Digit6:7,Digit7:8,Digit8:9,Digit9:10,Digit0:11,Minus:12,Equal:13,
       Backspace:14,Tab:15,KeyQ:16,KeyW:17,KeyE:18,KeyR:19,KeyT:20,KeyY:21,
       KeyU:22,KeyI:23,KeyO:24,KeyP:25,BracketLeft:26,BracketRight:27,
@@ -84,7 +84,11 @@
     const BTN_CODES = [272, 273, 274];
 
     function sendInput(obj) {
-      if (dc && dc.readyState === 'open') dc.send(JSON.stringify(obj));
+      if (dc && dc.readyState === 'open') {
+        dc.send(JSON.stringify(obj));
+      } else {
+        console.warn('[lumen] sendInput dropped — dc state:', dc ? dc.readyState : 'null');
+      }
     }
 
     // Map video-element client coords → compositor pixel coords,
@@ -112,6 +116,7 @@
     // ── Input event listeners on the video element ─────────────────────────────
     video.addEventListener('keydown', e => {
       const sc = KEY_MAP[e.code];
+      console.log('[lumen] keydown', e.code, '→ scancode', sc, '| dc:', dc ? dc.readyState : 'null');
       if (sc !== undefined) {
         e.preventDefault();
         sendInput({ type: 'keyboard_key', scancode: sc, state: 1 });
@@ -249,12 +254,14 @@
 
       // Optionally add a data channel for input forwarding.
       dc = pc.createDataChannel('input');
-      dc.onopen = () => {
+      dc.onopen  = () => {
+        console.log('[lumen] Data channel open');
         setStatus('Connected (data channel open)');
         video.focus();
         statsTimer = setInterval(updateStats, 1000);
       };
-      dc.onclose = () => { dc = null; };
+      dc.onclose = () => { console.log('[lumen] Data channel closed'); dc = null; };
+      dc.onerror = (e) => { console.error('[lumen] Data channel error', e); };
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);

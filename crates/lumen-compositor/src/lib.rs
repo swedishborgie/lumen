@@ -11,6 +11,6 @@ pub mod render;
 pub mod state;
 pub mod types;
 
-pub use compositor::Compositor;
+pub use compositor::{Compositor, InputSender};
 pub use input::InputEvent;
 pub use types::{CapturedFrame, CompositorConfig};

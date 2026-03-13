@@ -52,12 +52,25 @@ use smithay::{
         relative_pointer::RelativePointerManagerState,
     },
 };
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::broadcast;
 
 use crate::input::InputEvent;
 use crate::render::render_and_capture;
 use crate::state::{AppState, ClientState, CompositorCommand};
 use crate::types::{CapturedFrame, CompositorConfig};
+
+/// A cheaply-cloneable handle for sending input events into the compositor.
+///
+/// Wraps the calloop command channel so that external callers don't need to
+/// know about `CompositorCommand`.
+#[derive(Clone)]
+pub struct InputSender(smithay::reexports::calloop::channel::Sender<CompositorCommand>);
+
+impl InputSender {
+    pub fn send(&self, ev: InputEvent) {
+        let _ = self.0.send(CompositorCommand::Input(ev));
+    }
+}
 
 /// Smithay-based Wayland compositor.
 pub struct Compositor {
@@ -65,18 +78,16 @@ pub struct Compositor {
     frame_tx: broadcast::Sender<CapturedFrame>,
     cmd_tx: smithay::reexports::calloop::channel::Sender<CompositorCommand>,
     cmd_rx: Option<smithay::reexports::calloop::channel::Channel<CompositorCommand>>,
-    input_tx: mpsc::Sender<InputEvent>,
 }
 
 impl Compositor {
     pub fn new(config: CompositorConfig) -> Result<Self> {
         let (frame_tx, _) = broadcast::channel(8);
         let (cmd_tx, cmd_rx) = smithay::reexports::calloop::channel::channel();
-        let (input_tx, _) = mpsc::channel::<InputEvent>(64);
-        Ok(Self { config, frame_tx, cmd_tx, cmd_rx: Some(cmd_rx), input_tx })
+        Ok(Self { config, frame_tx, cmd_tx, cmd_rx: Some(cmd_rx) })
     }
 
-    pub fn input_sender(&self) -> mpsc::Sender<InputEvent> { self.input_tx.clone() }
+    pub fn input_sender(&self) -> InputSender { InputSender(self.cmd_tx.clone()) }
     pub fn frame_receiver(&self) -> broadcast::Receiver<CapturedFrame> { self.frame_tx.subscribe() }
     pub fn stop(&self) { let _ = self.cmd_tx.send(CompositorCommand::Stop); }
 

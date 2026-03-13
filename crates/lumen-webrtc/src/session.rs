@@ -205,6 +205,9 @@ impl WebRtcSession {
                     tracing::info!("WebRTC peer connected");
                     self.connected = true;
                 }
+                Ok(Output::Event(Event::ChannelOpen(cid, label))) => {
+                    tracing::info!("Data channel opened: id={:?} label={:?}", cid, label);
+                }
                 Ok(Output::Event(Event::MediaAdded(added))) => {
                     match added.kind {
                         MediaKind::Video if self.video_mid.is_none() => {
@@ -222,8 +225,15 @@ impl WebRtcSession {
                     return Ok(SessionState::Closed);
                 }
                 Ok(Output::Event(Event::ChannelData(data))) => {
-                    if let Ok(ev) = serde_json::from_slice::<InputEvent>(&data.data) {
-                        self.input_events.push(ev);
+                    match serde_json::from_slice::<InputEvent>(&data.data) {
+                        Ok(ev) => {
+                            tracing::debug!("Data channel input: {:?}", ev);
+                            self.input_events.push(ev);
+                        }
+                        Err(e) => {
+                            tracing::debug!("Data channel parse error: {} — raw: {:?}",
+                                e, String::from_utf8_lossy(&data.data));
+                        }
                     }
                 }
                 Ok(Output::Event(Event::KeyframeRequest(_))) => {

@@ -73,7 +73,7 @@ fn inject_key(state: &mut AppState, serial: Serial, time: u32, scancode: u32, ke
         .rev()
         .find_map(|w| w.wl_surface().map(|s| (*s).clone()));
 
-    tracing::info!(scancode, xkb_code = scancode + 8, ?smithay_state,
+    tracing::debug!(scancode, xkb_code = scancode + 8, ?smithay_state,
         has_focus = focus_surface.is_some(), "inject_key");
 
     if let Some(ref surface) = focus_surface {

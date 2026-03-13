@@ -1,8 +1,10 @@
 //! VA-API hardware H.264 encoder using ffmpeg-sys-next.
 //!
-//! Dual pipeline:
-//!   GPU (zero-copy): DMA-BUF (ARGB8888) → DRM_PRIME frame → hwmap → scale_vaapi (NV12) → h264_vaapi
-//!   CPU (fallback):  RGBA buffer → sws_scale (NV12) → av_hwframe_transfer_data → h264_vaapi
+//! Pipeline (zero-copy): DMA-BUF (ARGB8888) → DRM_PRIME frame → hwmap → scale_vaapi (NV12) → h264_vaapi
+//!
+//! Always paired with the GPU compositor path (`--dri-node`).  When no DRI node is
+//! provided the compositor uses Pixman and the software x264 encoder is selected
+//! instead — there is no mixed-mode where this encoder receives RGBA frames.
 // FFI with ffmpeg-sys-next uses many intentional numeric casts.
 #![allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_possible_wrap)]
 
@@ -30,7 +32,6 @@ impl AvFramePtr {
         Ok(Self(p))
     }
     fn as_mut(&mut self) -> *mut AVFrame { self.0 }
-    fn as_ptr(&self) -> *const AVFrame { self.0 }
 }
 impl Drop for AvFramePtr {
     fn drop(&mut self) {
@@ -62,7 +63,6 @@ pub struct VaapiEncoder {
     codec_ctx: *mut AVCodecContext,
     hw_device_ctx: *mut AVBufferRef,      // VAAPI device (derived from DRM when possible)
     hw_frames_ctx: *mut AVBufferRef,      // VAAPI NV12 frames pool for the encoder
-    sws_ctx: *mut SwsContext,             // RGBA→NV12 conversion for the CPU path
 
     // Zero-copy DMA-BUF path
     drm_device_ctx: *mut AVBufferRef,     // DRM device context
@@ -221,20 +221,9 @@ impl VaapiEncoder {
             }
 
             // ----------------------------------------------------------------
-            // 6. sws_ctx — RGBA→NV12 for the CPU fallback path
+            // 6. sws_ctx removed — VaapiEncoder only handles DMA-BUF frames.
+            //    RGBA frames go to SoftwareEncoder (x264) via the Pixman path.
             // ----------------------------------------------------------------
-            let sws_ctx = sws_getContext(
-                w, h, AVPixelFormat::AV_PIX_FMT_RGBA,
-                w, h, AVPixelFormat::AV_PIX_FMT_NV12,
-                SWS_BILINEAR,
-                std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null(),
-            );
-            if sws_ctx.is_null() {
-                avcodec_free_context(&mut (codec_ctx as *mut _));
-                av_buffer_unref(&mut hw_device_ctx);
-                if !drm_device_ctx.is_null() { av_buffer_unref(&mut drm_device_ctx); }
-                bail!("sws_getContext failed");
-            }
 
             // ----------------------------------------------------------------
             // 7. DRM hw_frames_ctx and filter graph for the DMA-BUF zero-copy path
@@ -261,7 +250,6 @@ impl VaapiEncoder {
                 codec_ctx,
                 hw_device_ctx,
                 hw_frames_ctx,
-                sws_ctx,
                 drm_device_ctx,
                 drm_frames_ctx,
                 filter_graph,
@@ -274,39 +262,6 @@ impl VaapiEncoder {
                 frame_index: 0,
             })
         }
-    }
-
-    /// Convert an RGBA CPU buffer to a software NV12 AVFrame.
-    unsafe fn rgba_to_nv12_frame(&mut self, rgba: &[u8], pts_ms: u64) -> Result<AvFramePtr> {
-        let mut sw_frame = AvFramePtr::alloc()?;
-        let f = sw_frame.as_mut();
-        (*f).width = self.width;
-        (*f).height = self.height;
-        (*f).format = AVPixelFormat::AV_PIX_FMT_NV12 as i32;
-        let ret = av_frame_get_buffer(f, 0);
-        if ret < 0 { bail!("av_frame_get_buffer (sw) failed: {}", ret); }
-
-        let src_data = [rgba.as_ptr(), std::ptr::null(), std::ptr::null(), std::ptr::null()];
-        let src_linesize = [self.width * 4, 0, 0, 0];
-        sws_scale(
-            self.sws_ctx,
-            src_data.as_ptr(), src_linesize.as_ptr(), 0, self.height,
-            (*f).data.as_ptr() as *mut *mut u8,
-            (*f).linesize.as_ptr() as *mut i32,
-        );
-        (*f).pts = pts_ms as i64;
-        Ok(sw_frame)
-    }
-
-    /// Upload a software NV12 frame into a VAAPI hardware frame.
-    unsafe fn upload_to_hw(&mut self, sw_frame: &AvFramePtr) -> Result<AvFramePtr> {
-        let mut hw_frame = AvFramePtr::alloc()?;
-        let ret = av_hwframe_get_buffer(self.hw_frames_ctx, hw_frame.as_mut(), 0);
-        if ret < 0 { bail!("av_hwframe_get_buffer failed: {}", ret); }
-        let ret = av_hwframe_transfer_data(hw_frame.as_mut(), sw_frame.as_ptr(), 0);
-        if ret < 0 { bail!("av_hwframe_transfer_data failed: {}", ret); }
-        (*hw_frame.as_mut()).pts = (*sw_frame.as_ptr()).pts;
-        Ok(hw_frame)
     }
 
     /// Push a DMA-BUF through the filter graph (hwmap → scale_vaapi) to get
@@ -407,7 +362,6 @@ impl Drop for VaapiEncoder {
     fn drop(&mut self) {
         unsafe {
             if !self.filter_graph.is_null() { avfilter_graph_free(&mut self.filter_graph); }
-            if !self.sws_ctx.is_null() { sws_freeContext(self.sws_ctx); }
             if !self.codec_ctx.is_null() { avcodec_free_context(&mut (self.codec_ctx as *mut _)); }
             if !self.hw_frames_ctx.is_null() { av_buffer_unref(&mut self.hw_frames_ctx); }
             if !self.drm_frames_ctx.is_null() { av_buffer_unref(&mut self.drm_frames_ctx); }
@@ -429,12 +383,12 @@ impl VideoEncoder for VaapiEncoder {
                     bail!("VA-API DMA-BUF pipeline not available; cannot encode GPU frame");
                 }
                 self.encode_from_dmabuf(&frame)
-            } else if let Some(ref rgba) = frame.rgba_buffer {
-                let sw_frame = self.rgba_to_nv12_frame(rgba, frame.pts_ms)?;
-                let mut hw_frame = self.upload_to_hw(&sw_frame)?;
-                self.send_and_receive(&mut hw_frame, frame.pts_ms)
             } else {
-                bail!("CapturedFrame has neither dmabuf nor rgba_buffer");
+                // This encoder is only selected when --dri-node is provided, which
+                // also enables GPU rendering.  Receiving an RGBA frame here means the
+                // compositor fell back to Pixman despite a DRI node being set — an
+                // unexpected state.  The software x264 encoder handles RGBA frames.
+                bail!("VaapiEncoder received an RGBA frame; use the software encoder for CPU rendering");
             }
         }
     }

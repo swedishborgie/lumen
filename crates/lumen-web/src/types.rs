@@ -5,6 +5,16 @@ use std::sync::{atomic::AtomicBool, Arc};
 use lumen_compositor::InputEvent;
 use lumen_webrtc::SessionManager;
 
+/// ICE server descriptor sent to the browser via `/api/config`.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct IceServerConfig {
+    pub urls: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential: Option<String>,
+}
+
 /// Authentication mode for the web server.
 #[derive(Clone)]
 pub enum AuthConfig {
@@ -55,4 +65,6 @@ pub struct WebServerConfig {
     pub resize_tx: tokio::sync::mpsc::Sender<(u32, u32)>,
     /// Authentication configuration.
     pub auth: AuthConfig,
+    /// ICE server list sent to the browser via `/api/config`.
+    pub ice_servers: Vec<IceServerConfig>,
 }

@@ -45,6 +45,27 @@ struct Args {
     #[arg(long, env = "LUMEN_STATIC_DIR", default_value = "./web")]
     static_dir: PathBuf,
 
+    // ── TURN server ───────────────────────────────────────────────────────────
+    /// UDP port for the embedded TURN server. Set to 0 to disable.
+    #[arg(long, env = "LUMEN_TURN_PORT", default_value_t = 3478)]
+    turn_port: u16,
+    /// External/public IP of this machine, used as the TURN relay address.
+    /// Defaults to 127.0.0.1 (localhost-only access; no extra mapping needed).
+    #[arg(long, env = "LUMEN_TURN_EXTERNAL_IP", default_value = "127.0.0.1")]
+    turn_external_ip: std::net::IpAddr,
+    /// TURN username.
+    #[arg(long, env = "LUMEN_TURN_USERNAME", default_value = "lumen")]
+    turn_username: String,
+    /// TURN password.
+    #[arg(long, env = "LUMEN_TURN_PASSWORD", default_value = "lumenpass", hide_env_values = true)]
+    turn_password: String,
+    /// Lowest UDP port in the TURN relay range.
+    #[arg(long, env = "LUMEN_TURN_MIN_PORT", default_value_t = 50000)]
+    turn_min_port: u16,
+    /// Highest UDP port in the TURN relay range.
+    #[arg(long, env = "LUMEN_TURN_MAX_PORT", default_value_t = 50010)]
+    turn_max_port: u16,
+
     // ── Authentication ────────────────────────────────────────────────────────
     /// Authentication mode: none (default), basic (PAM), or oauth2 (OIDC).
     #[arg(long, env = "LUMEN_AUTH", default_value = "none")]
@@ -98,23 +119,106 @@ async fn main() -> Result<()> {
     // ── Auth config ───────────────────────────────────────────────────────────
     let auth = build_auth_config(&args)?;
 
+    // ── TURN server ───────────────────────────────────────────────────────────
+    // Start the embedded TURN server unless --turn-port 0 is passed.
+    // The server allocates relay ports for both lumen and the browser so they
+    // can reach each other through Podman's virtual network.
+    //
+    // IMPORTANT: `_turn_server` must remain bound for the lifetime of main().
+    // Dropping it shuts down the TURN server and invalidates all relay allocations.
+    let _turn_server;
+    let (turn_client_config, ice_server_list) = if args.turn_port > 0 {
+        let turn_cfg = lumen_turn::TurnServerConfig {
+            listen_port: args.turn_port,
+            external_ip: args.turn_external_ip,
+            min_relay_port: args.turn_min_port,
+            max_relay_port: args.turn_max_port,
+            username: args.turn_username.clone(),
+            password: args.turn_password.clone(),
+            ..Default::default()
+        };
+        _turn_server = Some(lumen_turn::TurnServer::start(turn_cfg).await?);
+        tracing::info!(
+            port = args.turn_port,
+            relay_ip = %args.turn_external_ip,
+            "Embedded TURN server started"
+        );
+
+        let server_addr: SocketAddr =
+            format!("127.0.0.1:{}", args.turn_port).parse()?;
+
+        let client_cfg = lumen_webrtc::types::TurnClientConfig {
+            server_addr,
+            username: args.turn_username.clone(),
+            password: args.turn_password.clone(),
+            relay_ip: args.turn_external_ip,
+        };
+
+        let turn_url = format!("turn:{}:{}?transport=udp",
+            args.turn_external_ip, args.turn_port);
+        let ice_servers = vec![
+            lumen_web::IceServerConfig {
+                urls: turn_url,
+                username: Some(args.turn_username.clone()),
+                credential: Some(args.turn_password.clone()),
+            },
+        ];
+        (Some(client_cfg), ice_servers)
+    } else {
+        _turn_server = None;
+        // TURN disabled — fall back to whatever --ice-servers says.
+        let ice_servers = args.ice_servers.split(',')
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| lumen_web::IceServerConfig {
+                urls: s.trim().to_string(),
+                username: None,
+                credential: None,
+            })
+            .collect();
+        (None, ice_servers)
+    };
+
     // ── Session manager ───────────────────────────────────────────────────────
     // Created early so peer_count can be passed to the compositor and audio.
-    let ice_servers = args.ice_servers.split(',')
-        .map(|s| lumen_webrtc::types::IceServer { url: s.trim().to_string(), credential: None })
-        .collect();
     let session_manager = lumen_webrtc::SessionManager::new(lumen_webrtc::SessionConfig {
-        ice_servers,
+        turn: turn_client_config,
         bind_addr: "0.0.0.0:0".parse()?,
     });
     let peer_count = session_manager.peer_count();
+
+    // ── Resolve effective DRI node ────────────────────────────────────────────
+    // If --dri-node was provided we want GPU rendering + VA-API encoding.
+    // However, VA-API can fail at runtime (missing driver, permissions, etc.).
+    // When that happens create_encoder() silently falls back to x264, which
+    // cannot consume the DMA-BUF frames produced by the GPU renderer — causing
+    // an encode error on every frame.  To prevent this mismatch we probe VA-API
+    // here, before the compositor is created, and clear the DRI node if VA-API
+    // is unavailable so both the compositor and encoder use the CPU path.
+    let effective_dri_node: Option<std::path::PathBuf> = if let Some(ref node) = args.dri_node {
+        let probe_config = lumen_encode::EncoderConfig {
+            render_node: Some(node.clone()),
+            ..Default::default()
+        };
+        if lumen_encode::probe_vaapi(&probe_config) {
+            Some(node.clone())
+        } else {
+            tracing::warn!(
+                node = %node.display(),
+                "VA-API unavailable on the requested DRI node; \
+                 falling back to CPU (Pixman) rendering and software x264 encoder"
+            );
+            None
+        }
+    } else {
+        None
+    };
 
     // ── Compositor ────────────────────────────────────────────────────────────
     let mut compositor = lumen_compositor::Compositor::new(lumen_compositor::CompositorConfig {
         width: args.width,
         height: args.height,
         target_fps: args.fps,
-        render_node: args.dri_node.clone(),
+        render_node: effective_dri_node.clone(),
         inner_display: args.inner_display.clone(),
         peer_count: Some(peer_count.clone()),
         ..Default::default()
@@ -138,7 +242,7 @@ async fn main() -> Result<()> {
         height: args.height,
         fps: args.fps,
         bitrate_kbps: args.video_bitrate_kbps,
-        render_node: args.dri_node,
+        render_node: effective_dri_node,
         ..Default::default()
     };
 
@@ -375,6 +479,7 @@ async fn main() -> Result<()> {
         last_clipboard_json,
         resize_tx,
         auth,
+        ice_servers: ice_server_list,
     })
     .run()
     .await

@@ -1,7 +1,7 @@
 //! Clipboard bridge between Lumen and a nested inner compositor.
 //!
-//! When Lumen nests another compositor (e.g. Weston), clipboard events from apps running
-//! inside that nested compositor never reach Lumen's `SelectionHandler` because Weston owns
+//! When Lumen nests another compositor (e.g. labwc), clipboard events from apps running
+//! inside that nested compositor never reach Lumen's `SelectionHandler` because labwc owns
 //! its clipboard domain privately.
 //!
 //! This module connects to the inner compositor's Wayland socket **as a client** and uses

@@ -11,4 +11,4 @@ pub mod software;
 pub mod vaapi;
 pub mod yuv;
 
-pub use encoder::{create_encoder, EncoderConfig, EncodedFrame, VideoEncoder};
+pub use encoder::{create_encoder, probe_vaapi, EncoderConfig, EncodedFrame, VideoEncoder};

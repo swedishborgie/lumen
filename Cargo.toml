@@ -6,6 +6,7 @@ members = [
     "crates/lumen-encode",
     "crates/lumen-webrtc",
     "crates/lumen-web",
+    "crates/lumen-turn",
 ]
 resolver = "2"
 
@@ -52,6 +53,7 @@ lumen-audio      = { path = "crates/lumen-audio" }
 lumen-encode     = { path = "crates/lumen-encode" }
 lumen-webrtc     = { path = "crates/lumen-webrtc" }
 lumen-web        = { path = "crates/lumen-web" }
+lumen-turn       = { path = "crates/lumen-turn" }
 tokio            = { workspace = true }
 tracing          = { workspace = true }
 tracing-subscriber = { workspace = true }

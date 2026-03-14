@@ -5,6 +5,7 @@
       <sourceFolder url="file://$MODULE_DIR$/crates/lumen-audio/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/lumen-compositor/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/lumen-encode/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/lumen-turn/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/lumen-web/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/lumen-webrtc/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/src" isTestSource="false" />

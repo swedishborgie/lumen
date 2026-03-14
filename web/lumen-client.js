@@ -102,8 +102,20 @@ export class LumenClient extends EventTarget {
       this.#ws.onerror = reject;
     });
 
+    // Fetch ICE server configuration from the server (includes TURN credentials
+    // when the embedded TURN server is enabled).
+    let iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
+    try {
+      const cfg = await fetch('/api/config').then(r => r.json());
+      if (Array.isArray(cfg.iceServers) && cfg.iceServers.length > 0) {
+        iceServers = cfg.iceServers;
+      }
+    } catch (e) {
+      console.warn('Could not fetch /api/config, using default ICE servers:', e);
+    }
+
     this.#pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+      iceServers,
       bundlePolicy: 'max-bundle',
     });
 

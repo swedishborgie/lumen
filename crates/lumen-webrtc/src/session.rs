@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::net::UdpSocket;
 use std::sync::Arc;
 use std::time::Instant;
@@ -15,6 +15,8 @@ use str0m::{
     net::{Protocol, Receive},
     Candidate, Event, Input, IceConnectionState, Output, Rtc,
 };
+use tokio::sync::mpsc;
+use webrtc_util::conn::Conn;
 
 use crate::types::SessionConfig;
 
@@ -36,6 +38,17 @@ pub struct WebRtcSession {
     connected: bool,
     /// Whether a keyframe was requested by the peer since last drain.
     pub keyframe_requested: bool,
+    // ── TURN relay ────────────────────────────────────────────────────────────
+    /// Relay address allocated from the TURN server (`None` when TURN is off).
+    relay_addr: Option<std::net::SocketAddr>,
+    /// Inbound packets forwarded from the TURN relay (async → sync bridge).
+    relay_recv_rx: Option<mpsc::Receiver<(Vec<u8>, std::net::SocketAddr)>>,
+    /// Channel to send outbound packets through the TURN relay.
+    relay_send_tx: Option<mpsc::Sender<(Vec<u8>, std::net::SocketAddr)>>,
+    /// Remote addresses seen via the relay — responses must go back through it.
+    relay_sourced_peers: HashSet<std::net::SocketAddr>,
+    /// Keep the TURN client alive so its allocation is periodically refreshed.
+    _turn_client: Option<turn::client::Client>,
 }
 
 impl WebRtcSession {
@@ -77,6 +90,20 @@ impl WebRtcSession {
             }
         }
 
+        // ── TURN relay candidate ─────────────────────────────────────────────
+        let (relay_addr, relay_recv_rx, relay_send_tx, _turn_client) =
+            if let Some(ref tc) = config.turn {
+                match Self::setup_turn_relay(tc, &mut rtc, &mut local_candidates).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        tracing::warn!("TURN relay setup failed (continuing without relay): {e:#}");
+                        (None, None, None, None)
+                    }
+                }
+            } else {
+                (None, None, None, None)
+            };
+
         let offer = SdpOffer::from_sdp_string(offer_sdp)
             .map_err(|e| anyhow!("SDP parse error: {:?}", e))?;
 
@@ -99,9 +126,106 @@ impl WebRtcSession {
                 dc_channel_id: None,
                 connected: false,
                 keyframe_requested: false,
+                relay_addr,
+                relay_recv_rx,
+                relay_send_tx,
+                relay_sourced_peers: HashSet::new(),
+                _turn_client,
             },
             answer_str,
         ))
+    }
+
+    /// Allocate a TURN relay and register it as an ICE relay candidate.
+    async fn setup_turn_relay(
+        tc: &crate::types::TurnClientConfig,
+        rtc: &mut Rtc,
+        local_candidates: &mut Vec<std::net::SocketAddr>,
+    ) -> Result<(
+        Option<std::net::SocketAddr>,
+        Option<mpsc::Receiver<(Vec<u8>, std::net::SocketAddr)>>,
+        Option<mpsc::Sender<(Vec<u8>, std::net::SocketAddr)>>,
+        Option<turn::client::Client>,
+    )> {
+        use turn::client::{Client, ClientConfig};
+
+        // Bind a dedicated socket on loopback to talk to the co-located TURN server.
+        let turn_conn = Arc::new(
+            tokio::net::UdpSocket::bind("127.0.0.1:0")
+                .await
+                .context("Failed to bind TURN client socket")?,
+        );
+        let turn_local = turn_conn.local_addr()?;
+
+        let client = Client::new(ClientConfig {
+            stun_serv_addr: tc.server_addr.to_string(),
+            turn_serv_addr: tc.server_addr.to_string(),
+            username: tc.username.clone(),
+            password: tc.password.clone(),
+            realm: String::new(),
+            software: String::from("lumen"),
+            rto_in_ms: 0,
+            conn: turn_conn as Arc<dyn Conn + Send + Sync>,
+            vnet: None,
+        })
+        .await
+        .context("Failed to create TURN client")?;
+
+        client.listen().await.context("TURN client listen failed")?;
+
+        // allocate() returns `impl Conn`; wrap in Arc so it can be shared
+        // between the recv task and send task.
+        let relay_conn: Arc<dyn Conn + Send + Sync> =
+            Arc::new(client.allocate().await.context("TURN allocation failed")?);
+
+        let relay_addr = relay_conn.local_addr().context("TURN relay local_addr")?;
+
+        // Permissions are created automatically by the relay conn's send_to()
+        // on first use, so no explicit pre-creation is needed here.
+
+        // Add relay candidate to str0m.
+        if let Ok(c) = Candidate::relayed(relay_addr, turn_local, "udp") {
+            rtc.add_local_candidate(c);
+            local_candidates.push(relay_addr);
+            tracing::info!(relay = %relay_addr, "TURN relay candidate added");
+        }
+
+        // Spawn receiver task: relay_conn → channel (bridges async recv to sync session loop).
+        let (recv_tx, recv_rx) =
+            mpsc::channel::<(Vec<u8>, std::net::SocketAddr)>(64);
+        {
+            let conn = relay_conn.clone();
+            tokio::spawn(async move {
+                let mut buf = vec![0u8; 4096];
+                loop {
+                    match conn.recv_from(&mut buf).await {
+                        Ok((n, src)) => {
+                            if recv_tx.send((buf[..n].to_vec(), src)).await.is_err() {
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            tracing::debug!("TURN relay recv error: {e}");
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+
+        // Spawn sender task: channel → relay_conn (bridges sync session loop to async send).
+        let (send_tx, mut send_rx) =
+            mpsc::channel::<(Vec<u8>, std::net::SocketAddr)>(64);
+        {
+            let conn = relay_conn;
+            tokio::spawn(async move {
+                while let Some((data, dest)) = send_rx.recv().await {
+                    let _ = conn.send_to(&data, dest).await;
+                }
+            });
+        }
+
+        Ok((Some(relay_addr), Some(recv_rx), Some(send_tx), Some(client)))
     }
 
     /// Push an encoded H.264 frame to the video RTP track.
@@ -190,6 +314,25 @@ impl WebRtcSession {
     pub async fn drive(&mut self) -> Result<SessionState> {
         let now = Instant::now();
 
+        // ── Drain relay packets (TURN relay → str0m) ──────────────────────────
+        if let (Some(ref mut relay_rx), Some(relay_addr)) =
+            (&mut self.relay_recv_rx, self.relay_addr)
+        {
+            while let Ok((data, source_addr)) = relay_rx.try_recv() {
+                self.relay_sourced_peers.insert(source_addr);
+                let recv = Receive {
+                    proto: Protocol::Udp,
+                    source: source_addr,
+                    destination: relay_addr,
+                    contents: data
+                        .as_slice()
+                        .try_into()
+                        .map_err(|_| anyhow!("Relay datagram too small"))?,
+                };
+                let _ = self.rtc.handle_input(Input::Receive(now, recv));
+            }
+        }
+
         // Drain incoming UDP packets (non-blocking).
         let mut buf = [0u8; 2048];
         loop {
@@ -217,6 +360,14 @@ impl WebRtcSession {
         loop {
             match self.rtc.poll_output() {
                 Ok(Output::Transmit(t)) => {
+                    // Route through TURN relay if this destination was previously
+                    // seen arriving via the relay socket (relay-relay ICE pair).
+                    if self.relay_sourced_peers.contains(&t.destination) {
+                        if let Some(ref tx) = self.relay_send_tx {
+                            let _ = tx.try_send((t.contents.to_vec(), t.destination));
+                            continue;
+                        }
+                    }
                     let _ = self.socket.send_to(&t.contents, t.destination);
                 }
                 Ok(Output::Event(Event::Connected)) => {

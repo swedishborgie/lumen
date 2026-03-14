@@ -59,6 +59,25 @@ pub trait VideoEncoder: Send {
     fn resize(&mut self, width: u32, height: u32) -> Result<()>;
 }
 
+/// Probe whether VA-API hardware encoding is available for the given config.
+///
+/// Returns `true` if a `VaapiEncoder` can be successfully initialised on the
+/// render node specified in `config`.  Use this before starting the compositor
+/// so that the rendering path (GPU DMA-BUF vs CPU RGBA) can be chosen to match
+/// the encoder that will actually be used.
+pub fn probe_vaapi(config: &EncoderConfig) -> bool {
+    if config
+        .render_node
+        .as_deref()
+        .map(|p| !p.as_os_str().is_empty())
+        .unwrap_or(false)
+    {
+        crate::vaapi::VaapiEncoder::new(config).is_ok()
+    } else {
+        false
+    }
+}
+
 /// Auto-select the best available encoder backend.
 ///
 /// Probes VA-API on `config.render_node` when a path is set; otherwise uses

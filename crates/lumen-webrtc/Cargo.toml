@@ -11,6 +11,10 @@ lumen-audio      = { path = "../lumen-audio" }
 # WebRTC
 str0m = "0.16"
 
+# TURN client for relay candidates in container environments
+turn        = "0.17"
+webrtc-util = "0.17"
+
 tokio       = { workspace = true }
 bytes       = { workspace = true }
 serde       = { workspace = true }

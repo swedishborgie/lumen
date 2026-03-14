@@ -26,6 +26,8 @@ pub struct SignalingState {
     pub last_clipboard_json: Arc<tokio::sync::Mutex<Option<Vec<u8>>>>,
     /// Forwards resize requests to the resize coordinator task.
     pub resize_tx: mpsc::Sender<(u32, u32)>,
+    /// ICE server configuration served to the browser via `/api/config`.
+    pub ice_servers: Vec<crate::types::IceServerConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -49,6 +51,15 @@ pub async fn ws_handler(
     State(state): State<SignalingState>,
 ) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_socket(socket, state))
+}
+
+/// Returns the ICE server list (and any future client-side configuration)
+/// as a JSON object: `{ "iceServers": [...] }`.
+pub async fn config_handler(
+    State(state): State<SignalingState>,
+) -> axum::response::Json<serde_json::Value> {
+    let ice = serde_json::to_value(&state.ice_servers).unwrap_or(serde_json::json!([]));
+    axum::response::Json(serde_json::json!({ "iceServers": ice }))
 }
 
 async fn handle_socket(mut socket: WebSocket, state: SignalingState) {

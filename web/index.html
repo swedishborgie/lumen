@@ -4,11 +4,16 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Lumen</title>
+  <link rel="icon" href="images/lumen.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div id="video-container">
     <video id="video" autoplay playsinline muted tabindex="0" controlslist="nopictureinpicture" disablepictureinpicture></video>
+    <div id="splash">
+      <img src="images/logo.png" alt="Lumen logo">
+      <span>LUMEN</span>
+    </div>
     <canvas id="cursor-canvas"></canvas>
   </div>
 
@@ -45,6 +50,7 @@
       statusEl:       document.getElementById('status'),
       fullscreenHint: document.getElementById('fullscreen-hint'),
       clipboardInput: document.getElementById('clipboard-input'),
+      splash:         document.getElementById('splash'),
     });
 
     // Auto-connect on page load.

@@ -5,7 +5,7 @@ use axum::{middleware, routing::get, Router};
 use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
 
 use crate::auth::{basic, oauth2};
-use crate::signaling::{SignalingState, ws_handler};
+use crate::signaling::{SignalingState, config_handler, ws_handler};
 use crate::types::{AuthConfig, WebServerConfig};
 
 pub struct WebServer {
@@ -25,10 +25,12 @@ impl WebServer {
             last_cursor_json: self.config.last_cursor_json.clone(),
             last_clipboard_json: self.config.last_clipboard_json.clone(),
             resize_tx: self.config.resize_tx.clone(),
+            ice_servers: self.config.ice_servers.clone(),
         };
 
         let signaling_router = Router::new()
             .route("/ws/signal", get(ws_handler))
+            .route("/api/config", get(config_handler))
             .with_state(state);
 
         let app = self.build_app(signaling_router).await?;

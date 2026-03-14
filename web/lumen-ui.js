@@ -41,7 +41,8 @@ export class LumenUI {
    *           btnFullscreen: HTMLButtonElement,
    *           statusEl: HTMLElement,
    *           fullscreenHint: HTMLElement,
-   *           clipboardInput: HTMLTextAreaElement }} elements
+   *           clipboardInput: HTMLTextAreaElement,
+   *           splash: HTMLElement }} elements
    */
   constructor(client, elements) {
     this.#client = client;
@@ -54,9 +55,19 @@ export class LumenUI {
     this.#bindClipboardPanel();
     this.#bindResizeObserver();
     this.#initCursorCanvas();
+    this.#bindSplashEvents();
   }
 
   // ── client event bindings ────────────────────────────────────────────────────
+
+  #bindSplashEvents() {
+    const { video, splash } = this.#els;
+    if (!splash) return;
+
+    video.addEventListener('playing', () => {
+      splash.classList.add('hidden');
+    });
+  }
 
   #bindClientEvents() {
     const { video, statusEl, stats, btnConnect, btnDisconnect } = this.#els;
@@ -89,6 +100,10 @@ export class LumenUI {
         this.#clearCursorCanvas();
         // Exit fullscreen/pointer-lock if the session ends.
         if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+        // Show splash screen again.
+        if (this.#els.splash) {
+          this.#els.splash.classList.remove('hidden');
+        }
       }
     });
 

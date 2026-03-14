@@ -1,0 +1,12 @@
+[package]
+name = "lumen-turn"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+turn           = "0.17"
+webrtc-util    = "0.17"
+tokio          = { workspace = true }
+tracing        = { workspace = true }
+thiserror      = { workspace = true }
+anyhow         = { workspace = true }

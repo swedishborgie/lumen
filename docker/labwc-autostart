@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# labwc autostart — launched by labwc after it initialises its Wayland socket.
+# Firefox is started with --no-sandbox because the container already provides
+# isolation, and the kernel security modules that Firefox relies on for its own
+# sandbox are typically not available inside a container.
+firefox --no-sandbox &

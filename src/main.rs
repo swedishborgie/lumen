@@ -7,6 +7,15 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use tokio::sync::broadcast;
 
+/// Authentication mode for the web server.
+#[derive(clap::ValueEnum, Clone, Debug, Default)]
+enum AuthMode {
+    #[default]
+    None,
+    Basic,
+    Oauth2,
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "lumen", about = "Wayland WebRTC streaming compositor")]
 struct Args {
@@ -35,6 +44,34 @@ struct Args {
     ice_servers: String,
     #[arg(long, env = "LUMEN_STATIC_DIR", default_value = "./web")]
     static_dir: PathBuf,
+
+    // ── Authentication ────────────────────────────────────────────────────────
+    /// Authentication mode: none (default), basic (PAM), or oauth2 (OIDC).
+    #[arg(long, env = "LUMEN_AUTH", default_value = "none")]
+    auth: AuthMode,
+
+    /// [oauth2] OIDC issuer URL.  The discovery document is fetched from
+    /// `{issuer_url}/.well-known/openid-configuration`.
+    #[arg(long, env = "LUMEN_AUTH_OAUTH2_ISSUER_URL")]
+    auth_oauth2_issuer_url: Option<String>,
+
+    /// [oauth2] OAuth2 client ID.
+    #[arg(long, env = "LUMEN_AUTH_OAUTH2_CLIENT_ID")]
+    auth_oauth2_client_id: Option<String>,
+
+    /// [oauth2] OAuth2 client secret.
+    #[arg(long, env = "LUMEN_AUTH_OAUTH2_CLIENT_SECRET", hide_env_values = true)]
+    auth_oauth2_client_secret: Option<String>,
+
+    /// [oauth2] Full redirect URI registered with the provider,
+    /// e.g. `http://localhost:8080/auth/callback`.
+    #[arg(long, env = "LUMEN_AUTH_OAUTH2_REDIRECT_URI")]
+    auth_oauth2_redirect_uri: Option<String>,
+
+    /// [oauth2] Expected `sub` claim in the validated ID token; access is
+    /// denied if it does not match.
+    #[arg(long, env = "LUMEN_AUTH_OAUTH2_SUBJECT")]
+    auth_oauth2_subject: Option<String>,
 }
 
 #[tokio::main]
@@ -57,6 +94,9 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
     tracing::info!(?args.bind_addr, "Starting lumen");
+
+    // ── Auth config ───────────────────────────────────────────────────────────
+    let auth = build_auth_config(&args)?;
 
     // ── Compositor ────────────────────────────────────────────────────────────
     let mut compositor = lumen_compositor::Compositor::new(lumen_compositor::CompositorConfig {
@@ -330,12 +370,55 @@ async fn main() -> Result<()> {
         last_cursor_json,
         last_clipboard_json,
         resize_tx,
+        auth,
     })
     .run()
     .await
 }
 
-/// Encode a `CursorEvent` as a JSON byte string suitable for the data channel.
+/// Construct [`lumen_web::AuthConfig`] from parsed CLI arguments.
+///
+/// Validates that all required OAuth2 flags are present when `--auth oauth2`
+/// is selected and returns a descriptive error otherwise.
+fn build_auth_config(args: &Args) -> Result<lumen_web::AuthConfig> {
+    match args.auth {
+        AuthMode::None => Ok(lumen_web::AuthConfig::None),
+        AuthMode::Basic => Ok(lumen_web::AuthConfig::Basic),
+        AuthMode::Oauth2 => {
+            fn require<T: Clone>(
+                val: &Option<T>,
+                flag: &str,
+            ) -> Result<T> {
+                val.clone()
+                    .ok_or_else(|| anyhow::anyhow!("{flag} is required when --auth oauth2 is set"))
+            }
+            Ok(lumen_web::AuthConfig::OAuth2 {
+                issuer_url: require(
+                    &args.auth_oauth2_issuer_url,
+                    "--auth-oauth2-issuer-url / LUMEN_AUTH_OAUTH2_ISSUER_URL",
+                )?,
+                client_id: require(
+                    &args.auth_oauth2_client_id,
+                    "--auth-oauth2-client-id / LUMEN_AUTH_OAUTH2_CLIENT_ID",
+                )?,
+                client_secret: require(
+                    &args.auth_oauth2_client_secret,
+                    "--auth-oauth2-client-secret / LUMEN_AUTH_OAUTH2_CLIENT_SECRET",
+                )?,
+                redirect_uri: require(
+                    &args.auth_oauth2_redirect_uri,
+                    "--auth-oauth2-redirect-uri / LUMEN_AUTH_OAUTH2_REDIRECT_URI",
+                )?,
+                expected_subject: require(
+                    &args.auth_oauth2_subject,
+                    "--auth-oauth2-subject / LUMEN_AUTH_OAUTH2_SUBJECT",
+                )?,
+            })
+        }
+    }
+}
+
+
 fn cursor_event_to_json(ev: &lumen_compositor::CursorEvent) -> Vec<u8> {
     use lumen_compositor::CursorEvent;
     match ev {

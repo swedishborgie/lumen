@@ -27,6 +27,25 @@ impl WebServer {
 }
 ```
 
+### `AuthConfig`
+
+```rust
+pub enum AuthConfig {
+    /// No authentication — open access (default).
+    None,
+    /// HTTP Basic authentication validated against the system PAM.
+    Basic,
+    /// OpenID Connect OAuth2 authorization code flow with PKCE.
+    OAuth2 {
+        issuer_url: String,
+        client_id: String,
+        client_secret: String,
+        redirect_uri: String,
+        expected_subject: String,
+    },
+}
+```
+
 ### `WebServerConfig`
 
 ```rust
@@ -39,6 +58,7 @@ pub struct WebServerConfig {
     pub last_cursor_json: Arc<Mutex<Option<Vec<u8>>>>,   // cached cursor state
     pub last_clipboard_json: Arc<Mutex<Option<Vec<u8>>>>, // cached clipboard state
     pub resize_tx: mpsc::Sender<(u32, u32)>,             // → resize coordinator task
+    pub auth: AuthConfig,
 }
 ```
 
@@ -47,9 +67,71 @@ pub struct WebServerConfig {
 | Route | Handler | Description |
 |-------|---------|-------------|
 | `GET /ws/signal` | `ws_handler` | WebSocket upgrade for WebRTC signaling |
+| `GET /auth/callback` | `oauth2::callback_handler` | OIDC authorization code callback *(OAuth2 mode only)* |
 | `GET /*` | Static file server | Serves files from `static_dir` |
 
 CORS and request tracing middleware are applied to all routes via `tower-http`.
+
+## Authentication
+
+Authentication mode is selected at startup via [`AuthConfig`](#authconfig) and applies to **all routes** including the WebSocket endpoint and static files.
+
+### None (default)
+
+No authentication. Identical to the original behaviour. The server is open to any client that can reach the bind address.
+
+### Basic
+
+The browser presents its native username/password dialog (HTTP Basic, RFC 7617). On each request:
+
+1. The `Authorization: Basic <base64(user:password)>` header is decoded.
+2. The submitted username is compared to the OS user running the lumen process (`$USER` / `$LOGNAME`). Mismatches are rejected immediately.
+3. The password is validated via the system PAM `login` service using the [`pam`](https://docs.rs/pam) crate on a `spawn_blocking` thread (PAM is a blocking C library).
+4. On failure the server returns `401 Unauthorized` with a `WWW-Authenticate: Basic realm="Lumen"` header, causing the browser to re-prompt.
+
+**Requires**: `libpam-devel` (or equivalent) at build time and a working PAM `login` stack at runtime.
+
+### OAuth2 (OIDC)
+
+A standard OpenID Connect authorization code flow with PKCE:
+
+```
+Browser ──(unauthenticated request)──► Middleware
+                                           │
+                                           ▼ redirect to provider
+Provider ──(code, state)──► GET /auth/callback
+                                           │
+                                    exchange code
+                                    validate ID token
+                                    check sub claim
+                                           │
+                                    set session cookie
+                                           │
+                                           ▼
+                                    redirect to /
+```
+
+1. **Unauthenticated request** — middleware generates a PKCE challenge and state nonce, stores them in an in-memory session keyed by a UUID cookie (`lumen_session`), and redirects the browser to the OIDC provider's authorization endpoint.
+2. **Provider callback** — the provider redirects to `GET /auth/callback?code=…&state=…`. The handler:
+   - Retrieves the PKCE verifier, nonce, and CSRF token from the session store.
+   - Verifies the `state` parameter against the stored CSRF token.
+   - Exchanges the authorization code for tokens via the token endpoint.
+   - Validates the ID token signature using the provider's JWKS (handled by `openidconnect`).
+   - Compares the `sub` claim to `expected_subject`; denies access if they differ.
+   - Marks the session as authenticated and redirects to `/`.
+3. **Subsequent requests** — the session cookie is checked; authenticated sessions pass through immediately.
+
+Sessions are held in an in-memory `HashMap` protected by `RwLock`. They are not persisted — restarting lumen will require re-authentication.
+
+**Configuration fields** (`AuthConfig::OAuth2`):
+
+| Field | Description |
+|-------|-------------|
+| `issuer_url` | OIDC issuer base URL (discovery doc fetched from `{issuer_url}/.well-known/openid-configuration`) |
+| `client_id` | OAuth2 client ID registered with the provider |
+| `client_secret` | OAuth2 client secret |
+| `redirect_uri` | Full callback URL registered with the provider, e.g. `http://localhost:8080/auth/callback` |
+| `expected_subject` | Expected `sub` claim value in the ID token; anyone else is denied |
 
 ## WebSocket Signaling Protocol
 
@@ -204,4 +286,8 @@ A deduplication check in the compositor prevents the clipboard from echoing back
 |---------|---------|
 | `axum` 0.8 | Async HTTP/WebSocket framework |
 | `tower-http` 0.6 | Middleware: static file serving, CORS, request tracing |
+| `pam` 0.7 | PAM authentication for Basic mode |
+| `openidconnect` 3.x | OIDC discovery, PKCE, token exchange, and ID token validation for OAuth2 mode |
+| `cookie` 0.18 | Session cookie encoding/decoding for OAuth2 mode |
+| `uuid` 1.x | Session token generation for OAuth2 mode |
 | `tokio` | Async runtime |

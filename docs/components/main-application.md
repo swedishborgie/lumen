@@ -19,17 +19,24 @@ The main binary is the orchestration layer for Lumen. It parses configuration, i
 
 All options accept both a `--flag` and a `LUMEN_*` environment variable.
 
-| Flag | Env Var | Default |
-|------|---------|---------|
-| `--bind-addr` | `LUMEN_BIND` | `0.0.0.0:8080` |
-| `--width` | `LUMEN_WIDTH` | `1920` |
-| `--height` | `LUMEN_HEIGHT` | `1080` |
-| `--fps` | `LUMEN_FPS` | `30.0` |
-| `--video-bitrate-kbps` | `LUMEN_VIDEO_BITRATE_KBPS` | `4000` |
-| `--audio-device` | `LUMEN_AUDIO_DEVICE` | *(auto)* |
-| `--dri-node` | `LUMEN_DRI_NODE` | *(none)* |
-| `--ice-servers` | `LUMEN_ICE_SERVERS` | `stun:stun.l.google.com:19302` |
-| `--static-dir` | `LUMEN_STATIC_DIR` | `./web` |
+| Flag | Env Var | Default | Description |
+|------|---------|---------|-------------|
+| `--bind-addr` | `LUMEN_BIND` | `0.0.0.0:8080` | HTTP bind address |
+| `--width` | `LUMEN_WIDTH` | `1920` | Display width |
+| `--height` | `LUMEN_HEIGHT` | `1080` | Display height |
+| `--fps` | `LUMEN_FPS` | `30.0` | Target frame rate |
+| `--video-bitrate-kbps` | `LUMEN_VIDEO_BITRATE_KBPS` | `4000` | Video bitrate |
+| `--audio-device` | `LUMEN_AUDIO_DEVICE` | *(auto)* | PulseAudio device name |
+| `--dri-node` | `LUMEN_DRI_NODE` | *(none)* | GPU render node path |
+| `--inner-display` | `LUMEN_INNER_DISPLAY` | *(none)* | Inner Wayland display for clipboard bridging |
+| `--ice-servers` | `LUMEN_ICE_SERVERS` | `stun:stun.l.google.com:19302` | Comma-separated ICE server URLs |
+| `--static-dir` | `LUMEN_STATIC_DIR` | `./web` | Static file directory |
+| `--auth` | `LUMEN_AUTH` | `none` | Authentication mode: `none`, `basic`, or `oauth2` |
+| `--auth-oauth2-issuer-url` | `LUMEN_AUTH_OAUTH2_ISSUER_URL` | *(required for oauth2)* | OIDC issuer URL |
+| `--auth-oauth2-client-id` | `LUMEN_AUTH_OAUTH2_CLIENT_ID` | *(required for oauth2)* | OAuth2 client ID |
+| `--auth-oauth2-client-secret` | `LUMEN_AUTH_OAUTH2_CLIENT_SECRET` | *(required for oauth2)* | OAuth2 client secret |
+| `--auth-oauth2-redirect-uri` | `LUMEN_AUTH_OAUTH2_REDIRECT_URI` | *(required for oauth2)* | Full callback URL, e.g. `http://localhost:8080/auth/callback` |
+| `--auth-oauth2-subject` | `LUMEN_AUTH_OAUTH2_SUBJECT` | *(required for oauth2)* | Expected `sub` claim in the ID token |
 
 ## Task Spawn Model
 

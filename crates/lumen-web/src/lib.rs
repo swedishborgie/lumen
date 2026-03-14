@@ -4,9 +4,10 @@
 //! (SDP offer/answer, trickle ICE) over a WebSocket endpoint at `/ws`.
 //! Static assets are served from a configurable directory.
 
+pub mod auth;
 pub mod server;
 pub mod signaling;
 pub mod types;
 
 pub use server::WebServer;
-pub use types::WebServerConfig;
+pub use types::{AuthConfig, WebServerConfig};

@@ -39,7 +39,7 @@ fi
 # ── Auto-detect iGPU render node ──────────────────────────────────────────────
 DRI_ARGS=()
 if [[ -z "${LUMEN_DRI_NODE:-}" ]] && [[ ! " $* " =~ " --dri-node " ]]; then
-    RENDER_NODE="$(ls /dev/dri/renderD* 2>/dev/null | head -1)"
+    RENDER_NODE="$(ls /dev/dri/renderD* 2>/dev/null | head -1 || true)"
     if [[ -n "$RENDER_NODE" ]]; then
         echo "==> Auto-detected render node: $RENDER_NODE"
         DRI_ARGS=(--dri-node "$RENDER_NODE")

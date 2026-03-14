@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
+use libpulse_binding::def::BufferAttr;
 use libpulse_binding::sample::{Format, Spec};
 use libpulse_binding::stream::Direction;
 use libpulse_simple_binding::Simple;
@@ -40,7 +41,7 @@ impl AudioCapture {
     /// Returns `(capture, packet_rx)`. Feed `packet_rx` into the WebRTC
     /// session. Call [`AudioCapture::run`] on a blocking thread.
     pub fn new(config: AudioConfig) -> Result<(Self, mpsc::Receiver<OpusPacket>)> {
-        let (packet_tx, packet_rx) = mpsc::channel(64);
+        let (packet_tx, packet_rx) = mpsc::channel(4);
         let stop_flag = Arc::new(AtomicBool::new(false));
         let bitrate = Arc::new(AtomicI32::new(config.bitrate_bps));
         let peer_count = config.peer_count.clone();
@@ -86,6 +87,24 @@ impl AudioCapture {
             bail!("Invalid PulseAudio sample spec: rate={sample_rate} channels={channels}");
         }
 
+        // Compute the exact number of bytes per Opus frame so we can set the
+        // PulseAudio fragment size to match. Without this, PA uses its default
+        // server-side buffer (often 2–3 s), which is the primary cause of the
+        // audio lag. Setting fragsize = one Opus frame's worth of PCM bytes
+        // tells PA to deliver audio in exactly those-sized chunks, keeping
+        // end-to-end audio latency at one frame period (~20 ms).
+        let frame_bytes_for_pa = {
+            let frame_size = (sample_rate as u64 * frame_ms as u64 / 1000) as usize;
+            frame_size * channels as usize * 2 // S16LE = 2 bytes/sample
+        };
+        let pa_buf_attr = BufferAttr {
+            maxlength: u32::MAX,
+            tlength: u32::MAX,
+            prebuf: u32::MAX,
+            minreq: u32::MAX,
+            fragsize: frame_bytes_for_pa as u32,
+        };
+
         // Resolve device: use the configured name, or auto-detect the monitor
         // of the default output sink so desktop application audio is captured
         // rather than the microphone (the PA default input source).
@@ -107,7 +126,7 @@ impl AudioCapture {
             "capture",               // stream description
             &pa_spec,
             None,                    // channel map
-            None,                    // buffering attributes
+            Some(&pa_buf_attr),      // request one-frame fragment size for low latency
         )
         .context("Failed to open PulseAudio stream")?;
 

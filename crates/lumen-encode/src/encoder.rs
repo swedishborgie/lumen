@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::Instant;
 
 use anyhow::Result;
 use bytes::Bytes;
@@ -44,6 +45,14 @@ pub struct EncodedFrame {
     /// Presentation timestamp in milliseconds.
     pub pts_ms: u64,
     pub is_keyframe: bool,
+    /// Wall-clock instant at which the source frame was captured by the compositor.
+    ///
+    /// Must be passed as the `instant` argument to `writer.write()` in `push_video`
+    /// so that str0m's RTCP Sender Reports reflect the true capture time rather than
+    /// the (later) encode-output time. Using `Instant::now()` at send time instead
+    /// would shift the video NTP↔RTP mapping by the encoder's pipeline latency,
+    /// causing the browser to desync audio behind video by that amount.
+    pub captured_at: Instant,
 }
 
 /// Abstraction over hardware and software H.264 encoders.

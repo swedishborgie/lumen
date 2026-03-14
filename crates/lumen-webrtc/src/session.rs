@@ -250,7 +250,7 @@ impl WebRtcSession {
             .map(PayloadParams::pt)
             .ok_or_else(|| anyhow!("No H264 PT negotiated"))?;
         tracing::debug!(pts_ms = frame.pts_ms, keyframe = frame.is_keyframe, "Sending video RTP");
-        writer.write(pt, Instant::now(), rtp_time, frame.data.to_vec())
+        writer.write(pt, frame.captured_at, rtp_time, frame.data.to_vec())
             .map_err(|e| anyhow!("Video write error: {:?}", e))
     }
 

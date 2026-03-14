@@ -8,9 +8,11 @@
 // FFI with ffmpeg-sys-next uses many intentional numeric casts.
 #![allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_possible_wrap)]
 
+use std::collections::VecDeque;
 use std::ffi::CString;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
 use bytes::Bytes;
@@ -76,6 +78,14 @@ pub struct VaapiEncoder {
     width: i32,
     height: i32,
     frame_index: i64,
+    /// FIFO of capture instants for frames submitted to the encoder.
+    ///
+    /// Pushed when `avcodec_send_frame` succeeds, popped when
+    /// `avcodec_receive_packet` returns a packet. Because `max_b_frames = 0`
+    /// and no reordering occurs, the queue is strictly FIFO. This lets
+    /// `push_video` pass the original capture `Instant` — not `Instant::now()`
+    /// — to `writer.write()`, which is critical for correct RTCP SR timestamps.
+    pending_captured_at: VecDeque<Instant>,
 
     // Stored for use during resize reinitialization.
     fps: f64,
@@ -216,6 +226,12 @@ impl VaapiEncoder {
             av_dict_set(&mut opts, c"profile".as_ptr(), c"high".as_ptr(), 0);
             av_dict_set(&mut opts, c"level".as_ptr(), c"4.1".as_ptr(), 0);
             av_dict_set(&mut opts, c"rc_mode".as_ptr(), c"CBR".as_ptr(), 0);
+            // Limit the encoder's internal async pipeline to 1 frame. The default
+            // depth (typically 2–4) causes the encoder to buffer several frames
+            // before producing output, which shifts the NTP↔RTP correlation in
+            // RTCP Sender Reports and causes the browser to desync audio from
+            // video by the pipeline depth (1–3 s at typical frame rates).
+            av_dict_set(&mut opts, c"async_depth".as_ptr(), c"1".as_ptr(), 0);
             let ret = avcodec_open2(codec_ctx, codec, &mut opts);
             if !opts.is_null() { av_dict_free(&mut opts); }
             if ret < 0 {
@@ -264,6 +280,7 @@ impl VaapiEncoder {
                 width: w,
                 height: h,
                 frame_index: 0,
+                pending_captured_at: VecDeque::new(),
                 fps: config.fps,
                 bitrate_kbps: config.bitrate_kbps,
             })
@@ -331,7 +348,7 @@ impl VaapiEncoder {
         if ret == AVERROR(EAGAIN) { return Ok(None); }
         if ret < 0 { bail!("av_buffersink_get_frame failed: {}", ret); }
 
-        self.send_and_receive(&mut nv12_frame, frame.pts_ms)
+        self.send_and_receive(&mut nv12_frame, frame.pts_ms, frame.captured_at)
     }
 
     /// Submit a hardware frame to the encoder and drain one packet.
@@ -339,11 +356,15 @@ impl VaapiEncoder {
         &mut self,
         hw_frame: &mut AvFramePtr,
         fallback_pts_ms: u64,
+        captured_at: Instant,
     ) -> Result<Option<EncodedFrame>> {
         let ret = avcodec_send_frame(self.codec_ctx, hw_frame.as_mut());
         if ret < 0 && ret != AVERROR(EAGAIN) {
             bail!("avcodec_send_frame failed: {}", ret);
         }
+        // Record capture instant so we can attach it to the output packet,
+        // regardless of how many frames the encoder holds internally.
+        self.pending_captured_at.push_back(captured_at);
 
         let mut pkt = AvPacketPtr::alloc()?;
         let ret = avcodec_receive_packet(self.codec_ctx, pkt.as_mut());
@@ -354,12 +375,15 @@ impl VaapiEncoder {
         let data = std::slice::from_raw_parts(p.data, p.size as usize);
         let is_keyframe = (p.flags & AV_PKT_FLAG_KEY) != 0;
         let pts_ms = if p.pts != AV_NOPTS_VALUE { p.pts as u64 } else { fallback_pts_ms };
+        // Pop the oldest pending capture instant (FIFO; no B-frames so order is preserved).
+        let frame_captured_at = self.pending_captured_at.pop_front().unwrap_or(captured_at);
         self.frame_index += 1;
 
         Ok(Some(EncodedFrame {
             data: Bytes::copy_from_slice(data),
             pts_ms,
             is_keyframe,
+            captured_at: frame_captured_at,
         }))
     }
 }
@@ -477,6 +501,7 @@ impl VideoEncoder for VaapiEncoder {
             av_dict_set(&mut opts, c"profile".as_ptr(), c"high".as_ptr(), 0);
             av_dict_set(&mut opts, c"level".as_ptr(), c"4.1".as_ptr(), 0);
             av_dict_set(&mut opts, c"rc_mode".as_ptr(), c"CBR".as_ptr(), 0);
+            av_dict_set(&mut opts, c"async_depth".as_ptr(), c"1".as_ptr(), 0);
             let ret = avcodec_open2(codec_ctx, codec, &mut opts);
             if !opts.is_null() { av_dict_free(&mut opts); }
             if ret < 0 {
@@ -507,6 +532,7 @@ impl VideoEncoder for VaapiEncoder {
             self.width = w;
             self.height = h;
             self.frame_index = 0;
+            self.pending_captured_at.clear();
         }
 
         tracing::info!("VA-API encoder resized to {}x{}", width, height);

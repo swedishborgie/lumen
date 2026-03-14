@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::sync::{atomic::AtomicUsize, Arc};
+use std::time::Instant;
 use bytes::Bytes;
 use smithay::backend::allocator::dmabuf::Dmabuf;
 
@@ -54,8 +55,18 @@ pub struct CapturedFrame {
     pub drm_modifier: u64,
     pub width: u32,
     pub height: u32,
-    /// Presentation timestamp in milliseconds.
+    /// Presentation timestamp in milliseconds (from compositor monotonic clock).
     pub pts_ms: u64,
+    /// Wall-clock instant at which this frame was captured.
+    ///
+    /// Carried through the encoding pipeline so that `push_video` can pass the
+    /// true capture time — not `Instant::now()` — to `writer.write()`. str0m
+    /// embeds this in RTCP Sender Reports to establish the NTP↔RTP mapping used
+    /// by the browser for A/V synchronisation. If the encode pipeline introduces
+    /// latency (e.g. VA-API async buffering), using `Instant::now()` at send time
+    /// instead of capture time shifts the video RTCP SR forward by the encode
+    /// latency, causing the browser to delay audio by that amount.
+    pub captured_at: Instant,
 }
 
 /// A clipboard update event emitted by the compositor when the Wayland selection changes.

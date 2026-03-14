@@ -16,7 +16,7 @@ use smithay::{
     wayland::seat::WaylandFocus,
 };
 use bytes::Bytes;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::state::AppState;
 use crate::types::CapturedFrame;
@@ -25,6 +25,7 @@ use crate::types::CapturedFrame;
 /// Called on every timer tick inside the calloop event loop.
 pub fn render_and_capture(state: &mut AppState, damage_tracker: &mut OutputDamageTracker) {
     let now_ms = state.clock.now().as_millis() as u64;
+    let captured_at = Instant::now();
     let width = state.width.cast_unsigned();
     let height = state.height.cast_unsigned();
 
@@ -39,9 +40,9 @@ pub fn render_and_capture(state: &mut AppState, damage_tracker: &mut OutputDamag
     }
 
     if state.use_gpu {
-        render_gles(state, damage_tracker, &output, now_ms, width, height);
+        render_gles(state, damage_tracker, &output, now_ms, captured_at, width, height);
     } else {
-        render_pixman(state, damage_tracker, &output, now_ms, width, height);
+        render_pixman(state, damage_tracker, &output, now_ms, captured_at, width, height);
     }
 
     // Send wl_surface.frame callbacks so clients know to render their next frame.
@@ -66,6 +67,7 @@ fn render_gles(
     damage_tracker: &mut OutputDamageTracker,
     output: &Output,
     now_ms: u64,
+    captured_at: Instant,
     width: u32,
     height: u32,
 ) {
@@ -107,6 +109,7 @@ fn render_gles(
                 width,
                 height,
                 pts_ms: now_ms,
+                captured_at,
             });
             state.encoded_frame_count += 1;
         }
@@ -140,6 +143,7 @@ fn render_pixman(
     damage_tracker: &mut OutputDamageTracker,
     output: &Output,
     now_ms: u64,
+    captured_at: Instant,
     width: u32,
     height: u32,
 ) {
@@ -222,6 +226,7 @@ fn render_pixman(
                 width,
                 height,
                 pts_ms: now_ms,
+                captured_at,
             });
             state.encoded_frame_count += 1;
         }

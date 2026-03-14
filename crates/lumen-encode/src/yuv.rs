@@ -1,12 +1,17 @@
-//! RGBA → YUV420 color space conversion for the x264 software encoder.
+//! BGRA → YUV420 color space conversion for the x264 software encoder.
+//!
+//! The Pixman renderer (CPU path) outputs pixels in `A8R8G8B8` format, which
+//! in memory is stored as `[B, G, R, A]` bytes (little-endian). All functions
+//! here expect that byte order.
 
-/// Convert an RGBA (or BGRA/ARGB — any 4-byte-per-pixel) buffer to I420 (YUV 4:2:0 planar).
+/// Convert a BGRA buffer (Pixman `A8R8G8B8` output) to I420 (YUV 4:2:0 planar).
 ///
-/// Input `rgba` must be exactly `width * height * 4` bytes.
+/// Input `bgra` must be exactly `width * height * 4` bytes laid out as
+/// `[B, G, R, A, B, G, R, A, …]`.
 /// Returns `(Y, U, V)` planes: Y is `width*height` bytes, U and V are each `(w/2)*(h/2)`.
 // BT.601 math produces clamped i32 values that are safely cast to u8.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-pub fn rgba_to_i420(rgba: &[u8], width: usize, height: usize) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+pub fn bgra_to_i420(bgra: &[u8], width: usize, height: usize) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     let pixels = width * height;
     let mut y_plane = vec![0u8; pixels];
     let mut u_plane = vec![0u8; (width / 2) * (height / 2)];
@@ -15,9 +20,10 @@ pub fn rgba_to_i420(rgba: &[u8], width: usize, height: usize) -> (Vec<u8>, Vec<u
     for row in 0..height {
         for col in 0..width {
             let i = (row * width + col) * 4;
-            let r = rgba[i] as i32;
-            let g = rgba[i + 1] as i32;
-            let b = rgba[i + 2] as i32;
+            // Pixman stores A8R8G8B8 as [B, G, R, A] in memory.
+            let b = bgra[i] as i32;
+            let g = bgra[i + 1] as i32;
+            let r = bgra[i + 2] as i32;
 
             // BT.601 coefficients
             let yv = ((66 * r + 129 * g + 25 * b + 128) >> 8) + 16;

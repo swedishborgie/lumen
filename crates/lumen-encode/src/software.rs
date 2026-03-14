@@ -14,7 +14,7 @@ use x264_sys::{
 };
 
 use crate::encoder::{EncodedFrame, VideoEncoder};
-use crate::yuv::rgba_to_i420;
+use crate::yuv::bgra_to_i420;
 
 /// Software H.264 encoder backed by libx264.
 pub struct SoftwareEncoder {
@@ -103,7 +103,7 @@ impl VideoEncoder for SoftwareEncoder {
             self.force_keyframe = false;
         }
 
-        let (y, u, v) = rgba_to_i420(&rgba, self.width as usize, self.height as usize);
+        let (y, u, v) = bgra_to_i420(&rgba, self.width as usize, self.height as usize);
 
         let y_stride = self.width as i32;
         let uv_stride = (self.width / 2) as i32;
@@ -167,6 +167,7 @@ impl VideoEncoder for SoftwareEncoder {
             data: Bytes::from(data),
             pts_ms: frame.pts_ms,
             is_keyframe,
+            captured_at: frame.captured_at,
         }))
     }
 

@@ -1,5 +1,5 @@
 use smithay::{
-    backend::input::{Axis, ButtonState, KeyState},
+    backend::input::{Axis, AxisSource, ButtonState, KeyState},
     desktop::WindowSurfaceType,
     input::{
         keyboard::{FilterResult, Keycode},
@@ -51,10 +51,19 @@ pub enum InputEvent {
         state: u32,
     },
     PointerAxis {
-        /// Horizontal scroll delta.
+        /// Horizontal scroll delta in pixels.
         x: f64,
-        /// Vertical scroll delta.
+        /// Vertical scroll delta in pixels.
         y: f64,
+        /// Axis source: `"wheel"` for mouse wheel, `"continuous"` for touchpad.
+        #[serde(default)]
+        source: Option<String>,
+        /// High-resolution scroll for horizontal axis (multiples of 120 per notch).
+        #[serde(default)]
+        v120_x: Option<i32>,
+        /// High-resolution scroll for vertical axis (multiples of 120 per notch).
+        #[serde(default)]
+        v120_y: Option<i32>,
     },
     /// Request to set the compositor clipboard to the given text.
     ClipboardWrite {
@@ -76,10 +85,12 @@ pub fn inject_input(state: &mut AppState, event: InputEvent) {
             inject_pointer_motion(state, serial, time, x, y);
         }
         InputEvent::PointerButton { btn, state: btn_state } => {
+            let n_windows = state.space.elements().count();
+            tracing::debug!(btn, btn_state, n_windows, "inject_input: PointerButton");
             inject_pointer_button(state, serial, time, btn, btn_state);
         }
-        InputEvent::PointerAxis { x, y } => {
-            inject_pointer_axis(state, time, x, y);
+        InputEvent::PointerAxis { x, y, source, v120_x, v120_y } => {
+            inject_pointer_axis(state, time, x, y, source, v120_x, v120_y);
         }
         // ClipboardWrite is handled at the orchestration layer (main.rs) before
         // reaching inject_input; this arm is a safety fallback.
@@ -124,6 +135,11 @@ fn inject_pointer_motion(state: &mut AppState, serial: Serial, time: u32, x: f64
     let focus = surface_under_at(state, location)
         .map(|(s, offset)| (s, offset.to_f64()));
 
+    if focus.is_none() {
+        let n = state.space.elements().count();
+        tracing::debug!(x, y, n_windows = n, "inject_pointer_motion: no surface under cursor");
+    }
+
     pointer.motion(state, focus, &MotionEvent { location, serial, time });
     pointer.frame(state);
 }
@@ -149,11 +165,36 @@ fn inject_pointer_button(state: &mut AppState, serial: Serial, time: u32, btn: u
     pointer.frame(state);
 }
 
-fn inject_pointer_axis(state: &mut AppState, time: u32, x: f64, y: f64) {
+fn inject_pointer_axis(
+    state: &mut AppState,
+    time: u32,
+    x: f64,
+    y: f64,
+    source: Option<String>,
+    v120_x: Option<i32>,
+    v120_y: Option<i32>,
+) {
     let pointer = state.seat.get_pointer().unwrap();
+
+    let axis_src = match source.as_deref() {
+        Some("wheel")      => Some(AxisSource::Wheel),
+        Some("continuous") => Some(AxisSource::Continuous),
+        Some("finger")     => Some(AxisSource::Finger),
+        _                  => None,
+    };
+
     let mut frame = AxisFrame::new(time);
-    if x != 0.0 { frame = frame.value(Axis::Horizontal, x); }
-    if y != 0.0 { frame = frame.value(Axis::Vertical, y); }
+    if let Some(src) = axis_src {
+        frame = frame.source(src);
+    }
+    if x != 0.0 {
+        frame = frame.value(Axis::Horizontal, x);
+        if let Some(v) = v120_x { frame = frame.v120(Axis::Horizontal, v); }
+    }
+    if y != 0.0 {
+        frame = frame.value(Axis::Vertical, y);
+        if let Some(v) = v120_y { frame = frame.v120(Axis::Vertical, v); }
+    }
     pointer.axis(state, frame);
     pointer.frame(state);
 }

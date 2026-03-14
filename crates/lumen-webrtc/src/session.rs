@@ -250,7 +250,7 @@ impl WebRtcSession {
                             self.input_events.push(ev);
                         }
                         Err(e) => {
-                            tracing::debug!("Data channel parse error: {} — raw: {:?}",
+                            tracing::warn!("Data channel parse error: {} — raw: {:?}",
                                 e, String::from_utf8_lossy(&data.data));
                         }
                     }

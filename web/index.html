@@ -9,14 +9,18 @@
 <body>
   <div id="video-container">
     <video id="video" autoplay playsinline muted tabindex="0" controlslist="nopictureinpicture" disablepictureinpicture></video>
+    <canvas id="cursor-canvas"></canvas>
   </div>
 
   <div id="tray-trigger" title="Open Controls"></div>
+
+  <div id="fullscreen-hint">Hold <kbd>Esc</kbd> to exit fullscreen</div>
 
   <div id="tray">
     <div id="controls">
       <button id="btn-connect">Connect</button>
       <button id="btn-disconnect" disabled>Disconnect</button>
+      <button id="btn-fullscreen" disabled>⛶ Fullscreen</button>
     </div>
     <div id="status">Idle</div>
     <div id="clipboard-section">
@@ -33,10 +37,13 @@
     const client = new LumenClient();
     new LumenUI(client, {
       video:          document.getElementById('video'),
+      cursorCanvas:   document.getElementById('cursor-canvas'),
       stats:          document.getElementById('stats'),
       btnConnect:     document.getElementById('btn-connect'),
       btnDisconnect:  document.getElementById('btn-disconnect'),
+      btnFullscreen:  document.getElementById('btn-fullscreen'),
       statusEl:       document.getElementById('status'),
+      fullscreenHint: document.getElementById('fullscreen-hint'),
       clipboardInput: document.getElementById('clipboard-input'),
     });
 

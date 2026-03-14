@@ -13,19 +13,34 @@ import { LumenClient, KEY_MAP, BTN_CODES } from './lumen-client.js';
 
 export class LumenUI {
   #client;
-  #els;       // { video, stats, btnConnect, btnDisconnect, statusEl }
+  #els;       // { video, cursorCanvas, stats, btnConnect, btnDisconnect, btnFullscreen, statusEl, fullscreenHint }
   #statsTimer = null;
   #resizeObserver = null;
   #resizeDebounceTimer = null;
   #audioUnlocked = false;
+  // Fullscreen / pointer-lock state
+  #pointerLocked = false;
+  #vMouseX = 0;   // virtual cursor position in compositor pixel space
+  #vMouseY = 0;
+  // Canvas cursor state
+  #cursorCtx    = null;
+  #cursorKind   = 'default';   // 'default' | 'hidden' | 'image'
+  #cursorImg    = null;        // ImageBitmap for 'image' kind
+  #cursorHotX   = 0;
+  #cursorHotY   = 0;
+  #displayX     = 0;           // cursor position in canvas CSS pixels
+  #displayY     = 0;
 
   /**
    * @param {LumenClient} client
    * @param {{ video: HTMLVideoElement,
+   *           cursorCanvas: HTMLCanvasElement,
    *           stats: HTMLElement,
    *           btnConnect: HTMLButtonElement,
    *           btnDisconnect: HTMLButtonElement,
+   *           btnFullscreen: HTMLButtonElement,
    *           statusEl: HTMLElement,
+   *           fullscreenHint: HTMLElement,
    *           clipboardInput: HTMLTextAreaElement }} elements
    */
   constructor(client, elements) {
@@ -35,8 +50,10 @@ export class LumenUI {
     this.#bindClientEvents();
     this.#bindInputEvents();
     this.#bindControlEvents();
+    this.#bindFullscreenEvents();
     this.#bindClipboardPanel();
     this.#bindResizeObserver();
+    this.#initCursorCanvas();
   }
 
   // ── client event bindings ────────────────────────────────────────────────────
@@ -52,10 +69,10 @@ export class LumenUI {
       const state = e.detail;
       btnConnect.disabled    = state !== 'idle';
       btnDisconnect.disabled = state === 'idle';
+      this.#els.btnFullscreen.disabled = state !== 'connected';
 
       if (state === 'connected') {
         video.focus();
-        video.style.cursor = 'default';
         this.#statsTimer = setInterval(() => this.#updateStats(), 1000);
         // Send the current size immediately so the compositor matches the viewport.
         this.#sendCurrentSize();
@@ -66,7 +83,12 @@ export class LumenUI {
         stats.textContent  = 'No stats yet';
         video.srcObject    = null;
         video.muted        = true;
-        video.style.cursor = 'default';
+        // Clear the canvas cursor and reset state.
+        this.#cursorKind = 'default';
+        this.#cursorImg  = null;
+        this.#clearCursorCanvas();
+        // Exit fullscreen/pointer-lock if the session ends.
+        if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
       }
     });
 
@@ -85,7 +107,7 @@ export class LumenUI {
 
     this.#client.addEventListener('dcmessage', (e) => {
       const msg = e.detail;
-      if (msg.type === 'cursor_update') this.#applyCursor(msg);
+      if (msg.type === 'cursor_update') this.#applyCursor(msg).catch(console.warn);
       else if (msg.type === 'clipboard_update') this.#applyClipboard(msg);
       else console.log('[lumen] dcmessage unknown type:', msg.type);
     });
@@ -95,46 +117,104 @@ export class LumenUI {
 
   #bindInputEvents() {
     const { video } = this.#els;
+    // Pointer events are attached to the container div (parent of video and canvas)
+    // rather than the video element itself.  The canvas overlay (even with
+    // pointer-events:none) can intercept pointerdown in some browsers; the
+    // container always receives events regardless of internal stacking order.
+    const pointerTarget = video.parentElement ?? video;
 
+    // Keyboard events stay on the video element — it holds focus.
     video.addEventListener('keydown', (e) => {
+      e.preventDefault();
       this.#tryUnlockAudio();
       const sc = KEY_MAP[e.code];
       if (sc === undefined) return;
-      e.preventDefault();
       this.#client.sendInput({ type: 'keyboard_key', scancode: sc, state: 1 });
     });
 
     video.addEventListener('keyup', (e) => {
+      e.preventDefault();
       const sc = KEY_MAP[e.code];
       if (sc === undefined) return;
-      e.preventDefault();
       this.#client.sendInput({ type: 'keyboard_key', scancode: sc, state: 0 });
     });
 
-    video.addEventListener('pointermove', (e) => {
-      const { x, y } = this.#toCompositorCoords(e.clientX, e.clientY);
-      this.#client.sendInput({ type: 'pointer_motion', x, y });
+    pointerTarget.addEventListener('pointermove', (e) => {
+      if (this.#pointerLocked) {
+        // Relative motion: accumulate into virtual cursor position.
+        const { scaleX, scaleY, vw, vh } = this.#getDisplayScale();
+        this.#vMouseX = Math.max(0, Math.min(vw - 1, this.#vMouseX + e.movementX * scaleX));
+        this.#vMouseY = Math.max(0, Math.min(vh - 1, this.#vMouseY + e.movementY * scaleY));
+        this.#client.sendInput({ type: 'pointer_motion', x: this.#vMouseX, y: this.#vMouseY });
+        const dp = this.#compositorToDisplayCoords(this.#vMouseX, this.#vMouseY);
+        this.#displayX = dp.x;
+        this.#displayY = dp.y;
+      } else {
+        const { x, y } = this.#toCompositorCoords(e.clientX, e.clientY);
+        this.#client.sendInput({ type: 'pointer_motion', x, y });
+        const rect = this.#els.video.getBoundingClientRect();
+        this.#displayX = e.clientX - rect.left;
+        this.#displayY = e.clientY - rect.top;
+      }
+      this.#drawCursor();
     });
 
-    video.addEventListener('pointerdown', (e) => {
+    pointerTarget.addEventListener('pointerdown', (e) => {
+      console.log('[lumen] pointerdown', { button: e.button, pointerId: e.pointerId, target: e.target?.tagName, dcState: this.#client.dcReadyState });
+      e.preventDefault();
       video.focus();
-      video.setPointerCapture(e.pointerId);
+      try { video.setPointerCapture(e.pointerId); } catch (err) { console.warn('[lumen] setPointerCapture failed:', err.message); }
       this.#tryUnlockAudio();
-      const { x, y } = this.#toCompositorCoords(e.clientX, e.clientY);
-      this.#client.sendInput({ type: 'pointer_motion', x, y });
-      this.#client.sendInput({ type: 'pointer_button', btn: BTN_CODES[e.button] ?? 272, state: 1 });
-      e.preventDefault();
+      const btn = BTN_CODES[e.button];
+      console.log('[lumen] btn lookup:', { eButton: e.button, btn });
+      if (btn === undefined) { console.warn('[lumen] dropping unknown button', e.button); return; }
+      if (!this.#pointerLocked) {
+        const { x, y } = this.#toCompositorCoords(e.clientX, e.clientY);
+        console.log('[lumen] sending pointer_motion', { x, y });
+        this.#client.sendInput({ type: 'pointer_motion', x, y });
+      }
+      console.log('[lumen] sending pointer_button', { btn, state: 1 });
+      this.#client.sendInput({ type: 'pointer_button', btn, state: 1 });
     });
 
-    video.addEventListener('pointerup', (e) => {
-      this.#client.sendInput({ type: 'pointer_button', btn: BTN_CODES[e.button] ?? 272, state: 0 });
+    pointerTarget.addEventListener('pointerup', (e) => {
+      const btn = BTN_CODES[e.button];
+      if (btn === undefined) return;   // drop unknown buttons
+      console.log('[lumen] sending pointer_button', { btn, state: 0 });
+      this.#client.sendInput({ type: 'pointer_button', btn, state: 0 });
     });
 
-    video.addEventListener('contextmenu', (e) => e.preventDefault());
+    pointerTarget.addEventListener('contextmenu', (e) => e.preventDefault());
 
-    video.addEventListener('wheel', (e) => {
+    pointerTarget.addEventListener('wheel', (e) => {
       e.preventDefault();
-      this.#client.sendInput({ type: 'pointer_axis', x: e.deltaX / 20, y: e.deltaY / 20 });
+      let { deltaX, deltaY, deltaMode } = e;
+      let source = 'continuous';
+      let v120_x = 0, v120_y = 0;
+
+      if (deltaMode === WheelEvent.DOM_DELTA_LINE) {
+        // Classic mouse wheel — each unit is one scroll line (~3 per notch).
+        // Multiply to pixels and compute v120 for Wayland axis_value120.
+        source = 'wheel';
+        v120_x = Math.round(deltaX * 40);   // 3 lines/notch × 40 = 120 per notch
+        v120_y = Math.round(deltaY * 40);
+        deltaX *= 20;
+        deltaY *= 20;
+      } else if (deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+        source = 'wheel';
+        v120_x = Math.sign(deltaX) * 120;
+        v120_y = Math.sign(deltaY) * 120;
+        deltaX *= 800;
+        deltaY *= 800;
+      }
+      // DOM_DELTA_PIXEL: touchpad or pixel-precise wheel — use values as-is,
+      // source stays 'continuous', no v120.
+
+      this.#client.sendInput({
+        type: 'pointer_axis',
+        x: deltaX, y: deltaY,
+        source, v120_x, v120_y,
+      });
     }, { passive: false });
   }
 
@@ -144,6 +224,82 @@ export class LumenUI {
     const { btnConnect, btnDisconnect } = this.#els;
     btnConnect.addEventListener('click',    () => this.#client.connect());
     btnDisconnect.addEventListener('click', () => this.#client.disconnect());
+  }
+
+  // ── fullscreen + pointer lock + keyboard lock ────────────────────────────────
+
+  // Keys to capture via the Keyboard Lock API when in fullscreen.
+  // Supported only in Chromium-based browsers when fullscreen is active.
+  static #LOCKABLE_KEYS = [
+    'Escape', 'Tab',
+    'MetaLeft', 'MetaRight',
+    'AltLeft', 'AltRight',
+    'F1','F2','F3','F4','F5','F6','F7','F8','F9','F10','F11','F12',
+    'F13','F14','F15','F16','F17','F18','F19','F20','F21','F22','F23','F24',
+  ];
+
+  #bindFullscreenEvents() {
+    const { btnFullscreen, video } = this.#els;
+
+    btnFullscreen.addEventListener('click', () => this.#enterFullscreen());
+
+    document.addEventListener('fullscreenchange', () => this.#handleFullscreenChange());
+
+    document.addEventListener('pointerlockchange', () => this.#handlePointerLockChange());
+    document.addEventListener('pointerlockerror', () => {
+      console.warn('[lumen] pointer lock request failed');
+    });
+  }
+
+  async #enterFullscreen() {
+    const container = this.#els.video.closest('#video-container') ?? this.#els.video;
+    try {
+      await container.requestFullscreen({ navigationUI: 'hide' });
+    } catch (err) {
+      console.warn('[lumen] requestFullscreen failed:', err);
+    }
+  }
+
+  async #handleFullscreenChange() {
+    const { video, btnFullscreen, fullscreenHint } = this.#els;
+    if (document.fullscreenElement) {
+      // Entered fullscreen — request pointer lock then keyboard lock.
+      try {
+        await video.requestPointerLock({ unadjustedMovement: true });
+      } catch {
+        // unadjustedMovement not supported in all browsers; fall back.
+        video.requestPointerLock();
+      }
+      // Keyboard Lock: capture OS-level keys (Chromium only, no-op elsewhere).
+      await navigator.keyboard?.lock(LumenUI.#LOCKABLE_KEYS).catch(() => {});
+      btnFullscreen.textContent = '✕ Exit Fullscreen';
+      fullscreenHint.classList.add('visible');
+    } else {
+      // Exited fullscreen — pointer lock and keyboard lock are released automatically.
+      navigator.keyboard?.unlock();
+      btnFullscreen.textContent = '⛶ Fullscreen';
+      fullscreenHint.classList.remove('visible');
+      this.#pointerLocked = false;
+      video.focus();
+    }
+  }
+
+  #handlePointerLockChange() {
+    const { video } = this.#els;
+    if (document.pointerLockElement === video) {
+      this.#pointerLocked = true;
+      // Initialise virtual cursor at the centre of the compositor output.
+      const vw = video.videoWidth  || 1920;
+      const vh = video.videoHeight || 1080;
+      this.#vMouseX = vw / 2;
+      this.#vMouseY = vh / 2;
+      const dp = this.#compositorToDisplayCoords(this.#vMouseX, this.#vMouseY);
+      this.#displayX = dp.x;
+      this.#displayY = dp.y;
+      this.#drawCursor();
+    } else {
+      this.#pointerLocked = false;
+    }
   }
 
   // ── clipboard panel (browser → compositor) ───────────────────────────────────
@@ -212,38 +368,104 @@ export class LumenUI {
     this.#audioUnlocked = true;
   }
 
-  // ── cursor handling ──────────────────────────────────────────────────────────
+  // ── cursor canvas ─────────────────────────────────────────────────────────────
+
+  /** Set up the cursor canvas and do an initial size sync. */
+  #initCursorCanvas() {
+    this.#resizeCursorCanvas();
+  }
+
+  /** Resize the canvas pixel buffer to match the video element's CSS display size. */
+  #resizeCursorCanvas() {
+    const { cursorCanvas, video } = this.#els;
+    const rect = video.getBoundingClientRect();
+    const dpr  = devicePixelRatio || 1;
+    cursorCanvas.width  = Math.round(rect.width  * dpr);
+    cursorCanvas.height = Math.round(rect.height * dpr);
+    const ctx = cursorCanvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    this.#cursorCtx = ctx;
+    this.#drawCursor();
+  }
+
+  /** Clear the canvas entirely (used when disconnected). */
+  #clearCursorCanvas() {
+    const { cursorCanvas } = this.#els;
+    this.#cursorCtx?.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
+  }
+
+  /**
+   * Redraw the cursor on the canvas at the current (#displayX, #displayY) position.
+   * Called after every pointer move and cursor update.
+   */
+  #drawCursor() {
+    const { cursorCanvas } = this.#els;
+    const ctx = this.#cursorCtx;
+    if (!ctx) return;
+    ctx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
+    if (this.#cursorKind === 'hidden') return;
+    if (this.#cursorKind === 'image' && this.#cursorImg) {
+      ctx.drawImage(
+        this.#cursorImg,
+        this.#displayX - this.#cursorHotX,
+        this.#displayY - this.#cursorHotY,
+      );
+    } else {
+      this.#drawDefaultArrow(ctx, this.#displayX, this.#displayY);
+    }
+  }
+
+  /** Draw a classic arrow cursor with white fill and black outline. */
+  #drawDefaultArrow(ctx, x, y) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.beginPath();
+    // Arrow outline (clockwise, tip at origin pointing up-left)
+    ctx.moveTo(0,    0);
+    ctx.lineTo(0,    14);
+    ctx.lineTo(3.5,  10.5);
+    ctx.lineTo(6,    16);
+    ctx.lineTo(8,    15);
+    ctx.lineTo(5.5,  9.5);
+    ctx.lineTo(10,   9.5);
+    ctx.closePath();
+    ctx.fillStyle   = 'white';
+    ctx.strokeStyle = 'black';
+    ctx.lineWidth   = 1.2;
+    ctx.lineJoin    = 'round';
+    ctx.stroke();
+    ctx.fill();
+    ctx.restore();
+  }
 
   /**
    * Apply a cursor_update message from the compositor.
-   * Converts raw RGBA to a data-URL via an offscreen canvas and sets
-   * the CSS `cursor` property on the video element.
+   * Decodes the cursor image (if any) and redraws the canvas.
    */
-  #applyCursor(msg) {
-    const { video } = this.#els;
+  async #applyCursor(msg) {
     switch (msg.kind) {
       case 'default':
-        video.style.cursor = 'default';
+        this.#cursorKind = 'default';
+        this.#cursorImg  = null;
         break;
       case 'hidden':
-        video.style.cursor = 'none';
+        this.#cursorKind = 'hidden';
+        this.#cursorImg  = null;
         break;
       case 'image': {
         const { w, h, hotspot_x, hotspot_y, data } = msg;
-        const canvas = document.createElement('canvas');
-        canvas.width  = w;
-        canvas.height = h;
-        const ctx = canvas.getContext('2d');
-        // Decode base64 RGBA into Uint8ClampedArray.
+        this.#cursorHotX = hotspot_x;
+        this.#cursorHotY = hotspot_y;
+        // Decode base64 RGBA → ImageBitmap for efficient repeated drawing.
         const raw    = atob(data);
         const pixels = new Uint8ClampedArray(raw.length);
         for (let i = 0; i < raw.length; i++) pixels[i] = raw.charCodeAt(i);
-        ctx.putImageData(new ImageData(pixels, w, h), 0, 0);
-        const url = canvas.toDataURL();
-        video.style.cursor = `url(${url}) ${hotspot_x} ${hotspot_y}, auto`;
+        this.#cursorImg  = await createImageBitmap(new ImageData(pixels, w, h));
+        this.#cursorKind = 'image';
         break;
       }
     }
+    this.#drawCursor();
   }
 
   // ── clipboard handling ───────────────────────────────────────────────────────
@@ -264,24 +486,56 @@ export class LumenUI {
   // ── coordinate mapping ────────────────────────────────────────────────────────
 
   /**
-   * Map video-element client coords → compositor pixel coords,
-   * accounting for object-fit:contain letterboxing/pillarboxing.
+   * Compute the scale factors from CSS pixels → compositor pixels, accounting
+   * for object-fit:contain letterboxing/pillarboxing.  Used both by
+   * #toCompositorCoords (absolute) and the pointer-lock motion handler (relative).
    */
-  #toCompositorCoords(clientX, clientY) {
+  #getDisplayScale() {
     const { video } = this.#els;
     const rect = video.getBoundingClientRect();
     const vw = video.videoWidth  || 1920;
     const vh = video.videoHeight || 1080;
     const elAspect  = rect.width / rect.height;
     const vidAspect = vw / vh;
-    let offX = 0, offY = 0, drawW = rect.width, drawH = rect.height;
-    if (elAspect > vidAspect) {   // pillarbox
-      drawW = rect.height * vidAspect;
-      offX  = (rect.width - drawW) / 2;
-    } else {                       // letterbox
-      drawH = rect.width / vidAspect;
-      offY  = (rect.height - drawH) / 2;
+    let drawW = rect.width, drawH = rect.height;
+    if (elAspect > vidAspect) {
+      drawW = rect.height * vidAspect;   // pillarbox
+    } else {
+      drawH = rect.width / vidAspect;    // letterbox
     }
+    return { scaleX: vw / drawW, scaleY: vh / drawH, vw, vh };
+  }
+
+  /**
+   * Back-project compositor pixel coords → canvas CSS pixel coords.
+   * Inverse of #toCompositorCoords.
+   */
+  #compositorToDisplayCoords(cx, cy) {
+    const { video } = this.#els;
+    const rect = video.getBoundingClientRect();
+    const { scaleX, scaleY, vw, vh } = this.#getDisplayScale();
+    const drawW = vw / scaleX;
+    const drawH = vh / scaleY;
+    const offX  = (rect.width  - drawW) / 2;
+    const offY  = (rect.height - drawH) / 2;
+    return {
+      x: (cx / vw) * drawW + offX,
+      y: (cy / vh) * drawH + offY,
+    };
+  }
+
+  /**
+   * Map video-element client coords → compositor pixel coords,
+   * accounting for object-fit:contain letterboxing/pillarboxing.
+   */
+  #toCompositorCoords(clientX, clientY) {
+    const { video } = this.#els;
+    const rect = video.getBoundingClientRect();
+    const { scaleX, scaleY, vw, vh } = this.#getDisplayScale();
+    const drawW = vw / scaleX;
+    const drawH = vh / scaleY;
+    const offX  = (rect.width  - drawW) / 2;
+    const offY  = (rect.height - drawH) / 2;
     return {
       x: Math.max(0, Math.min(vw - 1, ((clientX - rect.left - offX) / drawW) * vw)),
       y: Math.max(0, Math.min(vh - 1, ((clientY - rect.top  - offY) / drawH) * vh)),
@@ -312,6 +566,7 @@ export class LumenUI {
           if (w > 0 && h > 0) {
             this.#client.sendResize(w, h);
           }
+          this.#resizeCursorCanvas();
         }, 150);
       }
     });

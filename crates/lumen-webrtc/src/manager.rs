@@ -49,7 +49,8 @@ impl SessionManager {
     pub async fn remove_session(&self, id: &SessionId) {
         let removed = self.sessions.lock().await.remove(id).is_some();
         if removed {
-            self.peer_count.fetch_sub(1, Ordering::Relaxed);
+            let new_count = self.peer_count.fetch_sub(1, Ordering::Relaxed) - 1;
+            tracing::info!(peer_count = new_count, "Session removed");
         }
     }
 

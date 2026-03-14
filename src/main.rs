@@ -98,6 +98,17 @@ async fn main() -> Result<()> {
     // ── Auth config ───────────────────────────────────────────────────────────
     let auth = build_auth_config(&args)?;
 
+    // ── Session manager ───────────────────────────────────────────────────────
+    // Created early so peer_count can be passed to the compositor and audio.
+    let ice_servers = args.ice_servers.split(',')
+        .map(|s| lumen_webrtc::types::IceServer { url: s.trim().to_string(), credential: None })
+        .collect();
+    let session_manager = lumen_webrtc::SessionManager::new(lumen_webrtc::SessionConfig {
+        ice_servers,
+        bind_addr: "0.0.0.0:0".parse()?,
+    });
+    let peer_count = session_manager.peer_count();
+
     // ── Compositor ────────────────────────────────────────────────────────────
     let mut compositor = lumen_compositor::Compositor::new(lumen_compositor::CompositorConfig {
         width: args.width,
@@ -105,6 +116,7 @@ async fn main() -> Result<()> {
         target_fps: args.fps,
         render_node: args.dri_node.clone(),
         inner_display: args.inner_display.clone(),
+        peer_count: Some(peer_count.clone()),
         ..Default::default()
     })?;
     let frame_rx = compositor.frame_receiver();
@@ -116,6 +128,7 @@ async fn main() -> Result<()> {
     let (mut audio_capture, audio_rx) = lumen_audio::AudioCapture::new(lumen_audio::AudioConfig {
         device_name: args.audio_device.clone(),
         bitrate_bps: args.audio_bitrate_bps,
+        peer_count: Some(peer_count.clone()),
         ..Default::default()
     })?;
 
@@ -140,15 +153,6 @@ async fn main() -> Result<()> {
     let (resize_tx, mut resize_rx) = tokio::sync::mpsc::channel::<(u32, u32)>(4);
     // Resize coordinator → encoder task (std channel, non-blocking try_recv).
     let (enc_resize_tx, enc_resize_rx) = std::sync::mpsc::channel::<(u32, u32)>();
-
-    // ── Session manager ───────────────────────────────────────────────────────
-    let ice_servers = args.ice_servers.split(',')
-        .map(|s| lumen_webrtc::types::IceServer { url: s.trim().to_string(), credential: None })
-        .collect();
-    let session_manager = lumen_webrtc::SessionManager::new(lumen_webrtc::SessionConfig {
-        ice_servers,
-        bind_addr: "0.0.0.0:0".parse()?,
-    });
 
     // ── Input forwarding channel ──────────────────────────────────────────────
     // Drive tasks drop events into this channel; a dedicated task drains them

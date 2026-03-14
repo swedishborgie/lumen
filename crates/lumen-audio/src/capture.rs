@@ -21,6 +21,7 @@ pub struct AudioCapture {
     packet_tx: mpsc::Sender<OpusPacket>,
     stop_flag: Arc<AtomicBool>,
     bitrate: Arc<AtomicI32>,
+    peer_count: Option<Arc<std::sync::atomic::AtomicUsize>>,
 }
 
 /// A cloneable handle allowing dynamic bitrate updates from any thread.
@@ -42,7 +43,8 @@ impl AudioCapture {
         let (packet_tx, packet_rx) = mpsc::channel(64);
         let stop_flag = Arc::new(AtomicBool::new(false));
         let bitrate = Arc::new(AtomicI32::new(config.bitrate_bps));
-        Ok((Self { config, packet_tx, stop_flag, bitrate }, packet_rx))
+        let peer_count = config.peer_count.clone();
+        Ok((Self { config, packet_tx, stop_flag, bitrate, peer_count }, packet_rx))
     }
 
     /// Returns a handle for updating the encoder bitrate at runtime.
@@ -136,6 +138,7 @@ impl AudioCapture {
         let mut output_buf = vec![0u8; 4000]; // max Opus packet size
         let mut pts: u64 = 0;
         let mut last_bitrate = self.bitrate.load(Ordering::Relaxed);
+        let mut audio_idle = false;
 
         tracing::info!("AudioCapture loop started (frame_size={frame_size} samples)");
 
@@ -166,6 +169,23 @@ impl AudioCapture {
             if self.config.use_silence_gate && pcm_buf.iter().all(|&s| s == 0) {
                 pts += frame_size as u64;
                 continue;
+            }
+
+            // Skip Opus encoding when no peers are connected; keep draining PA to
+            // stay current so the first frame after reconnect isn't stale.
+            if self.peer_count.as_ref()
+                .map_or(false, |c| c.load(std::sync::atomic::Ordering::Relaxed) == 0)
+            {
+                if !audio_idle {
+                    tracing::debug!("AudioCapture idle: no peers, skipping Opus encode");
+                    audio_idle = true;
+                }
+                pts += frame_size as u64;
+                continue;
+            }
+            if audio_idle {
+                tracing::debug!("AudioCapture resuming: peer connected");
+                audio_idle = false;
             }
 
             // Encode to Opus

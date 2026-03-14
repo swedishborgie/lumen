@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::{atomic::AtomicUsize, Arc};
 use bytes::Bytes;
 use smithay::backend::allocator::dmabuf::Dmabuf;
 
@@ -20,6 +21,10 @@ pub struct CompositorConfig {
     /// When set, a clipboard bridge task connects to that socket using
     /// `zwlr_data_control_manager_v1` to sync clipboard bidirectionally.
     pub inner_display: Option<String>,
+    /// Active peer count. When `Some` and the count is zero, frame rendering is
+    /// skipped so the compositor idles instead of rendering into the void.
+    /// `None` means always render (default, backward-compatible).
+    pub peer_count: Option<Arc<AtomicUsize>>,
 }
 
 impl Default for CompositorConfig {
@@ -31,6 +36,7 @@ impl Default for CompositorConfig {
             target_fps: 30.0,
             render_node: None,
             inner_display: None,
+            peer_count: None,
         }
     }
 }

@@ -121,6 +121,8 @@ impl Compositor {
         let frame_tx = self.frame_tx.clone();
         let cursor_tx = self.cursor_tx.clone();
         let clipboard_tx = self.clipboard_tx.clone();
+        let peer_count = self.config.peer_count.clone();
+        let peer_count_loop = peer_count.clone();
 
         let mut event_loop = EventLoop::<AppState>::try_new()
             .context("Failed to create calloop EventLoop")?;
@@ -346,11 +348,19 @@ impl Compositor {
                     state.last_log_time = t0;
                 }
 
-                if state.is_capturing {
+                let has_peers = peer_count.as_ref()
+                    .map_or(true, |c| c.load(std::sync::atomic::Ordering::Relaxed) > 0);
+
+                if state.is_capturing && has_peers {
                     // Take damage_tracker out to avoid a simultaneous mutable borrow of `state`.
                     if let Some(mut dt) = state.damage_tracker.take() {
                         render_and_capture(state, &mut dt);
                         state.damage_tracker = Some(dt);
+                    }
+                } else if state.is_capturing && !has_peers {
+                    // Log once per second so we can confirm idle mode is active.
+                    if elapsed >= 1.0 {
+                        tracing::debug!("Compositor idle: no peers, skipping render");
                     }
                 }
 
@@ -361,7 +371,13 @@ impl Compositor {
                 crate::compositor::check_pending_clipboard_read(state);
 
                 let spent = t0.elapsed();
-                TimeoutAction::ToDuration(frame_interval.saturating_sub(spent))
+                if has_peers {
+                    TimeoutAction::ToDuration(frame_interval.saturating_sub(spent))
+                } else {
+                    // No peers — sleep for 1 second between timer ticks instead of
+                    // 1/fps so we're not spinning through space.refresh() at 30 Hz.
+                    TimeoutAction::ToDuration(Duration::from_secs(1))
+                }
             })
             .expect("Failed to insert frame timer");
 
@@ -369,7 +385,16 @@ impl Compositor {
         // Run
         // -----------------------------------------------------------------------
         while !stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
-            event_loop.dispatch(Some(Duration::from_millis(4)), &mut state)
+            // When no peers are connected, back off to 100 ms so we're not
+            // burning CPU on epoll + Wayland bookkeeping 250×/second.
+            let has_peers = peer_count_loop.as_ref()
+                .map_or(true, |c| c.load(std::sync::atomic::Ordering::Relaxed) > 0);
+            let dispatch_timeout = if has_peers {
+                Duration::from_millis(4)
+            } else {
+                Duration::from_millis(100)
+            };
+            event_loop.dispatch(Some(dispatch_timeout), &mut state)
                 .context("Event loop dispatch error")?;
             state.space.refresh();
             state.popups.cleanup();

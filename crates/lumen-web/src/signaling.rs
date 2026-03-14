@@ -117,6 +117,12 @@ async fn handle_socket(mut socket: WebSocket, state: SignalingState) {
     }
 
     tracing::info!("Signaling connection closed");
+    // Remove the session immediately so peer_count drops to zero without waiting
+    // for ICE to time out (~20-30s). The drive task will exit on its next iteration
+    // when get_session returns None.
+    if let Some(ref id) = session_id {
+        state.sessions.remove_session(id).await;
+    }
 }
 
 fn spawn_drive_task(

@@ -1,3 +1,4 @@
+use std::sync::{atomic::AtomicUsize, Arc};
 use bytes::Bytes;
 
 /// Configuration for the PulseAudio capture and Opus encoder.
@@ -20,6 +21,10 @@ pub struct AudioConfig {
     pub use_vbr: bool,
     /// Skip encoding silent frames (all-zero PCM detection).
     pub use_silence_gate: bool,
+    /// Active peer count. When `Some` and the count is zero, Opus encoding is
+    /// skipped (PCM is still drained from PulseAudio to keep the buffer current).
+    /// `None` means always encode (default, backward-compatible).
+    pub peer_count: Option<Arc<AtomicUsize>>,
 }
 
 impl Default for AudioConfig {
@@ -32,6 +37,7 @@ impl Default for AudioConfig {
             frame_duration_ms: 20,
             use_vbr: false,
             use_silence_gate: false,
+            peer_count: None,
         }
     }
 }

@@ -81,6 +81,11 @@ impl InputSender {
     pub fn clipboard_write(&self, text: String) {
         let _ = self.0.send(CompositorCommand::ClipboardWrite(text));
     }
+
+    /// Signal the compositor event loop to stop.
+    pub fn stop(&self) {
+        let _ = self.0.send(CompositorCommand::Stop);
+    }
 }
 
 /// Smithay-based Wayland compositor.
@@ -271,6 +276,10 @@ impl Compositor {
             .context("Failed to create Wayland socket")?;
         let socket_name = socket_source.socket_name().to_string_lossy().into_owned();
         tracing::info!("Wayland socket: {}", socket_name);
+        // Notify any listener (e.g. a --launch task) that the socket is ready.
+        if let Some(tx) = self.config.socket_name_tx.take() {
+            let _ = tx.send(socket_name.clone());
+        }
         // SAFETY: setenv is not thread-safe in general, but we do it once before
         // any other threads can observe WAYLAND_DISPLAY.
         std::env::set_var("WAYLAND_DISPLAY", &socket_name);

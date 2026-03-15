@@ -36,10 +36,11 @@ struct Args {
     #[arg(long, env = "LUMEN_DRI_NODE")]
     dri_node: Option<PathBuf>,
     /// Wayland socket name of a nested inner compositor whose clipboard should be bridged
-    /// (e.g. `wayland-inner`). When set, lumen connects as a client and syncs clipboard
-    /// bidirectionally via `zwlr_data_control_manager_v1`.
-    #[arg(long, env = "LUMEN_INNER_DISPLAY")]
-    inner_display: Option<String>,
+    /// (e.g. `wayland-inner`). Defaults to `auto`, which scans `$XDG_RUNTIME_DIR` for a
+    /// compositor advertising `zwlr_data_control_manager_v1`. Set to an empty string to
+    /// disable clipboard bridging entirely.
+    #[arg(long, env = "LUMEN_INNER_DISPLAY", default_value = "auto")]
+    inner_display: String,
     #[arg(long, env = "LUMEN_ICE_SERVERS", default_value = "stun:stun.l.google.com:19302")]
     ice_servers: String,
     #[arg(long, env = "LUMEN_STATIC_DIR", default_value = "./web")]
@@ -50,9 +51,10 @@ struct Args {
     #[arg(long, env = "LUMEN_TURN_PORT", default_value_t = 3478)]
     turn_port: u16,
     /// External/public IP of this machine, used as the TURN relay address.
-    /// Defaults to 127.0.0.1 (localhost-only access; no extra mapping needed).
-    #[arg(long, env = "LUMEN_TURN_EXTERNAL_IP", default_value = "127.0.0.1")]
-    turn_external_ip: std::net::IpAddr,
+    /// When not set, lumen auto-detects the outbound IP using a routing probe.
+    /// Falls back to 127.0.0.1 (localhost-only) if detection fails.
+    #[arg(long, env = "LUMEN_TURN_EXTERNAL_IP")]
+    turn_external_ip: Option<std::net::IpAddr>,
     /// TURN username.
     #[arg(long, env = "LUMEN_TURN_USERNAME", default_value = "lumen")]
     turn_username: String,
@@ -93,6 +95,15 @@ struct Args {
     /// denied if it does not match.
     #[arg(long, env = "LUMEN_AUTH_OAUTH2_SUBJECT")]
     auth_oauth2_subject: Option<String>,
+
+    // ── Launch ────────────────────────────────────────────────────────────────
+    /// Shell command to launch as a Wayland client once the compositor socket
+    /// is ready.  Passed to `/bin/sh -c`, so arguments and shell syntax are
+    /// supported (e.g. `--launch "labwc"` or `--launch "weston --backend=wayland"`).
+    /// The child receives `WAYLAND_DISPLAY` and `XDG_RUNTIME_DIR`; `DISPLAY` is
+    /// unset so it connects via Wayland rather than X11.
+    #[arg(long, env = "LUMEN_LAUNCH")]
+    launch: Option<String>,
 }
 
 #[tokio::main]
@@ -120,6 +131,23 @@ async fn main() -> Result<()> {
     let auth = build_auth_config(&args)?;
 
     // ── TURN server ───────────────────────────────────────────────────────────
+    // Resolve the TURN external IP: explicit flag > auto-detect > 127.0.0.1.
+    let turn_external_ip = args.turn_external_ip
+        .or_else(|| {
+            let ip = detect_outbound_ip();
+            if let Some(ref detected) = ip {
+                tracing::info!(%detected, "Auto-detected TURN external IP");
+            } else {
+                tracing::warn!(
+                    "Could not detect a non-loopback outbound IP; \
+                     TURN relay will use 127.0.0.1 (localhost-only). \
+                     Set LUMEN_TURN_EXTERNAL_IP to expose lumen outside this machine."
+                );
+            }
+            ip
+        })
+        .unwrap_or_else(|| "127.0.0.1".parse().unwrap());
+
     // Start the embedded TURN server unless --turn-port 0 is passed.
     // The server allocates relay ports for both lumen and the browser so they
     // can reach each other through Podman's virtual network.
@@ -130,7 +158,7 @@ async fn main() -> Result<()> {
     let (turn_client_config, ice_server_list) = if args.turn_port > 0 {
         let turn_cfg = lumen_turn::TurnServerConfig {
             listen_port: args.turn_port,
-            external_ip: args.turn_external_ip,
+            external_ip: turn_external_ip,
             min_relay_port: args.turn_min_port,
             max_relay_port: args.turn_max_port,
             username: args.turn_username.clone(),
@@ -140,7 +168,7 @@ async fn main() -> Result<()> {
         _turn_server = Some(lumen_turn::TurnServer::start(turn_cfg).await?);
         tracing::info!(
             port = args.turn_port,
-            relay_ip = %args.turn_external_ip,
+            relay_ip = %turn_external_ip,
             "Embedded TURN server started"
         );
 
@@ -151,11 +179,11 @@ async fn main() -> Result<()> {
             server_addr,
             username: args.turn_username.clone(),
             password: args.turn_password.clone(),
-            relay_ip: args.turn_external_ip,
+            relay_ip: turn_external_ip,
         };
 
         let turn_url = format!("turn:{}:{}?transport=udp",
-            args.turn_external_ip, args.turn_port);
+            turn_external_ip, args.turn_port);
         let ice_servers = vec![
             lumen_web::IceServerConfig {
                 urls: turn_url,
@@ -188,13 +216,15 @@ async fn main() -> Result<()> {
 
     // ── Resolve effective DRI node ────────────────────────────────────────────
     // If --dri-node was provided we want GPU rendering + VA-API encoding.
+    // When not provided, auto-detect the first available render node.
     // However, VA-API can fail at runtime (missing driver, permissions, etc.).
     // When that happens create_encoder() silently falls back to x264, which
     // cannot consume the DMA-BUF frames produced by the GPU renderer — causing
     // an encode error on every frame.  To prevent this mismatch we probe VA-API
     // here, before the compositor is created, and clear the DRI node if VA-API
     // is unavailable so both the compositor and encoder use the CPU path.
-    let effective_dri_node: Option<std::path::PathBuf> = if let Some(ref node) = args.dri_node {
+    let dri_node = args.dri_node.or_else(detect_dri_node);
+    let effective_dri_node: Option<std::path::PathBuf> = if let Some(ref node) = dri_node {
         let probe_config = lumen_encode::EncoderConfig {
             render_node: Some(node.clone()),
             ..Default::default()
@@ -214,13 +244,25 @@ async fn main() -> Result<()> {
     };
 
     // ── Compositor ────────────────────────────────────────────────────────────
+    // Set up a channel so the compositor can notify us when its Wayland socket
+    // is ready — used by the --launch task below.
+    let (socket_name_tx, socket_name_rx) = std::sync::mpsc::sync_channel::<String>(1);
+
+    // Treat an empty --inner-display as "disabled".
+    let inner_display = if args.inner_display.is_empty() {
+        None
+    } else {
+        Some(args.inner_display.clone())
+    };
+
     let mut compositor = lumen_compositor::Compositor::new(lumen_compositor::CompositorConfig {
         width: args.width,
         height: args.height,
         target_fps: args.fps,
         render_node: effective_dri_node.clone(),
-        inner_display: args.inner_display.clone(),
+        inner_display,
         peer_count: Some(peer_count.clone()),
+        socket_name_tx: Some(socket_name_tx),
         ..Default::default()
     })?;
     let frame_rx = compositor.frame_receiver();
@@ -275,6 +317,47 @@ async fn main() -> Result<()> {
             tracing::error!("Compositor: {e:#}");
         }
     });
+
+    // ── Shutdown signal ───────────────────────────────────────────────────────
+    // When --launch is used, the child exiting triggers a graceful shutdown of
+    // the web server. Without --launch, the server runs until interrupted.
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
+    // ── Spawn: --launch task ──────────────────────────────────────────────────
+    // Wait for the compositor's Wayland socket to be ready, then launch the
+    // configured shell command as a child process with WAYLAND_DISPLAY set.
+    // When the child exits, send on shutdown_tx to stop the web server gracefully.
+    let _shutdown_keep_alive = if let Some(launch_cmd) = args.launch.clone() {
+        tokio::task::spawn_blocking(move || {
+            let socket_name = match socket_name_rx.recv() {
+                Ok(s) => s,
+                Err(_) => {
+                    tracing::error!("launch: compositor exited before socket was ready");
+                    let _ = shutdown_tx.send(());
+                    return;
+                }
+            };
+            let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+                .unwrap_or_else(|_| "/tmp".to_string());
+            tracing::info!(cmd = %launch_cmd, wayland_display = %socket_name, "Launching client");
+            let status = std::process::Command::new("/bin/sh")
+                .args(["-c", &launch_cmd])
+                .env("WAYLAND_DISPLAY", &socket_name)
+                .env("XDG_RUNTIME_DIR", &runtime_dir)
+                .env_remove("DISPLAY")
+                .status();
+            match status {
+                Ok(s) => tracing::info!(cmd = %launch_cmd, status = %s, "Launched client exited; shutting down"),
+                Err(e) => tracing::error!(cmd = %launch_cmd, "Failed to launch client: {e:#}"),
+            }
+            let _ = shutdown_tx.send(());
+        });
+        // shutdown_tx was moved into the task; no keep-alive needed
+        None::<tokio::sync::oneshot::Sender<()>>
+    } else {
+        // No launch command — keep the sender alive so the server runs forever.
+        Some(shutdown_tx)
+    };
 
     // ── Spawn: audio capture ──────────────────────────────────────────────────
     tokio::task::spawn_blocking(move || {
@@ -519,9 +602,18 @@ async fn main() -> Result<()> {
         resize_tx,
         auth,
         ice_servers: ice_server_list,
+        shutdown_signal: Some(shutdown_rx),
     })
     .run()
-    .await
+    .await?;
+
+    // The web server has shut down (either via graceful shutdown signal or
+    // by returning normally).  Stop the compositor, which closes the broadcast
+    // channels and causes the encoder to exit.  Then force-exit the process to
+    // clean up threads that don't have explicit stop signals (audio capture).
+    tracing::info!("Web server stopped; shutting down");
+    compositor_input_tx.stop();
+    std::process::exit(0);
 }
 
 /// Construct [`lumen_web::AuthConfig`] from parsed CLI arguments.
@@ -592,4 +684,37 @@ fn clipboard_event_to_json(ev: &lumen_compositor::ClipboardEvent) -> Option<Vec<
         }
         ClipboardEvent::Cleared => None,
     }
+}
+
+/// Scan `/dev/dri/` for the first `renderD*` node. Returns `None` if none is
+/// found (triggers the CPU/Pixman renderer path).
+fn detect_dri_node() -> Option<std::path::PathBuf> {
+    let mut nodes: Vec<std::path::PathBuf> = std::fs::read_dir("/dev/dri")
+        .ok()?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with("renderD"))
+                .unwrap_or(false)
+        })
+        .collect();
+    nodes.sort();
+    if let Some(ref node) = nodes.first() {
+        tracing::info!(node = %node.display(), "Auto-detected DRI render node");
+    } else {
+        tracing::info!("No /dev/dri/renderD* found; using CPU (Pixman) renderer");
+    }
+    nodes.into_iter().next()
+}
+
+/// Detect the machine's preferred outbound IP by making a non-sending UDP
+/// "connection" to a public address. No packets are transmitted.
+/// Returns `None` if detection fails or the result is a loopback address.
+fn detect_outbound_ip() -> Option<std::net::IpAddr> {
+    let sock = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    sock.connect("8.8.8.8:80").ok()?;
+    let ip = sock.local_addr().ok()?.ip();
+    if ip.is_loopback() { None } else { Some(ip) }
 }

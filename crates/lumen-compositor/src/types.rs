@@ -5,7 +5,7 @@ use bytes::Bytes;
 use smithay::backend::allocator::dmabuf::Dmabuf;
 
 /// Configuration for the Wayland compositor.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct CompositorConfig {
     /// Output width in pixels.
     pub width: u32,
@@ -26,6 +26,11 @@ pub struct CompositorConfig {
     /// skipped so the compositor idles instead of rendering into the void.
     /// `None` means always render (default, backward-compatible).
     pub peer_count: Option<Arc<AtomicUsize>>,
+    /// Optional channel to receive the Wayland socket name once the compositor
+    /// has created it. Sent exactly once, immediately after the socket is bound.
+    /// Use this to trigger actions (e.g. launching a client) that require the
+    /// socket to exist before they start.
+    pub socket_name_tx: Option<std::sync::mpsc::SyncSender<String>>,
 }
 
 impl Default for CompositorConfig {
@@ -38,6 +43,7 @@ impl Default for CompositorConfig {
             render_node: None,
             inner_display: None,
             peer_count: None,
+            socket_name_tx: None,
         }
     }
 }

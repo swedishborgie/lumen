@@ -342,6 +342,10 @@ pub fn run(
     clipboard_sent_text: Arc<Mutex<Option<String>>>,
     write_rx: Receiver<String>,
 ) {
+    if inner_display.is_empty() {
+        tracing::debug!("clipboard_bridge: disabled (inner_display is empty)");
+        return;
+    }
     // `lumen_socket` is the socket name lumen itself is listening on — we skip it
     // during auto-discovery so we don't accidentally bridge to ourselves.
     let lumen_socket = std::env::var("WAYLAND_DISPLAY").unwrap_or_default();

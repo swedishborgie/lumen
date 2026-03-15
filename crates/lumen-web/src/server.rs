@@ -41,7 +41,14 @@ impl WebServer {
             auth = %auth_mode_name(&self.config.auth),
             "Web server listening"
         );
-        axum::serve(listener, app).await?;
+        let serve = axum::serve(listener, app);
+        if let Some(shutdown_rx) = self.config.shutdown_signal {
+            serve
+                .with_graceful_shutdown(async move { shutdown_rx.await.ok(); })
+                .await?;
+        } else {
+            serve.await?;
+        }
         Ok(())
     }
 

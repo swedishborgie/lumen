@@ -12,12 +12,11 @@ pub struct EncoderConfig {
     pub width: u32,
     pub height: u32,
     pub fps: f64,
-    /// Target bitrate in kbps (CBR mode).
+    /// Average/target bitrate in kbps (VBR mode).
     pub bitrate_kbps: u32,
-    /// CRF quality value for software encoder (0–51; lower = better).
-    pub crf: i32,
-    /// Use constant bitrate mode (recommended for WebRTC).
-    pub cbr: bool,
+    /// Peak bitrate cap in kbps (VBR mode). Must be ≥ `bitrate_kbps`.
+    /// Defaults to `bitrate_kbps * 2`.
+    pub max_bitrate_kbps: u32,
     /// VA-API DRM render node. `None` triggers auto-detection.
     /// Use `Some(PathBuf::from(""))` to force software encoding.
     pub render_node: Option<PathBuf>,
@@ -30,8 +29,7 @@ impl Default for EncoderConfig {
             height: 1080,
             fps: 30.0,
             bitrate_kbps: 4000,
-            crf: 23,
-            cbr: true,
+            max_bitrate_kbps: 8000,
             render_node: None,
         }
     }
@@ -61,7 +59,8 @@ pub trait VideoEncoder: Send {
     fn encode(&mut self, frame: CapturedFrame) -> Result<Option<EncodedFrame>>;
     /// Request that the next output frame be an IDR (keyframe).
     fn request_keyframe(&mut self);
-    /// Update the target bitrate at runtime (CBR mode).
+    /// Update the average target bitrate at runtime (VBR mode).
+    /// The peak cap scales proportionally with the average.
     fn update_bitrate(&mut self, kbps: u32);
     /// Reinitialize the encoder for a new frame size.
     /// Forces a keyframe on the next encode call.
@@ -112,8 +111,7 @@ pub fn create_encoder(config: &EncoderConfig) -> Result<Box<dyn VideoEncoder>> {
         config.height,
         config.fps,
         config.bitrate_kbps,
-        config.crf,
-        config.cbr,
+        config.max_bitrate_kbps,
     )?;
     Ok(Box::new(enc))
 }

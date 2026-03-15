@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use axum::{middleware, routing::get, Router};
 use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
 
@@ -35,20 +35,63 @@ impl WebServer {
 
         let app = self.build_app(signaling_router).await?;
 
-        let listener = tokio::net::TcpListener::bind(self.config.bind_addr).await?;
-        tracing::info!(
-            addr = %self.config.bind_addr,
-            auth = %auth_mode_name(&self.config.auth),
-            "Web server listening"
-        );
-        let serve = axum::serve(listener, app);
-        if let Some(shutdown_rx) = self.config.shutdown_signal {
-            serve
-                .with_graceful_shutdown(async move { shutdown_rx.await.ok(); })
-                .await?;
-        } else {
-            serve.await?;
+        match (self.config.tls_cert, self.config.tls_key) {
+            (Some(cert), Some(key)) => {
+                let tls_config =
+                    axum_server::tls_rustls::RustlsConfig::from_pem_file(&cert, &key)
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "failed to load TLS certificate ({}) and key ({})",
+                                cert.display(),
+                                key.display()
+                            )
+                        })?;
+
+                tracing::info!(
+                    addr = %self.config.bind_addr,
+                    auth = %auth_mode_name(&self.config.auth),
+                    "Web server listening (HTTPS)"
+                );
+
+                let handle = axum_server::Handle::new();
+                if let Some(shutdown_rx) = self.config.shutdown_signal {
+                    let h = handle.clone();
+                    tokio::spawn(async move {
+                        shutdown_rx.await.ok();
+                        h.graceful_shutdown(None);
+                    });
+                }
+
+                axum_server::bind_rustls(self.config.bind_addr, tls_config)
+                    .handle(handle)
+                    .serve(app.into_make_service())
+                    .await?;
+            }
+            (None, None) => {
+                let listener =
+                    tokio::net::TcpListener::bind(self.config.bind_addr).await?;
+                tracing::info!(
+                    addr = %self.config.bind_addr,
+                    auth = %auth_mode_name(&self.config.auth),
+                    "Web server listening (HTTP)"
+                );
+                let serve = axum::serve(listener, app);
+                if let Some(shutdown_rx) = self.config.shutdown_signal {
+                    serve
+                        .with_graceful_shutdown(async move { shutdown_rx.await.ok(); })
+                        .await?;
+                } else {
+                    serve.await?;
+                }
+            }
+            _ => {
+                anyhow::bail!(
+                    "--tls-cert and --tls-key must be provided together; supply both or neither"
+                );
+            }
         }
+
         Ok(())
     }
 

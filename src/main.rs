@@ -29,6 +29,9 @@ struct Args {
     fps: f64,
     #[arg(long, env = "LUMEN_VIDEO_BITRATE_KBPS", default_value_t = 4000)]
     video_bitrate_kbps: u32,
+    /// Peak bitrate cap in kbps for VBR encoding. Defaults to 2× `--video-bitrate-kbps`.
+    #[arg(long, env = "LUMEN_MAX_BITRATE_KBPS")]
+    max_bitrate_kbps: Option<u32>,
     #[arg(long, env = "LUMEN_AUDIO_BITRATE_BPS", default_value_t = 128_000)]
     audio_bitrate_bps: i32,
     #[arg(long, env = "LUMEN_AUDIO_DEVICE")]
@@ -104,6 +107,18 @@ struct Args {
     /// unset so it connects via Wayland rather than X11.
     #[arg(long, env = "LUMEN_LAUNCH")]
     launch: Option<String>,
+
+    // ── TLS ───────────────────────────────────────────────────────────────────
+    /// Path to a PEM-encoded TLS certificate chain. When both `--tls-cert` and
+    /// `--tls-key` are provided the server binds an HTTPS endpoint instead of
+    /// plain HTTP. Both arguments must be supplied together.
+    #[arg(long, env = "LUMEN_TLS_CERT")]
+    tls_cert: Option<PathBuf>,
+
+    /// Path to a PEM-encoded TLS private key. Must be provided together with
+    /// `--tls-cert`.
+    #[arg(long, env = "LUMEN_TLS_KEY")]
+    tls_key: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -284,6 +299,7 @@ async fn main() -> Result<()> {
         height: args.height,
         fps: args.fps,
         bitrate_kbps: args.video_bitrate_kbps,
+        max_bitrate_kbps: args.max_bitrate_kbps.unwrap_or(args.video_bitrate_kbps * 2),
         render_node: effective_dri_node,
         ..Default::default()
     };
@@ -591,6 +607,11 @@ async fn main() -> Result<()> {
     }
 
     // ── Web server ────────────────────────────────────────────────────────────
+    anyhow::ensure!(
+        args.tls_cert.is_some() == args.tls_key.is_some(),
+        "--tls-cert and --tls-key must be provided together; supply both or neither"
+    );
+
     lumen_web::WebServer::new(lumen_web::WebServerConfig {
         bind_addr: args.bind_addr,
         static_dir: args.static_dir,
@@ -603,6 +624,8 @@ async fn main() -> Result<()> {
         auth,
         ice_servers: ice_server_list,
         shutdown_signal: Some(shutdown_rx),
+        tls_cert: args.tls_cert,
+        tls_key: args.tls_key,
     })
     .run()
     .await?;

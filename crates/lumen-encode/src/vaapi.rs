@@ -90,6 +90,7 @@ pub struct VaapiEncoder {
     // Stored for use during resize reinitialization.
     fps: f64,
     bitrate_kbps: u32,
+    max_bitrate_kbps: u32,
 }
 
 // SAFETY: raw pointers are only accessed from the single encoder task thread.
@@ -188,6 +189,7 @@ impl VaapiEncoder {
             (*codec_ctx).gop_size = (config.fps * 2.0) as i32;
             (*codec_ctx).max_b_frames = 0;
             (*codec_ctx).bit_rate = (config.bitrate_kbps as i64) * 1000;
+            (*codec_ctx).rc_max_rate = (config.max_bitrate_kbps as i64) * 1000;
             (*codec_ctx).hw_device_ctx = av_buffer_ref(hw_device_ctx);
 
             // ----------------------------------------------------------------
@@ -225,7 +227,7 @@ impl VaapiEncoder {
             let mut opts: *mut AVDictionary = std::ptr::null_mut();
             av_dict_set(&mut opts, c"profile".as_ptr(), c"high".as_ptr(), 0);
             av_dict_set(&mut opts, c"level".as_ptr(), c"4.1".as_ptr(), 0);
-            av_dict_set(&mut opts, c"rc_mode".as_ptr(), c"CBR".as_ptr(), 0);
+            av_dict_set(&mut opts, c"rc_mode".as_ptr(), c"VBR".as_ptr(), 0);
             // Limit the encoder's internal async pipeline to 1 frame. The default
             // depth (typically 2–4) causes the encoder to buffer several frames
             // before producing output, which shifts the NTP↔RTP correlation in
@@ -283,6 +285,7 @@ impl VaapiEncoder {
                 pending_captured_at: VecDeque::new(),
                 fps: config.fps,
                 bitrate_kbps: config.bitrate_kbps,
+                max_bitrate_kbps: config.max_bitrate_kbps,
             })
         }
     }
@@ -428,7 +431,14 @@ impl VideoEncoder for VaapiEncoder {
     }
 
     fn update_bitrate(&mut self, kbps: u32) {
-        unsafe { (*self.codec_ctx).bit_rate = (kbps as i64) * 1000; }
+        // Keep the same avg/peak ratio as the original config.
+        let ratio = self.max_bitrate_kbps as f64 / self.bitrate_kbps.max(1) as f64;
+        self.bitrate_kbps = kbps;
+        self.max_bitrate_kbps = ((kbps as f64 * ratio).round() as u32).max(kbps);
+        unsafe {
+            (*self.codec_ctx).bit_rate = (kbps as i64) * 1000;
+            (*self.codec_ctx).rc_max_rate = (self.max_bitrate_kbps as i64) * 1000;
+        }
     }
 
     fn resize(&mut self, width: u32, height: u32) -> anyhow::Result<()> {
@@ -473,6 +483,7 @@ impl VideoEncoder for VaapiEncoder {
             (*codec_ctx).gop_size = (self.fps * 2.0) as i32;
             (*codec_ctx).max_b_frames = 0;
             (*codec_ctx).bit_rate = (self.bitrate_kbps as i64) * 1000;
+            (*codec_ctx).rc_max_rate = (self.max_bitrate_kbps as i64) * 1000;
             (*codec_ctx).hw_device_ctx = av_buffer_ref(self.hw_device_ctx);
 
             // --- Rebuild hw_frames_ctx (NV12 VAAPI pool) ---
@@ -500,7 +511,7 @@ impl VideoEncoder for VaapiEncoder {
             let mut opts: *mut AVDictionary = std::ptr::null_mut();
             av_dict_set(&mut opts, c"profile".as_ptr(), c"high".as_ptr(), 0);
             av_dict_set(&mut opts, c"level".as_ptr(), c"4.1".as_ptr(), 0);
-            av_dict_set(&mut opts, c"rc_mode".as_ptr(), c"CBR".as_ptr(), 0);
+            av_dict_set(&mut opts, c"rc_mode".as_ptr(), c"VBR".as_ptr(), 0);
             av_dict_set(&mut opts, c"async_depth".as_ptr(), c"1".as_ptr(), 0);
             let ret = avcodec_open2(codec_ctx, codec, &mut opts);
             if !opts.is_null() { av_dict_free(&mut opts); }

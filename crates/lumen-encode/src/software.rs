@@ -10,7 +10,7 @@ use lumen_compositor::CapturedFrame;
 use x264_sys::{
     x264_encoder_close, x264_encoder_encode, x264_encoder_intra_refresh, x264_encoder_open,
     x264_encoder_reconfig, x264_param_apply_profile, x264_param_default_preset, x264_picture_init,
-    x264_picture_t, x264_t, X264_CSP_I420, X264_RC_ABR, X264_RC_CRF, X264_TYPE_IDR,
+    x264_picture_t, x264_t, X264_CSP_I420, X264_RC_ABR, X264_TYPE_IDR,
 };
 
 use crate::encoder::{EncodedFrame, VideoEncoder};
@@ -23,7 +23,8 @@ pub struct SoftwareEncoder {
     height: u32,
     force_keyframe: bool,
     frame_index: i64,
-    cbr: bool,
+    bitrate_kbps: u32,
+    max_bitrate_kbps: u32,
 }
 
 // x264_t is not Send by default (raw pointer), but we use it exclusively from
@@ -36,8 +37,7 @@ impl SoftwareEncoder {
         height: u32,
         fps: f64,
         bitrate_kbps: u32,
-        crf: i32,
-        cbr: bool,
+        max_bitrate_kbps: u32,
     ) -> Result<Self> {
         unsafe {
             let mut params = MaybeUninit::uninit();
@@ -58,15 +58,13 @@ impl SoftwareEncoder {
             params.b_repeat_headers = 1; // SPS/PPS before every IDR
             params.b_annexb = 1; // Annex-B start codes
 
-            if cbr {
-                params.rc.i_rc_method = X264_RC_ABR as i32;
-                params.rc.i_bitrate = bitrate_kbps as i32;
-                params.rc.i_vbv_max_bitrate = bitrate_kbps as i32;
-                params.rc.i_vbv_buffer_size = bitrate_kbps as i32; // 1-second buffer
-            } else {
-                params.rc.i_rc_method = X264_RC_CRF as i32;
-                params.rc.f_rf_constant = crf as f32;
-            }
+            // VBR: average bitrate target with a higher peak cap.
+            params.rc.i_rc_method = X264_RC_ABR as i32;
+            params.rc.i_bitrate = bitrate_kbps as i32;
+            params.rc.i_vbv_max_bitrate = max_bitrate_kbps as i32;
+            // 2-second VBV buffer gives headroom for peak bursts without starving
+            // subsequent frames.
+            params.rc.i_vbv_buffer_size = (max_bitrate_kbps * 2) as i32;
 
             let profile = c"baseline".as_ptr();
             if x264_param_apply_profile(&mut params, profile) != 0 {
@@ -78,7 +76,15 @@ impl SoftwareEncoder {
                 bail!("x264_encoder_open returned null");
             }
 
-            Ok(Self { handle, width, height, force_keyframe: false, frame_index: 0, cbr })
+            Ok(Self {
+                handle,
+                width,
+                height,
+                force_keyframe: false,
+                frame_index: 0,
+                bitrate_kbps,
+                max_bitrate_kbps,
+            })
         }
     }
 }
@@ -176,17 +182,17 @@ impl VideoEncoder for SoftwareEncoder {
     }
 
     fn update_bitrate(&mut self, kbps: u32) {
-        if !self.cbr {
-            return;
-        }
+        // Keep the same avg/peak ratio as the original config.
+        let ratio = self.max_bitrate_kbps as f64 / self.bitrate_kbps.max(1) as f64;
+        self.bitrate_kbps = kbps;
+        self.max_bitrate_kbps = ((kbps as f64 * ratio).round() as u32).max(kbps);
         unsafe {
             let mut params = MaybeUninit::uninit();
-            // x264_encoder_parameters fills our local copy of the current params.
             x264_sys::x264_encoder_parameters(self.handle, params.as_mut_ptr());
             let mut params = params.assume_init();
             params.rc.i_bitrate = kbps as i32;
-            params.rc.i_vbv_max_bitrate = kbps as i32;
-            params.rc.i_vbv_buffer_size = kbps as i32;
+            params.rc.i_vbv_max_bitrate = self.max_bitrate_kbps as i32;
+            params.rc.i_vbv_buffer_size = (self.max_bitrate_kbps * 2) as i32;
             x264_encoder_reconfig(self.handle, &mut params);
         }
     }

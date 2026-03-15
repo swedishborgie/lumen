@@ -69,4 +69,10 @@ pub struct WebServerConfig {
     /// Optional graceful-shutdown signal. When the sender is dropped or sends,
     /// the web server stops accepting new connections and drains existing ones.
     pub shutdown_signal: Option<tokio::sync::oneshot::Receiver<()>>,
+    /// Path to the PEM-encoded TLS certificate chain. When both `tls_cert` and
+    /// `tls_key` are set the server binds an HTTPS endpoint; otherwise plain HTTP.
+    pub tls_cert: Option<PathBuf>,
+    /// Path to the PEM-encoded TLS private key. Must be provided together with
+    /// `tls_cert`.
+    pub tls_key: Option<PathBuf>,
 }

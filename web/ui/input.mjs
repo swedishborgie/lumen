@@ -17,6 +17,10 @@ export class InputHandler {
   #vMouseX = 0;   // virtual cursor position in compositor pixel space (pointer-lock only)
   #vMouseY = 0;
   #handlers = {}; // saved bound handler refs for unbind()
+  /** Evdev scancodes of keys currently held down. Used to synthesise key-up
+   *  events when the browser window loses focus (e.g. Super triggering GNOME
+   *  overview steals focus before the keyup event can fire). */
+  #pressedKeys = new Set();
 
   /**
    * @param {HTMLVideoElement} videoEl
@@ -38,13 +42,17 @@ export class InputHandler {
     // intercept pointerdown in some browsers.
     const target = video.parentElement ?? video;
 
-    const onKeyDown = (e) => this.#handleKeyDown(e);
-    const onKeyUp   = (e) => this.#handleKeyUp(e);
-    const onMove    = (e) => this.#handlePointerMove(e);
-    const onDown    = (e) => this.#handlePointerDown(e);
-    const onUp      = (e) => this.#handlePointerUp(e);
-    const onMenu    = (e) => e.preventDefault();
-    const onWheel   = (e) => this.#handleWheel(e);
+    const onKeyDown    = (e) => this.#handleKeyDown(e);
+    const onKeyUp      = (e) => this.#handleKeyUp(e);
+    const onMove       = (e) => this.#handlePointerMove(e);
+    const onDown       = (e) => this.#handlePointerDown(e);
+    const onUp         = (e) => this.#handlePointerUp(e);
+    const onMenu       = (e) => e.preventDefault();
+    const onWheel      = (e) => this.#handleWheel(e);
+    // Release all held keys when the browser window loses focus so the
+    // compositor never gets stuck thinking a key (e.g. Super) is held down.
+    const onBlur       = () => this.#releaseAllKeys();
+    const onVisChange  = () => { if (document.hidden) this.#releaseAllKeys(); };
 
     video.addEventListener('keydown', onKeyDown);
     video.addEventListener('keyup',   onKeyUp);
@@ -53,14 +61,17 @@ export class InputHandler {
     target.addEventListener('pointerup',    onUp);
     target.addEventListener('contextmenu',  onMenu);
     target.addEventListener('wheel',        onWheel, { passive: false });
+    window.addEventListener('blur',         onBlur);
+    document.addEventListener('visibilitychange', onVisChange);
 
-    this.#handlers = { video, target, onKeyDown, onKeyUp, onMove, onDown, onUp, onMenu, onWheel };
+    this.#handlers = { video, target, onKeyDown, onKeyUp, onMove, onDown, onUp, onMenu, onWheel, onBlur, onVisChange };
   }
 
   /** Detach all input event listeners. */
   unbind() {
-    const { video, target, onKeyDown, onKeyUp, onMove, onDown, onUp, onMenu, onWheel } = this.#handlers;
+    const { video, target, onKeyDown, onKeyUp, onMove, onDown, onUp, onMenu, onWheel, onBlur, onVisChange } = this.#handlers;
     if (!video) return;
+    this.#releaseAllKeys();
     video.removeEventListener('keydown', onKeyDown);
     video.removeEventListener('keyup',   onKeyUp);
     target.removeEventListener('pointermove',  onMove);
@@ -68,6 +79,8 @@ export class InputHandler {
     target.removeEventListener('pointerup',    onUp);
     target.removeEventListener('contextmenu',  onMenu);
     target.removeEventListener('wheel',        onWheel);
+    window.removeEventListener('blur',         onBlur);
+    document.removeEventListener('visibilitychange', onVisChange);
     this.#handlers = {};
   }
 
@@ -97,6 +110,7 @@ export class InputHandler {
     this.#onUserGesture?.();
     const sc = KEY_MAP[e.code];
     if (sc === undefined) return;
+    this.#pressedKeys.add(sc);
     this.#client.sendInput({ type: 'keyboard_key', scancode: sc, state: 1 });
   }
 
@@ -104,7 +118,18 @@ export class InputHandler {
     e.preventDefault();
     const sc = KEY_MAP[e.code];
     if (sc === undefined) return;
+    this.#pressedKeys.delete(sc);
     this.#client.sendInput({ type: 'keyboard_key', scancode: sc, state: 0 });
+  }
+
+  /** Send key-up for every currently held key and clear the tracking set.
+   *  Called when the browser window loses focus so the compositor never gets
+   *  stuck with a key held (e.g. Super triggering the GNOME overview). */
+  #releaseAllKeys() {
+    for (const sc of this.#pressedKeys) {
+      this.#client.sendInput({ type: 'keyboard_key', scancode: sc, state: 0 });
+    }
+    this.#pressedKeys.clear();
   }
 
   #handlePointerMove(e) {

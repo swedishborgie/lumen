@@ -28,6 +28,25 @@
       <button id="btn-fullscreen" disabled>⛶ Fullscreen</button>
     </div>
     <div id="status">Idle</div>
+    <div id="display-section">
+      <div class="tray-label">Display</div>
+      <div id="display-mode-toggle">
+        <button id="display-auto" class="active">Auto</button>
+        <button id="display-fixed">Fixed</button>
+      </div>
+      <div id="display-fixed-controls" style="display:none">
+        <div id="display-presets">
+          <button id="display-preset-720p">1280×720</button>
+          <button id="display-preset-1080p">1920×1080</button>
+        </div>
+        <div id="display-custom">
+          <input type="number" id="display-custom-w" min="320" max="7680" step="2" placeholder="W">
+          <span class="sep">×</span>
+          <input type="number" id="display-custom-h" min="200" max="4320" step="2" placeholder="H">
+          <button id="display-apply">Apply</button>
+        </div>
+      </div>
+    </div>
     <div id="clipboard-section">
       <div class="tray-label">Clipboard</div>
       <textarea id="clipboard-input" placeholder="Paste or type here to send to compositor. Updated automatically when compositor clipboard changes." rows="5" spellcheck="false"></textarea>
@@ -42,6 +61,7 @@
     const client = new LumenClient();
     new LumenUI(client, {
       video:          document.getElementById('video'),
+      videoContainer: document.getElementById('video-container'),
       cursorCanvas:   document.getElementById('cursor-canvas'),
       stats:          document.getElementById('stats'),
       btnConnect:     document.getElementById('btn-connect'),
@@ -51,6 +71,14 @@
       fullscreenHint: document.getElementById('fullscreen-hint'),
       clipboardInput: document.getElementById('clipboard-input'),
       splash:         document.getElementById('splash'),
+      displayAuto:          document.getElementById('display-auto'),
+      displayFixed:         document.getElementById('display-fixed'),
+      displayFixedControls: document.getElementById('display-fixed-controls'),
+      displayPreset720p:    document.getElementById('display-preset-720p'),
+      displayPreset1080p:   document.getElementById('display-preset-1080p'),
+      displayCustomW:       document.getElementById('display-custom-w'),
+      displayCustomH:       document.getElementById('display-custom-h'),
+      displayApply:         document.getElementById('display-apply'),
     });
 
     // Auto-connect on page load.

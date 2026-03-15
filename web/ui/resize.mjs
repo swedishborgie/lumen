@@ -3,29 +3,45 @@
  *
  * Watches the video element for size changes and synchronises the compositor
  * output dimensions, debouncing rapid resize events.
+ *
+ * Supports two display modes:
+ *   - auto  (default): compositor tracks the browser viewport size.
+ *   - fixed: compositor is locked to an explicit CSS-pixel resolution; the
+ *            container is sized to exactly that resolution (1:1 CSS pixel
+ *            scale, no DPR multiplication) and centred in the viewport.
  */
 
 export class ResizeManager {
   #videoEl;
+  #containerEl;
   #client;
   #cursor;
   #observer      = null;
   #debounceTimer = null;
+  #mode          = 'auto';  // 'auto' | 'fixed'
+  #fixedW        = 0;
+  #fixedH        = 0;
 
   /**
-   * @param {HTMLVideoElement} videoEl
+   * @param {HTMLVideoElement}   videoEl
+   * @param {HTMLElement}        containerEl  The #video-container element.
    * @param {import('../lumen-client.mjs').LumenClient} client
    * @param {import('./cursor.mjs').CursorManager} cursor
    */
-  constructor(videoEl, client, cursor) {
-    this.#videoEl = videoEl;
-    this.#client  = client;
-    this.#cursor  = cursor;
+  constructor(videoEl, containerEl, client, cursor) {
+    this.#videoEl     = videoEl;
+    this.#containerEl = containerEl;
+    this.#client      = client;
+    this.#cursor      = cursor;
   }
+
+  /** Current mode: 'auto' | 'fixed'. */
+  get mode() { return this.#mode; }
 
   /** Start observing the video element for resize changes. */
   bind() {
     this.#observer = new ResizeObserver((entries) => {
+      if (this.#mode !== 'auto') return;
       for (const entry of entries) {
         const rect = entry.contentRect;
         clearTimeout(this.#debounceTimer);
@@ -49,8 +65,44 @@ export class ResizeManager {
     this.#observer = null;
   }
 
-  /** Send the current video element size to the compositor immediately. */
+  /**
+   * Switch to auto mode: compositor tracks the browser viewport.
+   * Clears any fixed inline size from the container.
+   */
+  setAutoMode() {
+    this.#mode = 'auto';
+    this.#containerEl.style.width  = '';
+    this.#containerEl.style.height = '';
+    this.sendCurrentSize();
+    this.#cursor.resize();
+  }
+
+  /**
+   * Switch to fixed mode: compositor is locked to w×h CSS pixels (1:1 scale).
+   * The container is sized explicitly; DPR is intentionally NOT applied so that
+   * each compositor pixel maps to exactly one CSS pixel.
+   *
+   * @param {number} w  Width in CSS pixels (must be positive and even).
+   * @param {number} h  Height in CSS pixels (must be positive and even).
+   */
+  setFixedMode(w, h) {
+    this.#mode   = 'fixed';
+    this.#fixedW = w & ~1;
+    this.#fixedH = h & ~1;
+    this.#containerEl.style.width  = `${this.#fixedW}px`;
+    this.#containerEl.style.height = `${this.#fixedH}px`;
+    this.#client.sendResize(this.#fixedW, this.#fixedH);
+    this.#cursor.resize();
+  }
+
+  /** Send the current size to the compositor, respecting the active mode. */
   sendCurrentSize() {
+    if (this.#mode === 'fixed') {
+      if (this.#fixedW > 0 && this.#fixedH > 0) {
+        this.#client.sendResize(this.#fixedW, this.#fixedH);
+      }
+      return;
+    }
     const rect = this.#videoEl.getBoundingClientRect();
     const w = Math.round(rect.width  * devicePixelRatio) & ~1;
     const h = Math.round(rect.height * devicePixelRatio) & ~1;

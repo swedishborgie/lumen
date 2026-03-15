@@ -14,8 +14,11 @@ import { ResizeManager }     from './ui/resize.mjs';
 
 export class LumenUI {
   #client;
-  #els;         // { video, cursorCanvas, stats, btnConnect, btnDisconnect,
-                //   btnFullscreen, statusEl, fullscreenHint, clipboardInput, splash }
+  #els;         // { video, videoContainer, cursorCanvas, stats, btnConnect, btnDisconnect,
+                //   btnFullscreen, statusEl, fullscreenHint, clipboardInput, splash,
+                //   displayAuto, displayFixed, displayFixedControls,
+                //   displayPreset720p, displayPreset1080p,
+                //   displayCustomW, displayCustomH, displayApply }
   #cursor;      // CursorManager
   #input;       // InputHandler
   #gamepad;     // GamepadController
@@ -39,6 +42,7 @@ export class LumenUI {
   /**
    * @param {import('./lumen-client.mjs').LumenClient} client
    * @param {{ video: HTMLVideoElement,
+   *           videoContainer: HTMLElement,
    *           cursorCanvas: HTMLCanvasElement,
    *           stats: HTMLElement,
    *           btnConnect: HTMLButtonElement,
@@ -47,18 +51,26 @@ export class LumenUI {
    *           statusEl: HTMLElement,
    *           fullscreenHint: HTMLElement,
    *           clipboardInput: HTMLTextAreaElement,
-   *           splash: HTMLElement }} elements
+   *           splash: HTMLElement,
+   *           displayAuto: HTMLButtonElement,
+   *           displayFixed: HTMLButtonElement,
+   *           displayFixedControls: HTMLElement,
+   *           displayPreset720p: HTMLButtonElement,
+   *           displayPreset1080p: HTMLButtonElement,
+   *           displayCustomW: HTMLInputElement,
+   *           displayCustomH: HTMLInputElement,
+   *           displayApply: HTMLButtonElement }} elements
    */
   constructor(client, elements) {
     this.#client = client;
     this.#els    = elements;
 
-    const { video, cursorCanvas } = elements;
+    const { video, videoContainer, cursorCanvas } = elements;
 
     this.#cursor  = new CursorManager(cursorCanvas, video);
     this.#input   = new InputHandler(video, client, this.#cursor, () => this.#tryUnlockAudio());
     this.#gamepad = new GamepadController(client);
-    this.#resize  = new ResizeManager(video, client, this.#cursor);
+    this.#resize  = new ResizeManager(video, videoContainer, client, this.#cursor);
 
     this.#cursor.init();
     this.#input.bind();
@@ -69,6 +81,7 @@ export class LumenUI {
     this.#bindControlEvents();
     this.#bindFullscreenEvents();
     this.#bindClipboardPanel();
+    this.#bindDisplayMode();
     this.#bindSplashEvents();
   }
 
@@ -203,6 +216,93 @@ export class LumenUI {
     } else {
       this.#input.onPointerLockReleased();
     }
+  }
+
+  // ── display mode controls ────────────────────────────────────────────────────
+
+  /** Supported fixed-size presets as [width, height] CSS-pixel pairs. */
+  static #PRESETS = {
+    '720p':  [1280,  720],
+    '1080p': [1920, 1080],
+  };
+
+  #bindDisplayMode() {
+    const {
+      displayAuto, displayFixed, displayFixedControls,
+      displayPreset720p, displayPreset1080p,
+      displayCustomW, displayCustomH, displayApply,
+    } = this.#els;
+
+    if (!displayAuto) return; // elements not present (graceful degradation)
+
+    const setActiveToggle = (mode) => {
+      displayAuto.classList.toggle('active',  mode === 'auto');
+      displayFixed.classList.toggle('active', mode === 'fixed');
+      displayFixedControls.style.display = mode === 'fixed' ? '' : 'none';
+      if (mode === 'auto') {
+        document.body.classList.remove('fixed-mode');
+      } else {
+        document.body.classList.add('fixed-mode');
+      }
+    };
+
+    const setActivePreset = (key) => {
+      displayPreset720p.classList.toggle('active',  key === '720p');
+      displayPreset1080p.classList.toggle('active', key === '1080p');
+    };
+
+    const applyFixed = (w, h) => {
+      const cw = Math.max(2, (Math.round(w) & ~1));
+      const ch = Math.max(2, (Math.round(h) & ~1));
+      this.#resize.setFixedMode(cw, ch);
+    };
+
+    displayAuto.addEventListener('click', () => {
+      setActiveToggle('auto');
+      setActivePreset(null);
+      this.#resize.setAutoMode();
+    });
+
+    displayFixed.addEventListener('click', () => {
+      setActiveToggle('fixed');
+      // Apply the currently-active preset (or 1280×720 as default).
+      const [w, h] = LumenUI.#PRESETS['720p'];
+      setActivePreset('720p');
+      displayCustomW.value = '';
+      displayCustomH.value = '';
+      applyFixed(w, h);
+    });
+
+    displayPreset720p.addEventListener('click', () => {
+      const [w, h] = LumenUI.#PRESETS['720p'];
+      setActivePreset('720p');
+      displayCustomW.value = '';
+      displayCustomH.value = '';
+      applyFixed(w, h);
+    });
+
+    displayPreset1080p.addEventListener('click', () => {
+      const [w, h] = LumenUI.#PRESETS['1080p'];
+      setActivePreset('1080p');
+      displayCustomW.value = '';
+      displayCustomH.value = '';
+      applyFixed(w, h);
+    });
+
+    displayApply.addEventListener('click', () => {
+      const w = parseInt(displayCustomW.value, 10);
+      const h = parseInt(displayCustomH.value, 10);
+      if (!w || !h || w < 2 || h < 2) return;
+      setActivePreset(null);
+      applyFixed(w, h);
+    });
+
+    // Allow pressing Enter in either custom input to apply.
+    [displayCustomW, displayCustomH].forEach(el => {
+      el.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') displayApply.click();
+      });
+    });
   }
 
   // ── clipboard panel (browser → compositor) ───────────────────────────────────

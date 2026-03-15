@@ -1,5 +1,5 @@
 /**
- * lumen-client.js — WebRTC connection library for Lumen.
+ * lumen-client.mjs — WebRTC connection library for Lumen.
  *
  * Manages signaling, ICE, media tracks, and the input data channel.
  * Framework-agnostic; communicates via CustomEvents on EventTarget.
@@ -40,7 +40,7 @@ export const KEY_MAP = {
   Numpad7:71,Numpad8:72,Numpad9:73,NumpadSubtract:74,
   Numpad4:75,Numpad5:76,Numpad6:77,NumpadAdd:78,
   Numpad1:79,Numpad2:80,Numpad3:81,Numpad0:82,NumpadDecimal:83,
-  NumpadEnter:96,NumpadDivide:98,NumpadMultiply:55,
+  NumpadEnter:96,NumpadDivide:98,
   NumpadEqual:117,NumpadComma:121,
   NumpadParenLeft:179,NumpadParenRight:180,
   // Navigation cluster

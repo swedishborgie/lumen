@@ -1,0 +1,14 @@
+[package]
+name = "lumen-gamepad"
+version = "0.1.0"
+edition = "2021"
+description = "Virtual gamepad device management for the Lumen compositor via Linux uinput"
+
+[dependencies]
+evdev    = { version = "0.12" }
+tokio    = { workspace = true }
+tracing  = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

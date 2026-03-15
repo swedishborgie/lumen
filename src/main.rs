@@ -263,6 +263,12 @@ async fn main() -> Result<()> {
     // into the compositor's input sender.
     let (input_tx, mut input_rx) = tokio::sync::mpsc::channel::<lumen_compositor::InputEvent>(256);
 
+    // ── Gamepad channel ───────────────────────────────────────────────────────
+    // Gamepad events from the browser are forwarded to the gamepad manager which
+    // creates and drives virtual uinput devices.
+    let (gamepad_tx, gamepad_rx) =
+        tokio::sync::mpsc::channel::<lumen_gamepad::GamepadEvent>(64);
+
     // ── Spawn: compositor ─────────────────────────────────────────────────────
     std::thread::spawn(move || {
         if let Err(e) = compositor.run() {
@@ -345,6 +351,21 @@ async fn main() -> Result<()> {
         });
     }
 
+    // ── Spawn: gamepad manager ────────────────────────────────────────────────
+    // Runs in spawn_blocking because uinput file descriptor writes are
+    // synchronous. A channel bridges the async world to the blocking loop.
+    {
+        let mut rx = gamepad_rx;
+        tokio::task::spawn_blocking(move || {
+            let mut manager = lumen_gamepad::GamepadManager::new();
+            // Convert the tokio receiver to a blocking recv loop.
+            while let Some(ev) = rx.blocking_recv() {
+                manager.handle_event(ev);
+            }
+            tracing::debug!("Gamepad manager: channel closed, exiting");
+        });
+    }
+
     // ── Spawn: input forwarding task ──────────────────────────────────────────
     {
         let compositor_input_tx = compositor_input_tx.clone();
@@ -353,6 +374,24 @@ async fn main() -> Result<()> {
                 match ev {
                     lumen_compositor::InputEvent::ClipboardWrite { text } => {
                         compositor_input_tx.clipboard_write(text);
+                    }
+                    lumen_compositor::InputEvent::GamepadConnected { index, name, num_axes, num_buttons } => {
+                        let _ = gamepad_tx.send(lumen_gamepad::GamepadEvent::Connected {
+                            index, name, num_axes, num_buttons,
+                        }).await;
+                    }
+                    lumen_compositor::InputEvent::GamepadDisconnected { index } => {
+                        let _ = gamepad_tx.send(lumen_gamepad::GamepadEvent::Disconnected { index }).await;
+                    }
+                    lumen_compositor::InputEvent::GamepadButton { index, button, value, pressed } => {
+                        let _ = gamepad_tx.send(lumen_gamepad::GamepadEvent::Button {
+                            index, button, value, pressed,
+                        }).await;
+                    }
+                    lumen_compositor::InputEvent::GamepadAxis { index, axis, value } => {
+                        let _ = gamepad_tx.send(lumen_gamepad::GamepadEvent::Axis {
+                            index, axis, value,
+                        }).await;
                     }
                     other => {
                         compositor_input_tx.send(other);

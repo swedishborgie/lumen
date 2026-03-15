@@ -50,6 +50,28 @@ podman run --rm -it \
     lumen:latest
 ```
 
+### Gamepad / joystick passthrough
+
+Lumen forwards browser gamepad input to virtual Linux input devices via `uinput`.
+Pass `/dev/uinput` so the container can create those devices:
+
+```bash
+podman run --rm -it \
+    --device /dev/uinput \
+    -p 8080:8080 \
+    -p 3478:3478/udp \
+    -p 50000-50010:50000-50010/udp \
+    lumen:latest
+```
+
+The `uinput` kernel module must be loaded on the **host** before starting the container
+(it almost always is on modern Linux systems, but you can verify with `lsmod | grep uinput`
+or load it with `sudo modprobe uinput`).  Combine `--device /dev/uinput` with any other
+flags (GPU, network) as needed.
+
+If `/dev/uinput` is not passed through, lumen starts normally and gamepad support is
+simply disabled — a warning is printed in the container log.
+
 ### NVIDIA GPU passthrough (CDI)
 
 NVIDIA GPU passthrough requires the [CDI plugin](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) on the host:
@@ -101,6 +123,8 @@ podman run ... -e LUMEN_TURN_PORT=0 lumen:latest
 | `foot` | Terminal emulator — available in the labwc right-click menu |
 | `xclock` / `xeyes` | X11 test utilities (`x11-apps` package) |
 | `pulseaudio` | Audio server for audio capture |
+
+> **Gamepad support** requires passing `/dev/uinput` to the container (see [Gamepad passthrough](#gamepad--joystick-passthrough) above).
 
 ---
 

@@ -69,6 +69,47 @@ pub enum InputEvent {
     ClipboardWrite {
         text: String,
     },
+
+    // ── Gamepad events ────────────────────────────────────────────────────────
+    // These are dispatched at the orchestration layer (main.rs) to lumen-gamepad
+    // and are never injected into the Smithay seat.
+
+    /// A gamepad was connected in the browser.
+    GamepadConnected {
+        /// Gamepad slot index (0–3).
+        index: u8,
+        /// Human-readable name from the browser.
+        name: String,
+        /// Number of axes reported by the browser's Gamepad API.
+        num_axes: u8,
+        /// Number of buttons reported by the browser's Gamepad API.
+        num_buttons: u8,
+    },
+    /// A gamepad was disconnected in the browser.
+    GamepadDisconnected {
+        /// Gamepad slot index (0–3).
+        index: u8,
+    },
+    /// A gamepad button changed state.
+    GamepadButton {
+        /// Gamepad slot index (0–3).
+        index: u8,
+        /// Web Gamepad button index (0–16 for the standard layout).
+        button: u8,
+        /// Analog value in the range 0.0–1.0.
+        value: f32,
+        /// Whether the button is considered pressed.
+        pressed: bool,
+    },
+    /// A gamepad axis changed value.
+    GamepadAxis {
+        /// Gamepad slot index (0–3).
+        index: u8,
+        /// Web Gamepad axis index (0–3 for the standard layout).
+        axis: u8,
+        /// Normalised value in the range −1.0 to 1.0.
+        value: f32,
+    },
 }
 
 /// Inject an [`InputEvent`] into the Smithay seat, dispatching it to the
@@ -95,6 +136,12 @@ pub fn inject_input(state: &mut AppState, event: InputEvent) {
         // ClipboardWrite is handled at the orchestration layer (main.rs) before
         // reaching inject_input; this arm is a safety fallback.
         InputEvent::ClipboardWrite { .. } => {}
+        // Gamepad events are routed to lumen-gamepad by main.rs and never reach
+        // the Smithay seat.
+        InputEvent::GamepadConnected { .. }
+        | InputEvent::GamepadDisconnected { .. }
+        | InputEvent::GamepadButton { .. }
+        | InputEvent::GamepadAxis { .. } => {}
     }
 }
 

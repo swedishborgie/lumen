@@ -72,6 +72,7 @@ COPY crates/lumen-encode/Cargo.toml     crates/lumen-encode/
 COPY crates/lumen-webrtc/Cargo.toml     crates/lumen-webrtc/
 COPY crates/lumen-web/Cargo.toml        crates/lumen-web/
 COPY crates/lumen-turn/Cargo.toml       crates/lumen-turn/
+COPY crates/lumen-gamepad/Cargo.toml    crates/lumen-gamepad/
 
 # Create stub lib/main files so Cargo can resolve the workspace graph
 RUN mkdir -p src \
@@ -81,6 +82,7 @@ RUN mkdir -p src \
     crates/lumen-webrtc/src \
     crates/lumen-web/src \
     crates/lumen-turn/src \
+    crates/lumen-gamepad/src \
  && echo 'fn main() {}' > src/main.rs \
  && for d in crates/*/src; do echo '' > "$d/lib.rs"; done
 

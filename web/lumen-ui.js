@@ -30,6 +30,9 @@ export class LumenUI {
   #cursorHotY   = 0;
   #displayX     = 0;           // cursor position in canvas CSS pixels
   #displayY     = 0;
+  // Gamepad state
+  #gamepadRafHandle = null;    // requestAnimationFrame handle for the poll loop
+  #gamepadState = new Map();   // index → { buttons: Float32Array, axes: Float32Array }
 
   /**
    * @param {LumenClient} client
@@ -50,6 +53,7 @@ export class LumenUI {
 
     this.#bindClientEvents();
     this.#bindInputEvents();
+    this.#bindGamepadEvents();
     this.#bindControlEvents();
     this.#bindFullscreenEvents();
     this.#bindClipboardPanel();
@@ -89,6 +93,7 @@ export class LumenUI {
         this.#sendCurrentSize();
       } else if (state === 'idle') {
         if (this.#statsTimer) { clearInterval(this.#statsTimer); this.#statsTimer = null; }
+        this.#stopGamepadPoll();
         this.#prevSnap = null;
         this.#audioUnlocked = false;
         stats.textContent  = 'No stats yet';
@@ -586,5 +591,104 @@ export class LumenUI {
       }
     });
     this.#resizeObserver.observe(video);
+  }
+
+  // ── gamepad ───────────────────────────────────────────────────────────────────
+
+  /** Register browser gamepad connect/disconnect listeners. */
+  #bindGamepadEvents() {
+    window.addEventListener('gamepadconnected', (e) => {
+      const gp = e.gamepad;
+      const index = gp.index;
+      // Initialise per-gamepad state tracking.
+      this.#gamepadState.set(index, {
+        buttons: new Float32Array(gp.buttons.length),
+        axes:    new Float32Array(gp.axes.length),
+      });
+      this.#client.sendInput({
+        type: 'gamepad_connected',
+        index,
+        name:        gp.id,
+        num_axes:    gp.axes.length,
+        num_buttons: gp.buttons.length,
+      });
+      // Start polling if not already running.
+      if (this.#gamepadRafHandle === null) {
+        this.#startGamepadPoll();
+      }
+    });
+
+    window.addEventListener('gamepaddisconnected', (e) => {
+      const index = e.gamepad.index;
+      this.#gamepadState.delete(index);
+      this.#client.sendInput({ type: 'gamepad_disconnected', index });
+      // Stop polling when no gamepads remain.
+      if (this.#gamepadState.size === 0) {
+        this.#stopGamepadPoll();
+      }
+    });
+  }
+
+  /** Start the requestAnimationFrame-based gamepad poll loop. */
+  #startGamepadPoll() {
+    const poll = () => {
+      this.#pollGamepads();
+      this.#gamepadRafHandle = requestAnimationFrame(poll);
+    };
+    this.#gamepadRafHandle = requestAnimationFrame(poll);
+  }
+
+  /** Stop the gamepad poll loop. */
+  #stopGamepadPoll() {
+    if (this.#gamepadRafHandle !== null) {
+      cancelAnimationFrame(this.#gamepadRafHandle);
+      this.#gamepadRafHandle = null;
+    }
+  }
+
+  /**
+   * Read the current gamepad state, compare with the previous snapshot, and
+   * send events only for changed buttons/axes.
+   */
+  #pollGamepads() {
+    const gamepads = navigator.getGamepads();
+    for (const gp of gamepads) {
+      if (!gp) continue;
+      const prev = this.#gamepadState.get(gp.index);
+      if (!prev) continue;
+
+      // Buttons
+      for (let i = 0; i < gp.buttons.length; i++) {
+        const btn     = gp.buttons[i];
+        const curVal  = btn.value;
+        const prevVal = prev.buttons[i] ?? 0;
+        if (curVal !== prevVal) {
+          prev.buttons[i] = curVal;
+          this.#client.sendInput({
+            type:    'gamepad_button',
+            index:   gp.index,
+            button:  i,
+            value:   curVal,
+            pressed: btn.pressed,
+          });
+        }
+      }
+
+      // Axes — apply dead-zone filtering.
+      for (let i = 0; i < gp.axes.length; i++) {
+        const raw     = gp.axes[i];
+        const curVal  = Math.abs(raw) < 0.05 ? 0 : raw;
+        const prevVal = prev.axes[i] ?? 0;
+        if (curVal !== prevVal) {
+          prev.axes[i] = curVal;
+          this.#client.sendInput({
+            type:  'gamepad_axis',
+            index: gp.index,
+            axis:  i,
+            value: curVal,
+          });
+        }
+      }
+    }
   }
 }

@@ -36,6 +36,17 @@ if command -v pulseaudio &>/dev/null; then
     echo "==> PulseAudio started"
 fi
 
+# ── uinput (virtual gamepad devices) ─────────────────────────────────────────
+# Try to load the uinput kernel module.  This succeeds when the container has
+# CAP_SYS_MODULE (e.g. --privileged) or the module is already loaded on the host.
+modprobe uinput 2>/dev/null || true
+if [[ -c /dev/uinput ]]; then
+    echo "==> /dev/uinput available — gamepad support enabled"
+else
+    echo "==> WARN: /dev/uinput not found — gamepad support disabled"
+    echo "    Pass --device /dev/uinput to enable gamepad forwarding"
+fi
+
 # ── Auto-detect iGPU render node ──────────────────────────────────────────────
 DRI_ARGS=()
 if [[ -z "${LUMEN_DRI_NODE:-}" ]] && [[ ! " $* " =~ " --dri-node " ]]; then

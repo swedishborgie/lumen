@@ -7,6 +7,7 @@ members = [
     "crates/lumen-webrtc",
     "crates/lumen-web",
     "crates/lumen-turn",
+    "crates/lumen-gamepad",
 ]
 resolver = "2"
 
@@ -54,6 +55,7 @@ lumen-encode     = { path = "crates/lumen-encode" }
 lumen-webrtc     = { path = "crates/lumen-webrtc" }
 lumen-web        = { path = "crates/lumen-web" }
 lumen-turn       = { path = "crates/lumen-turn" }
+lumen-gamepad    = { path = "crates/lumen-gamepad" }
 tokio            = { workspace = true }
 tracing          = { workspace = true }
 tracing-subscriber = { workspace = true }

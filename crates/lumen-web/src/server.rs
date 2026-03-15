@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use axum::{middleware, routing::get, Router};
 use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
 
-use crate::auth::{basic, oauth2};
+use crate::auth::{basic, bearer, oauth2};
 use crate::signaling::{SignalingState, config_handler, ws_handler};
 use crate::types::{AuthConfig, WebServerConfig};
 
@@ -110,6 +110,16 @@ impl WebServer {
                 .layer(CorsLayer::permissive())
                 .layer(TraceLayer::new_for_http())),
 
+            AuthConfig::Bearer { token } => {
+                let token_arc: std::sync::Arc<str> = token.clone().into();
+                Ok(signaling_router
+                    .fallback_service(static_dir)
+                    .layer(middleware::from_fn(bearer::auth_middleware))
+                    .layer(axum::Extension(token_arc))
+                    .layer(CorsLayer::permissive())
+                    .layer(TraceLayer::new_for_http()))
+            }
+
             AuthConfig::OAuth2 {
                 issuer_url,
                 client_id,
@@ -147,6 +157,7 @@ fn auth_mode_name(auth: &AuthConfig) -> &'static str {
     match auth {
         AuthConfig::None => "none",
         AuthConfig::Basic => "basic",
+        AuthConfig::Bearer { .. } => "bearer",
         AuthConfig::OAuth2 { .. } => "oauth2",
     }
 }

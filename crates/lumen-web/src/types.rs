@@ -26,6 +26,15 @@ pub enum AuthConfig {
     /// username must match the user running the lumen process and the password
     /// must pass PAM validation via the `login` service.
     Basic,
+    /// Bearer token (preshared key) authentication.
+    ///
+    /// Every request must include an `Authorization: Bearer <token>` header
+    /// whose value matches the configured secret.  Intended for use behind a
+    /// reverse proxy that injects the header on behalf of clients.
+    Bearer {
+        /// The expected token value. Compared in constant time.
+        token: String,
+    },
     /// OpenID Connect OAuth2 authorization code flow with PKCE.
     ///
     /// On first access the user is redirected to the configured OIDC provider.

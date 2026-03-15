@@ -13,6 +13,7 @@ enum AuthMode {
     #[default]
     None,
     Basic,
+    Bearer,
     Oauth2,
 }
 
@@ -72,9 +73,15 @@ struct Args {
     turn_max_port: u16,
 
     // ── Authentication ────────────────────────────────────────────────────────
-    /// Authentication mode: none (default), basic (PAM), or oauth2 (OIDC).
+    /// Authentication mode: none (default), basic (PAM), bearer (preshared token), or oauth2 (OIDC).
     #[arg(long, env = "LUMEN_AUTH", default_value = "none")]
     auth: AuthMode,
+
+    /// [bearer] Preshared token for bearer-token authentication.
+    /// Every request must include `Authorization: Bearer <token>` with this value.
+    /// Intended for use behind a reverse proxy that injects the header.
+    #[arg(long, env = "LUMEN_AUTH_BEARER_TOKEN", hide_env_values = true)]
+    auth_bearer_token: Option<String>,
 
     /// [oauth2] OIDC issuer URL.  The discovery document is fetched from
     /// `{issuer_url}/.well-known/openid-configuration`.
@@ -647,6 +654,15 @@ fn build_auth_config(args: &Args) -> Result<lumen_web::AuthConfig> {
     match args.auth {
         AuthMode::None => Ok(lumen_web::AuthConfig::None),
         AuthMode::Basic => Ok(lumen_web::AuthConfig::Basic),
+        AuthMode::Bearer => {
+            let token = args
+                .auth_bearer_token
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!(
+                    "--auth-bearer-token / LUMEN_AUTH_BEARER_TOKEN is required when --auth bearer is set"
+                ))?;
+            Ok(lumen_web::AuthConfig::Bearer { token })
+        }
         AuthMode::Oauth2 => {
             fn require<T: Clone>(
                 val: &Option<T>,

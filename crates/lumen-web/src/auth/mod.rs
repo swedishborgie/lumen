@@ -4,7 +4,9 @@
 //!
 //! - **None** — no authentication (open access, same as before)
 //! - **Basic** — HTTP Basic dialog validated against the system PAM
+//! - **Bearer** — preshared bearer token validated in constant time
 //! - **OAuth2** — OpenID Connect authorization code flow with PKCE
 
 pub mod basic;
+pub mod bearer;
 pub mod oauth2;

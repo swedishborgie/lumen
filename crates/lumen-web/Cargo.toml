@@ -14,6 +14,7 @@ tower-http  = { version = "0.6", features = ["fs", "cors", "trace"] }
 
 # Authentication
 pam            = "0.7"
+subtle         = "2"
 openidconnect  = { version = "3", features = ["reqwest"] }
 cookie         = "0.18"
 uuid           = { version = "1", features = ["v4"] }

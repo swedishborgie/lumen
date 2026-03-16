@@ -1,15 +1,33 @@
-# Lumen
+![Lumen](web/images/lumen-text.png)
 
-Lumen is a Wayland-based compositor designed to stream desktop applications and desktop environments to a browser using WebRTC. It provides a high-performance, low-latency remote desktop experience by combining modern Wayland protocols with hardware-accelerated video encoding and robust WebRTC delivery.
+**Lumen** is a Wayland compositor that streams your Linux desktop to a web browser over WebRTC — no client software required.
+
+## Purpose & Goals
+
+Lumen exists to replace legacy Linux remote desktop solutions (VNC, RDP, NX, and similar) for the Wayland era. The goal is to provide a high-performance, low-latency desktop streaming experience accessible from any modern browser, with no plugins or native clients needed on the viewer side.
+
+**In scope:**
+- High-performance desktop streaming over WebRTC with hardware acceleration as the primary path
+- Low-latency interactive control (keyboard, mouse, clipboard) from the browser
+- Running as a Wayland compositor that any Wayland-native application or desktop shell can connect to
+- XWayland support for running legacy X11 applications inside the session
+
+**Out of scope:**
+- Being a full desktop environment — Lumen is a transport layer; bring your own DE or compositor (e.g., `labwc`, `sway`)
+- Container-specific designs or hardened multi-tenant isolation
+- Native X11/Xorg support (XWayland only)
 
 ## Key Features
 
-- **Wayland-Native**: Built on top of [Smithay](https://github.com/Smithay/smithay), providing a modern, secure foundation for window management and rendering.
-- **WebRTC Streaming**: Low-latency video and audio streaming directly to any modern web browser using the [str0m](https://github.com/algesten/str0m) WebRTC stack.
-- **Hardware Acceleration**: Support for VA-API (Intel/AMD) for zero-copy hardware-accelerated H.264 encoding, with a software x264 fallback.
-- **System Audio**: Captures system audio via PulseAudio and encodes it to Opus for high-quality, low-latency sound.
-- **Interactive**: Forwards keyboard and mouse events from the browser back to the Wayland session.
-- **Standalone**: Includes a built-in web server and signaling handler, making it easy to deploy as a single binary.
+- **Wayland-Native**: Built on [Smithay](https://github.com/Smithay/smithay) — modern, secure window management and frame capture.
+- **WebRTC Streaming**: Low-latency H.264 video and Opus audio delivered directly to any modern browser via the [str0m](https://github.com/algesten/str0m) WebRTC stack.
+- **Hardware Acceleration**: VA-API (Intel/AMD) zero-copy H.264 encoding with automatic x264 software fallback.
+- **System Audio**: PulseAudio monitor capture encoded to Opus.
+- **Interactive Input**: Keyboard, mouse, and clipboard forwarded from the browser back into the Wayland session.
+- **Embedded TURN Server**: Built-in TURN relay so the stream works across NAT without an external relay.
+- **Authentication**: Optional auth modes — none, HTTP Basic (PAM), bearer token, or OAuth2/OIDC.
+- **TLS**: Native HTTPS/WSS support via PEM certificate and key.
+- **Single Binary**: Built-in web server and signaling — just run `lumen` and open a browser.
 
 ## Project Structure
 
@@ -20,6 +38,8 @@ Lumen is organized as a Rust workspace with several specialized crates:
 - **`lumen-encode`**: Video encoding abstraction layer. Supports VA-API and software (x264) backends.
 - **`lumen-audio`**: Captures system audio from PulseAudio monitor sources and encodes it using Opus.
 - **`lumen-web`**: An Axum-based web server that serves the frontend client and handles WebSocket signaling.
+- **`lumen-turn`**: Embedded TURN/STUN relay server so WebRTC peers behind NAT can exchange media without an external relay.
+- **`lumen-gamepad`**: Virtual gamepad devices via `uinput` — browser-connected gamepads appear as standard `/dev/input` devices to applications.
 - **`web/`**: The frontend browser client built with vanilla JavaScript and Web APIs.
 
 ## Getting Started
@@ -49,19 +69,57 @@ Then, open your browser and navigate to `http://localhost:8080`.
 
 ### Configuration
 
-Lumen can be configured via command-line arguments or environment variables:
+All options can be set via command-line flags or environment variables.
 
-| Argument | Environment Variable | Default | Description |
-|----------|----------------------|---------|-------------|
+#### Core
+
+| Flag | Env | Default | Description |
+|------|-----|---------|-------------|
 | `--bind-addr` | `LUMEN_BIND` | `0.0.0.0:8080` | Address to bind the web server to |
-| `--width` | `LUMEN_WIDTH` | `1920` | Output width |
-| `--height` | `LUMEN_HEIGHT` | `1080` | Output height |
+| `--width` | `LUMEN_WIDTH` | `1920` | Output width in pixels |
+| `--height` | `LUMEN_HEIGHT` | `1080` | Output height in pixels |
 | `--fps` | `LUMEN_FPS` | `30.0` | Target frames per second |
-| `--video-bitrate-kbps` | `LUMEN_VIDEO_BITRATE_KBPS` | `4000` | Video bitrate in kbps |
-| `--audio-device` | `LUMEN_AUDIO_DEVICE` | | PulseAudio device to capture (default: monitor) |
-| `--dri-node` | `LUMEN_DRI_NODE` | | Path to the DRI device node (e.g., `/dev/dri/renderD128`) |
-| `--ice-servers` | `LUMEN_ICE_SERVERS` | `stun:stun.l.google.com:19302` | Comma-separated list of ICE/STUN servers |
-| `--static-dir` | `LUMEN_STATIC_DIR` | `./web` | Directory containing the web client assets |
+| `--video-bitrate-kbps` | `LUMEN_VIDEO_BITRATE_KBPS` | `4000` | Target video bitrate (kbps) |
+| `--max-bitrate-kbps` | `LUMEN_MAX_BITRATE_KBPS` | `2× video-bitrate` | Peak VBR bitrate cap (kbps) |
+| `--audio-bitrate-bps` | `LUMEN_AUDIO_BITRATE_BPS` | `128000` | Opus audio bitrate (bps) |
+| `--audio-device` | `LUMEN_AUDIO_DEVICE` | *(auto: monitor)* | PulseAudio device name to capture |
+| `--dri-node` | `LUMEN_DRI_NODE` | *(auto-detected)* | DRI render node for VA-API (e.g. `/dev/dri/renderD128`) |
+| `--inner-display` | `LUMEN_INNER_DISPLAY` | `auto` | Wayland socket of a nested compositor to bridge clipboard from; set to `""` to disable |
+| `--ice-servers` | `LUMEN_ICE_SERVERS` | `stun:stun.l.google.com:19302` | Comma-separated ICE/STUN server URLs |
+| `--static-dir` | `LUMEN_STATIC_DIR` | `./web` | Directory to serve the browser client from |
+| `--launch` | `LUMEN_LAUNCH` | | Shell command to launch as a Wayland client once the compositor is ready (e.g. `labwc`, `sway`) |
+
+#### TURN Server
+
+Lumen includes an embedded TURN server to relay WebRTC traffic across NAT. It is enabled by default on port 3478.
+
+| Flag | Env | Default | Description |
+|------|-----|---------|-------------|
+| `--turn-port` | `LUMEN_TURN_PORT` | `3478` | UDP port for the TURN server (set to `0` to disable) |
+| `--turn-external-ip` | `LUMEN_TURN_EXTERNAL_IP` | *(auto-detected)* | Public IP to advertise as the TURN relay address |
+| `--turn-username` | `LUMEN_TURN_USERNAME` | `lumen` | TURN username |
+| `--turn-password` | `LUMEN_TURN_PASSWORD` | `lumenpass` | TURN password |
+| `--turn-min-port` | `LUMEN_TURN_MIN_PORT` | `50000` | Low end of UDP relay port range |
+| `--turn-max-port` | `LUMEN_TURN_MAX_PORT` | `50010` | High end of UDP relay port range |
+
+#### Authentication
+
+| Flag | Env | Default | Description |
+|------|-----|---------|-------------|
+| `--auth` | `LUMEN_AUTH` | `none` | Auth mode: `none`, `basic` (PAM), `bearer`, or `oauth2` (OIDC) |
+| `--auth-bearer-token` | `LUMEN_AUTH_BEARER_TOKEN` | | `[bearer]` Preshared token; clients must send `Authorization: Bearer <token>` |
+| `--auth-oauth2-issuer-url` | `LUMEN_AUTH_OAUTH2_ISSUER_URL` | | `[oauth2]` OIDC issuer URL (discovery fetched from `/.well-known/openid-configuration`) |
+| `--auth-oauth2-client-id` | `LUMEN_AUTH_OAUTH2_CLIENT_ID` | | `[oauth2]` OAuth2 client ID |
+| `--auth-oauth2-client-secret` | `LUMEN_AUTH_OAUTH2_CLIENT_SECRET` | | `[oauth2]` OAuth2 client secret |
+| `--auth-oauth2-redirect-uri` | `LUMEN_AUTH_OAUTH2_REDIRECT_URI` | | `[oauth2]` Full redirect URI (e.g. `http://localhost:8080/auth/callback`) |
+| `--auth-oauth2-subject` | `LUMEN_AUTH_OAUTH2_SUBJECT` | | `[oauth2]` Expected `sub` claim; access denied if it doesn't match |
+
+#### TLS
+
+| Flag | Env | Description |
+|------|-----|-------------|
+| `--tls-cert` | `LUMEN_TLS_CERT` | Path to a PEM TLS certificate chain; enables HTTPS when paired with `--tls-key` |
+| `--tls-key` | `LUMEN_TLS_KEY` | Path to a PEM TLS private key; must be provided together with `--tls-cert` |
 
 ## Architecture
 

@@ -71,6 +71,19 @@ These crates are available to all crates in the workspace.
 | [`cookie`](https://crates.io/crates/cookie) | 0.18 | HTTP cookie parsing and serialization (`Set-Cookie` / `Cookie` headers); used to manage the `lumen_session` cookie in OAuth2 mode | [docs.rs/cookie](https://docs.rs/cookie) |
 | [`uuid`](https://crates.io/crates/uuid) | 1.x | UUID generation (v4); used to create unique session tokens for the OAuth2 in-memory session store | [docs.rs/uuid](https://docs.rs/uuid) |
 
+## lumen-turn
+
+| Crate | Version | Purpose | Documentation |
+|-------|---------|---------|---------------|
+| [`turn`](https://crates.io/crates/turn) | 0.17 | Pure-Rust TURN/STUN server library; provides the relay server, auth handler interface, and relay address generator | [docs.rs/turn](https://docs.rs/turn) |
+| [`webrtc-util`](https://crates.io/crates/webrtc-util) | 0.17 | WebRTC utility types; provides the virtual network (`vnet`) abstraction used by the TURN relay address generator | [docs.rs/webrtc-util](https://docs.rs/webrtc-util) |
+
+## lumen-gamepad
+
+| Crate | Version | Purpose | Documentation |
+|-------|---------|---------|---------------|
+| [`evdev`](https://crates.io/crates/evdev) | 0.12 | Safe Rust bindings to the Linux `evdev` and `uinput` kernel interfaces; used to create virtual gamepad input devices and emit button/axis events | [docs.rs/evdev](https://docs.rs/evdev) |
+
 ## Main Binary (`lumen`)
 
 | Crate | Version | Purpose | Documentation |

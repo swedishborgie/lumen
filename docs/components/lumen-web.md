@@ -35,6 +35,12 @@ pub enum AuthConfig {
     None,
     /// HTTP Basic authentication validated against the system PAM.
     Basic,
+    /// Bearer token (preshared key) authentication.
+    Bearer {
+        /// The expected token value. Every request must supply
+        /// `Authorization: Bearer <token>` with this exact value.
+        token: String,
+    },
     /// OpenID Connect OAuth2 authorization code flow with PKCE.
     OAuth2 {
         issuer_url: String,
@@ -90,6 +96,12 @@ The browser presents its native username/password dialog (HTTP Basic, RFC 7617).
 4. On failure the server returns `401 Unauthorized` with a `WWW-Authenticate: Basic realm="Lumen"` header, causing the browser to re-prompt.
 
 **Requires**: `libpam-devel` (or equivalent) at build time and a working PAM `login` stack at runtime.
+
+### Bearer
+
+Every request must include an `Authorization: Bearer <token>` header whose value matches the `--auth-bearer-token` / `LUMEN_AUTH_BEARER_TOKEN` configuration value. The comparison is constant-time to prevent timing attacks.
+
+This mode is intended for use behind a reverse proxy or in automated environments where injecting a static header is straightforward. Requests that omit the header or supply an incorrect token receive `401 Unauthorized` with a `WWW-Authenticate: Bearer realm="Lumen"` header.
 
 ### OAuth2 (OIDC)
 

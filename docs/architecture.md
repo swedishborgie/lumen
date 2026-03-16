@@ -14,12 +14,16 @@ graph TD
     enc["lumen-encode"]
     webrtc["lumen-webrtc"]
     web["lumen-web"]
+    turn["lumen-turn"]
+    gamepad["lumen-gamepad"]
 
     main --> comp
     main --> audio
     main --> enc
     main --> webrtc
     main --> web
+    main --> turn
+    main --> gamepad
 ```
 
 ## Component Overview

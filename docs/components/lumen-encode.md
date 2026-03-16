@@ -46,9 +46,10 @@ pub struct EncoderConfig {
     pub height: u32,
     pub fps: f64,
     pub bitrate_kbps: u32,
-    pub crf: i32,                      // CRF quality (0–51); used when cbr = false
-    pub cbr: bool,                     // Constant bitrate mode
-    pub render_node: Option<PathBuf>,  // DRI device for VA-API; None = software only
+    pub max_bitrate_kbps: u32,             // Peak VBR cap; default 8000 kbps
+    pub crf: i32,                          // CRF quality (0–51); used when cbr = false
+    pub cbr: bool,                         // Constant bitrate mode
+    pub render_node: Option<PathBuf>,      // DRI device for VA-API; None = software only
 }
 ```
 

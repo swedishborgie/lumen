@@ -22,3 +22,5 @@ Detailed design documents for each crate and the main application:
 | [lumen-encode](./components/lumen-encode.md) | `crates/lumen-encode` — H.264 video encoding (hardware VA-API and software x264) |
 | [lumen-webrtc](./components/lumen-webrtc.md) | `crates/lumen-webrtc` — WebRTC session management, SDP/ICE, RTP packetization |
 | [lumen-web](./components/lumen-web.md) | `crates/lumen-web` — HTTP server, WebSocket signaling, browser client |
+| [lumen-turn](./components/lumen-turn.md) | `crates/lumen-turn` — Embedded TURN relay server for NAT traversal |
+| [lumen-gamepad](./components/lumen-gamepad.md) | `crates/lumen-gamepad` — Virtual uinput gamepad device management |

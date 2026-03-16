@@ -83,13 +83,21 @@ impl SessionId {
 
 ```rust
 pub struct SessionConfig {
-    pub ice_servers: Vec<IceServer>,
-    pub bind_addr: SocketAddr,  // UDP socket bind address for ICE/media
+    pub bind_addr: SocketAddr,           // UDP socket bind address for ICE/media
+    pub turn: Option<TurnClientConfig>,  // Optional embedded TURN client
 }
+```
 
-pub struct IceServer {
-    pub url: String,                         // "stun:<host>:<port>" or "turn:<host>:<port>"
-    pub credential: Option<(String, String)>, // (username, password) for TURN
+### `TurnClientConfig`
+
+Configuration for connecting to the embedded TURN server as a client. When present, each session allocates a relay address on the TURN server so browsers behind NAT can reach lumen's media endpoint.
+
+```rust
+pub struct TurnClientConfig {
+    pub server_addr: SocketAddr,  // TURN server address (e.g. 127.0.0.1:3478)
+    pub username: String,
+    pub password: String,
+    pub relay_ip: IpAddr,         // External IP advertised by the TURN server
 }
 ```
 

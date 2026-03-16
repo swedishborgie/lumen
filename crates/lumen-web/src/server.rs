@@ -1,4 +1,6 @@
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use anyhow::{Context, Result};
 use axum::{middleware, routing::get, Router};
@@ -47,6 +49,8 @@ impl WebServer {
                                 key.display()
                             )
                         })?;
+
+                tokio::spawn(watch_tls_cert(tls_config.clone(), cert.clone(), key.clone()));
 
                 tracing::info!(
                     addr = %self.config.bind_addr,
@@ -159,5 +163,58 @@ fn auth_mode_name(auth: &AuthConfig) -> &'static str {
         AuthConfig::Basic => "basic",
         AuthConfig::Bearer { .. } => "bearer",
         AuthConfig::OAuth2 { .. } => "oauth2",
+    }
+}
+
+/// Polls the TLS certificate and key files every 30 seconds and reloads them
+/// when either file changes. On a reload error (e.g. a cert/key mismatch
+/// during a mid-rotation write), the stored fingerprints are left unchanged so
+/// the next tick automatically retries.
+async fn watch_tls_cert(
+    config: axum_server::tls_rustls::RustlsConfig,
+    cert: PathBuf,
+    key: PathBuf,
+) {
+    /// Returns `(mtime, size)` for a file, or `None` if metadata cannot be read.
+    fn fingerprint(path: &PathBuf) -> Option<(SystemTime, u64)> {
+        std::fs::metadata(path)
+            .ok()
+            .map(|m| (m.modified().unwrap_or(SystemTime::UNIX_EPOCH), m.len()))
+    }
+
+    let mut last = (fingerprint(&cert), fingerprint(&key));
+
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+    interval.tick().await; // consume the immediate first tick
+
+    loop {
+        interval.tick().await;
+
+        let current = (fingerprint(&cert), fingerprint(&key));
+        if current == last {
+            continue;
+        }
+
+        match config.reload_from_pem_file(&cert, &key).await {
+            Ok(()) => {
+                tracing::info!(
+                    cert = %cert.display(),
+                    key  = %key.display(),
+                    "TLS certificate reloaded"
+                );
+                last = current;
+            }
+            Err(err) => {
+                // Don't update `last` — we'll retry on the next tick.  This
+                // handles mid-rotation races where the cert and key files are
+                // not written atomically.
+                tracing::warn!(
+                    cert = %cert.display(),
+                    key  = %key.display(),
+                    %err,
+                    "TLS certificate reload failed; will retry"
+                );
+            }
+        }
     }
 }

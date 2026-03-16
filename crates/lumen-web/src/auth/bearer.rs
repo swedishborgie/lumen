@@ -25,9 +25,15 @@ pub async fn auth_middleware(
     request: Request,
     next: Next,
 ) -> Response {
-    if let Some(provided) = extract_bearer(request.headers()) {
-        if bool::from(provided.as_bytes().ct_eq(expected.as_bytes())) {
-            return next.run(request).await;
+    match extract_bearer(request.headers()) {
+        None => {
+            tracing::warn!("bearer auth rejected: no token provided");
+        }
+        Some(provided) => {
+            if bool::from(provided.as_bytes().ct_eq(expected.as_bytes())) {
+                return next.run(request).await;
+            }
+            tracing::warn!("bearer auth rejected: invalid token");
         }
     }
     challenge_response()

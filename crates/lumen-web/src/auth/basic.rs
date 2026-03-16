@@ -17,9 +17,15 @@ use base64::Engine as _;
 
 /// Axum middleware that enforces HTTP Basic authentication via PAM.
 pub async fn auth_middleware(request: Request, next: Next) -> Response {
-    if let Some((username, password)) = extract_credentials(request.headers()) {
-        if validate_credentials(&username, &password).await {
-            return next.run(request).await;
+    match extract_credentials(request.headers()) {
+        None => {
+            tracing::warn!("basic auth rejected: no credentials");
+        }
+        Some((username, password)) => {
+            if validate_credentials(&username, &password).await {
+                return next.run(request).await;
+            }
+            tracing::warn!("basic auth rejected: invalid credentials");
         }
     }
     challenge_response()
@@ -44,6 +50,7 @@ async fn validate_credentials(username: &str, password: &str) -> bool {
         .unwrap_or_default();
 
     if username != current_user {
+        tracing::debug!("basic auth: username does not match process owner");
         return false;
     }
 

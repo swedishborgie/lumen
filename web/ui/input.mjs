@@ -107,6 +107,13 @@ export class InputHandler {
 
   #handleKeyDown(e) {
     e.preventDefault();
+    // Browser auto-repeat events (e.repeat=true) arrive at the OS repeat rate
+    // (~30ms intervals) and must not be forwarded.  In Wayland, key repeat is
+    // client-side: each client receives wl_keyboard.repeat_info(rate, delay)
+    // from the compositor and manages its own repeat timer.  Forwarding browser
+    // repeat events as extra key-press messages causes clients to reset their
+    // timer on every event, so the timer never fires and repeat never works.
+    if (e.repeat) return;
     this.#onUserGesture?.();
     const sc = KEY_MAP[e.code];
     if (sc === undefined) return;

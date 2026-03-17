@@ -51,6 +51,10 @@
       <div class="tray-label">Clipboard</div>
       <textarea id="clipboard-input" placeholder="Paste or type here to send to compositor. Updated automatically when compositor clipboard changes." rows="5" spellcheck="false"></textarea>
     </div>
+    <div id="gamepad-section">
+      <div class="tray-label">Controllers</div>
+      <div id="gamepad-list"><span class="gamepad-none">No controllers detected</span></div>
+    </div>
     <div id="stats">No stats yet</div>
   </div>
 
@@ -79,6 +83,7 @@
       displayCustomW:       document.getElementById('display-custom-w'),
       displayCustomH:       document.getElementById('display-custom-h'),
       displayApply:         document.getElementById('display-apply'),
+      gamepadList:          document.getElementById('gamepad-list'),
     });
 
     // Auto-connect on page load.

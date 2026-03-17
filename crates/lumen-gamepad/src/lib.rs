@@ -23,7 +23,7 @@ mod mapping;
 use std::collections::HashMap;
 
 use thiserror::Error;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 use device::GamepadDevice;
 
@@ -112,20 +112,29 @@ impl GamepadManager {
     /// warnings and silently dropped so that one bad message cannot stall input.
     pub fn handle_event(&mut self, event: GamepadEvent) {
         if let Err(err) = self.try_handle_event(event) {
-            warn!("gamepad: {err}");
+            let connected: Vec<u8> = self.devices.keys().copied().collect();
+            warn!("gamepad: {err} (connected indices: {connected:?})");
         }
     }
 
     fn try_handle_event(&mut self, event: GamepadEvent) -> Result<(), GamepadError> {
         match event {
             GamepadEvent::Connected { index, name, num_axes, num_buttons } => {
+                debug!("GamepadManager: Connected index={index} name={name:?} axes={num_axes} buttons={num_buttons}");
                 self.connect(index, &name, num_axes, num_buttons)
             }
-            GamepadEvent::Disconnected { index } => self.disconnect(index),
+            GamepadEvent::Disconnected { index } => {
+                debug!("GamepadManager: Disconnected index={index}");
+                self.disconnect(index)
+            }
             GamepadEvent::Button { index, button, value, pressed } => {
+                trace!("GamepadManager: Button index={index} button={button} value={value} pressed={pressed}");
                 self.button(index, button, value, pressed)
             }
-            GamepadEvent::Axis { index, axis, value } => self.axis(index, axis, value),
+            GamepadEvent::Axis { index, axis, value } => {
+                trace!("GamepadManager: Axis index={index} axis={axis} value={value}");
+                self.axis(index, axis, value)
+            }
         }
     }
 
@@ -144,7 +153,20 @@ impl GamepadManager {
             warn!("gamepad {index}: already connected, replacing device");
             self.devices.remove(&index);
         }
-        let device_name = format!("Lumen Gamepad {index} ({name})");
+        let device_name = {
+            // uinput enforces UINPUT_MAX_NAME_SIZE = 80: name.len() + 1 < 80,
+            // so the name must be at most 78 bytes.  Truncate on a UTF-8
+            // boundary so the evdev crate never panics on long controller names.
+            const MAX: usize = 78;
+            let full = format!("Lumen Gamepad {index} ({name})");
+            if full.len() <= MAX {
+                full
+            } else {
+                // Find the last valid char boundary at or before MAX.
+                let boundary = (0..=MAX).rev().find(|&i| full.is_char_boundary(i)).unwrap_or(0);
+                full[..boundary].to_string()
+            }
+        };
         let device = GamepadDevice::new(&device_name, num_buttons, num_axes)?;
         info!("gamepad {index}: virtual device created — {num_buttons} buttons, {num_axes} axes");
         self.devices.insert(index, device);

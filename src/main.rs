@@ -482,11 +482,15 @@ async fn main() -> Result<()> {
                         compositor_input_tx.clipboard_write(text);
                     }
                     lumen_compositor::InputEvent::GamepadConnected { index, name, num_axes, num_buttons } => {
-                        let _ = gamepad_tx.send(lumen_gamepad::GamepadEvent::Connected {
+                        tracing::debug!("Routing GamepadConnected: index={index} name={name:?} axes={num_axes} buttons={num_buttons}");
+                        if gamepad_tx.send(lumen_gamepad::GamepadEvent::Connected {
                             index, name, num_axes, num_buttons,
-                        }).await;
+                        }).await.is_err() {
+                            tracing::warn!("Gamepad manager channel closed; dropping GamepadConnected for index={index}");
+                        }
                     }
                     lumen_compositor::InputEvent::GamepadDisconnected { index } => {
+                        tracing::debug!("Routing GamepadDisconnected: index={index}");
                         let _ = gamepad_tx.send(lumen_gamepad::GamepadEvent::Disconnected { index }).await;
                     }
                     lumen_compositor::InputEvent::GamepadButton { index, button, value, pressed } => {

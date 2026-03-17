@@ -7,9 +7,16 @@ use evdev::{
 };
 
 use crate::{
-    mapping::{AXIS_MAP, AXIS_SCALE, BUTTON_MAP, TRIGGER_AXIS_MAP, TRIGGER_SCALE},
+    mapping::{
+        AXIS_MAP, AXIS_SCALE, BUTTON_MAP,
+        TRIGGER_AXIS_MAP, TRIGGER_SCALE,
+        TRIGGER_FROM_AXIS_MAP, TRIGGER_FROM_AXIS_SCALE,
+        HAT_AXIS_MAP,
+    },
     GamepadError,
 };
+
+use tracing::trace;
 
 /// A single virtual gamepad device created via uinput.
 pub(crate) struct GamepadDevice {
@@ -29,7 +36,7 @@ impl GamepadDevice {
 
         let mut abs_axes: Vec<UinputAbsSetup> = Vec::new();
 
-        // Standard stick axes.
+        // Stick axes (±32 767).
         for &(idx, axis) in AXIS_MAP {
             if (idx as u8) < num_axes {
                 abs_axes.push(UinputAbsSetup::new(
@@ -39,13 +46,36 @@ impl GamepadDevice {
             }
         }
 
-        // Trigger absolute axes (ABS_Z / ABS_RZ).  Include if the corresponding
-        // button (6 or 7) is within the advertised button count.
-        for &(btn_idx, axis) in TRIGGER_AXIS_MAP {
-            if (btn_idx as u8) < num_buttons {
+        // Trigger axes — prefer axis-based triggers (raw evdev layout, e.g.
+        // 8BitDo) when axis indices 2 or 5 are present; otherwise fall back to
+        // button-based triggers (W3C standard layout).
+        let triggers_from_axes = num_axes > 2;
+        if triggers_from_axes {
+            for &(idx, axis) in TRIGGER_FROM_AXIS_MAP {
+                if (idx as u8) < num_axes {
+                    abs_axes.push(UinputAbsSetup::new(
+                        axis,
+                        AbsInfo::new(0, 0, 255, 0, 0, 0),
+                    ));
+                }
+            }
+        } else {
+            for &(btn_idx, axis) in TRIGGER_AXIS_MAP {
+                if (btn_idx as u8) < num_buttons {
+                    abs_axes.push(UinputAbsSetup::new(
+                        axis,
+                        AbsInfo::new(0, 0, 255, 0, 0, 0),
+                    ));
+                }
+            }
+        }
+
+        // Hat / D-pad axes (−1, 0, 1).
+        for &(idx, axis) in HAT_AXIS_MAP {
+            if (idx as u8) < num_axes {
                 abs_axes.push(UinputAbsSetup::new(
                     axis,
-                    AbsInfo::new(0, 0, 255, 0, 0, 0),
+                    AbsInfo::new(0, -1, 1, 0, 0, 0),
                 ));
             }
         }
@@ -56,6 +86,7 @@ impl GamepadDevice {
             .with_keys(&keys)
             .map_err(GamepadError::DeviceSetup)?;
 
+        let abs_axes_len = abs_axes.len();
         for setup in abs_axes {
             builder = builder
                 .with_absolute_axis(&setup)
@@ -63,6 +94,11 @@ impl GamepadDevice {
         }
 
         let device = builder.build().map_err(GamepadError::DeviceSetup)?;
+        trace!(
+            "GamepadDevice::new: created {name:?} with {} keys, {} abs axes",
+            keys.iter().count(),
+            abs_axes_len,
+        );
         Ok(Self { device })
     }
 
@@ -102,12 +138,29 @@ impl GamepadDevice {
 
     /// Emit an axis movement event.
     pub(crate) fn send_axis(&mut self, axis_idx: u8, value: f32) -> Result<(), GamepadError> {
+        // Stick axes — scale ±1.0 to ±32 767.
         if let Some(&(_, axis)) = AXIS_MAP.iter().find(|&&(i, _)| i == axis_idx as usize) {
             #[allow(clippy::cast_possible_truncation)]
             let scaled = (value.clamp(-1.0, 1.0) * AXIS_SCALE).round() as i32;
             let event = EvdevEvent::new(evdev::EventType::ABSOLUTE, axis.0, scaled);
-            self.device.emit(&[event]).map_err(GamepadError::Emit)?;
+            return self.device.emit(&[event]).map_err(GamepadError::Emit);
         }
+
+        // Trigger axes — browser range −1..1 → evdev 0..255.
+        if let Some(&(_, axis)) = TRIGGER_FROM_AXIS_MAP.iter().find(|&&(i, _)| i == axis_idx as usize) {
+            #[allow(clippy::cast_possible_truncation)]
+            let scaled = ((value.clamp(-1.0, 1.0) + 1.0) / 2.0 * TRIGGER_FROM_AXIS_SCALE).round() as i32;
+            let event = EvdevEvent::new(evdev::EventType::ABSOLUTE, axis.0, scaled);
+            return self.device.emit(&[event]).map_err(GamepadError::Emit);
+        }
+
+        // Hat / D-pad axes — values are −1, 0, or 1.
+        if let Some(&(_, axis)) = HAT_AXIS_MAP.iter().find(|&&(i, _)| i == axis_idx as usize) {
+            let val = value.round() as i32;
+            let event = EvdevEvent::new(evdev::EventType::ABSOLUTE, axis.0, val);
+            return self.device.emit(&[event]).map_err(GamepadError::Emit);
+        }
+
         Ok(())
     }
 }

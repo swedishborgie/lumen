@@ -156,27 +156,22 @@ export class InputHandler {
   }
 
   #handlePointerDown(e) {
-    console.log('[lumen] pointerdown', { button: e.button, pointerId: e.pointerId, target: e.target?.tagName, dcState: this.#client.dcReadyState });
     e.preventDefault();
     this.#videoEl.focus();
     try { this.#videoEl.setPointerCapture(e.pointerId); } catch (err) { console.warn('[lumen] setPointerCapture failed:', err.message); }
     this.#onUserGesture?.();
     const btn = BTN_CODES[e.button];
-    console.log('[lumen] btn lookup:', { eButton: e.button, btn });
     if (btn === undefined) { console.warn('[lumen] dropping unknown button', e.button); return; }
     if (!this.#pointerLocked) {
       const { x, y } = toCompositorCoords(this.#videoEl, e.clientX, e.clientY);
-      console.log('[lumen] sending pointer_motion', { x, y });
       this.#client.sendInput({ type: 'pointer_motion', x, y });
     }
-    console.log('[lumen] sending pointer_button', { btn, state: 1 });
     this.#client.sendInput({ type: 'pointer_button', btn, state: 1 });
   }
 
   #handlePointerUp(e) {
     const btn = BTN_CODES[e.button];
     if (btn === undefined) return;
-    console.log('[lumen] sending pointer_button', { btn, state: 0 });
     this.#client.sendInput({ type: 'pointer_button', btn, state: 0 });
   }
 

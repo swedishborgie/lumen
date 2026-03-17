@@ -7,14 +7,20 @@
 
 export class GamepadController {
   #client;
-  #rafHandle = null;    // requestAnimationFrame handle for the poll loop
-  #state     = new Map(); // gamepad index → { buttons: Float32Array, axes: Float32Array }
+  #rafHandle    = null;    // requestAnimationFrame handle for the poll loop
+  #state        = new Map(); // gamepad index → { buttons: Float32Array, axes: Float32Array }
+  #onConnect    = null;    // optional (index, name) => void
+  #onDisconnect = null;    // optional (index) => void
 
   /**
    * @param {import('../lumen-client.mjs').LumenClient} client
+   * @param {{ onConnect?: (index: number, name: string) => void,
+   *           onDisconnect?: (index: number) => void }} [callbacks]
    */
-  constructor(client) {
-    this.#client = client;
+  constructor(client, { onConnect = null, onDisconnect = null } = {}) {
+    this.#client      = client;
+    this.#onConnect    = onConnect;
+    this.#onDisconnect = onDisconnect;
   }
 
   /** Attach gamepadconnected / gamepaddisconnected event listeners. */
@@ -28,6 +34,30 @@ export class GamepadController {
     if (this.#rafHandle !== null) {
       cancelAnimationFrame(this.#rafHandle);
       this.#rafHandle = null;
+    }
+  }
+
+  /**
+   * Re-send gamepad_connected for all currently tracked gamepads and restart
+   * the poll loop if needed.  Call this whenever the data channel (re)opens so
+   * the backend is in sync even when gamepadconnected fired before the channel
+   * was ready, or after a session reconnect.
+   */
+  resync() {
+    if (this.#state.size === 0) return;
+    const gamepads = navigator.getGamepads();
+    for (const gp of gamepads) {
+      if (!gp || !this.#state.has(gp.index)) continue;
+      this.#client.sendInput({
+        type:        'gamepad_connected',
+        index:       gp.index,
+        name:        gp.id,
+        num_axes:    gp.axes.length,
+        num_buttons: gp.buttons.length,
+      });
+    }
+    if (this.#rafHandle === null) {
+      this.#startPoll();
     }
   }
 
@@ -47,6 +77,7 @@ export class GamepadController {
       num_axes:    gp.axes.length,
       num_buttons: gp.buttons.length,
     });
+    this.#onConnect?.(index, gp.id);
     if (this.#rafHandle === null) {
       this.#startPoll();
     }
@@ -56,6 +87,7 @@ export class GamepadController {
     const index = e.gamepad.index;
     this.#state.delete(index);
     this.#client.sendInput({ type: 'gamepad_disconnected', index });
+    this.#onDisconnect?.(index);
     if (this.#state.size === 0) {
       this.stop();
     }

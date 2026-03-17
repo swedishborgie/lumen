@@ -18,7 +18,8 @@ export class LumenUI {
                 //   btnFullscreen, statusEl, fullscreenHint, clipboardInput, splash,
                 //   displayAuto, displayFixed, displayFixedControls,
                 //   displayPreset720p, displayPreset1080p,
-                //   displayCustomW, displayCustomH, displayApply }
+                //   displayCustomW, displayCustomH, displayApply,
+                //   gamepadList }
   #cursor;      // CursorManager
   #input;       // InputHandler
   #gamepad;     // GamepadController
@@ -28,6 +29,7 @@ export class LumenUI {
   #audioUnlocked       = false;
   #clipboardDebounceTimer = null;
   #prevSnap            = null;
+  #connectedGamepads   = new Map(); // gamepad index → name
 
   // Keys to capture via the Keyboard Lock API when in fullscreen.
   // Supported only in Chromium-based browsers when fullscreen is active.
@@ -69,7 +71,10 @@ export class LumenUI {
 
     this.#cursor  = new CursorManager(cursorCanvas, video);
     this.#input   = new InputHandler(video, client, this.#cursor, () => this.#tryUnlockAudio());
-    this.#gamepad = new GamepadController(client);
+    this.#gamepad = new GamepadController(client, {
+      onConnect:    (index, name) => this.#onGamepadConnect(index, name),
+      onDisconnect: (index)       => this.#onGamepadDisconnect(index),
+    });
     this.#resize  = new ResizeManager(video, videoContainer, client, this.#cursor);
 
     this.#cursor.init();
@@ -113,9 +118,14 @@ export class LumenUI {
         this.#statsTimer = setInterval(() => this.#updateStats(), 1000);
         // Send the current size immediately so the compositor matches the viewport.
         this.#resize.sendCurrentSize();
+        // Re-sync any gamepads that connected before the data channel was open,
+        // or that were active during a previous session (reconnect case).
+        this.#gamepad.resync();
       } else if (state === 'idle') {
         if (this.#statsTimer) { clearInterval(this.#statsTimer); this.#statsTimer = null; }
         this.#gamepad.stop();
+        this.#connectedGamepads.clear();
+        this.#updateGamepadList();
         this.#prevSnap       = null;
         this.#audioUnlocked  = false;
         stats.textContent    = 'No stats yet';
@@ -149,7 +159,7 @@ export class LumenUI {
       const msg = e.detail;
       if (msg.type === 'cursor_update') this.#cursor.apply(msg).catch(console.warn);
       else if (msg.type === 'clipboard_update') this.#applyClipboard(msg);
-      else console.log('[lumen] dcmessage unknown type:', msg.type);
+      else console.warn('[lumen] dcmessage unknown type:', msg.type);
     });
   }
 
@@ -305,6 +315,34 @@ export class LumenUI {
     });
   }
 
+  // ── gamepad detection ────────────────────────────────────────────────────────
+
+  #onGamepadConnect(index, name) {
+    this.#connectedGamepads.set(index, name);
+    this.#updateGamepadList();
+  }
+
+  #onGamepadDisconnect(index) {
+    this.#connectedGamepads.delete(index);
+    this.#updateGamepadList();
+  }
+
+  #updateGamepadList() {
+    const el = this.#els.gamepadList;
+    if (!el) return;
+    if (this.#connectedGamepads.size === 0) {
+      el.innerHTML = '<span class="gamepad-none">No controllers detected</span>';
+      return;
+    }
+    el.innerHTML = '';
+    for (const [, name] of this.#connectedGamepads) {
+      const item = document.createElement('div');
+      item.className = 'gamepad-item';
+      item.textContent = name;
+      el.appendChild(item);
+    }
+  }
+
   // ── clipboard panel (browser → compositor) ───────────────────────────────────
 
   #bindClipboardPanel() {
@@ -317,8 +355,6 @@ export class LumenUI {
       this.#clipboardDebounceTimer = setTimeout(() => {
         const text = clipboardInput.value;
         if (!text) return;
-        console.log('[lumen] sending clipboard to compositor, length=%d, preview=%s',
-          text.length, JSON.stringify(text.slice(0, 80)));
         this.#client.sendClipboardWrite(text);
       }, 300);
     });
@@ -332,8 +368,6 @@ export class LumenUI {
    */
   #applyClipboard(msg) {
     if (typeof msg.text !== 'string') return;
-    console.log('[lumen] clipboard_update received, length=%d, preview=%s',
-      msg.text.length, JSON.stringify(msg.text.slice(0, 80)));
     this.#els.clipboardInput.value = msg.text;
   }
 

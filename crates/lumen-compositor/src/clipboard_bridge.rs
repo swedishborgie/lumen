@@ -1,11 +1,13 @@
 //! Clipboard bridge between Lumen and a nested inner compositor.
 //!
-//! When Lumen nests another compositor (e.g. labwc), clipboard events from apps running
-//! inside that nested compositor never reach Lumen's `SelectionHandler` because labwc owns
-//! its clipboard domain privately.
+//! When Lumen nests another compositor (e.g. labwc, KWin), clipboard events from apps running
+//! inside that nested compositor never reach Lumen's `SelectionHandler` because the inner
+//! compositor owns its clipboard domain privately.
 //!
 //! This module connects to the inner compositor's Wayland socket **as a client** and uses
-//! `zwlr_data_control_manager_v1` to bridge clipboard bidirectionally:
+//! either `ext_data_control_manager_v1` (preferred, KWin/KDE Plasma 6+) or the older
+//! `zwlr_data_control_manager_v1` (labwc, older compositors) to bridge clipboard
+//! bidirectionally:
 //!
 //! - **Inner → Outer**: `selection` events on the inner socket → read pipe → broadcast
 //!   `ClipboardEvent::Text` through Lumen's existing channel.
@@ -27,7 +29,13 @@ use wayland_client::{
     delegate_noop,
     globals::{registry_queue_init, GlobalListContents},
     protocol::{wl_registry, wl_seat::WlSeat},
-    Connection, Dispatch, EventQueue, QueueHandle,
+    Connection, Dispatch, EventQueue, Proxy, QueueHandle,
+};
+use wayland_protocols::ext::data_control::v1::client::{
+    ext_data_control_device_v1::{self, ExtDataControlDeviceV1},
+    ext_data_control_manager_v1::ExtDataControlManagerV1,
+    ext_data_control_offer_v1::{self, ExtDataControlOfferV1},
+    ext_data_control_source_v1::{self, ExtDataControlSourceV1},
 };
 use wayland_protocols_wlr::data_control::v1::client::{
     zwlr_data_control_device_v1::{self, ZwlrDataControlDeviceV1},
@@ -38,6 +46,111 @@ use wayland_protocols_wlr::data_control::v1::client::{
 
 use crate::types::ClipboardEvent;
 
+// ── Protocol-agnostic wrappers ────────────────────────────────────────────────
+
+/// Which data-control protocol the inner compositor speaks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Protocol {
+    /// `ext_data_control_manager_v1` — standardized, used by KWin/KDE Plasma 6+.
+    Ext,
+    /// `zwlr_data_control_manager_v1` — wlroots-specific, used by labwc/sway/wlroots.
+    Zwlr,
+}
+
+/// Wraps either an ext or zwlr data-control offer.
+enum AnyOffer {
+    Ext(ExtDataControlOfferV1),
+    Zwlr(ZwlrDataControlOfferV1),
+}
+
+impl AnyOffer {
+    fn matches(&self, other: &AnyOffer) -> bool {
+        match (self, other) {
+            (AnyOffer::Ext(a), AnyOffer::Ext(b)) => a.id() == b.id(),
+            (AnyOffer::Zwlr(a), AnyOffer::Zwlr(b)) => a.id() == b.id(),
+            _ => false,
+        }
+    }
+
+    fn receive(&self, mime: String, fd: rustix::fd::BorrowedFd<'_>) {
+        match self {
+            AnyOffer::Ext(o) => o.receive(mime, fd),
+            AnyOffer::Zwlr(o) => o.receive(mime, fd),
+        }
+    }
+
+    fn destroy(self) {
+        match self {
+            AnyOffer::Ext(o) => o.destroy(),
+            AnyOffer::Zwlr(o) => o.destroy(),
+        }
+    }
+}
+
+impl std::fmt::Debug for AnyOffer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AnyOffer::Ext(o) => write!(f, "Ext({:?})", o.id()),
+            AnyOffer::Zwlr(o) => write!(f, "Zwlr({:?})", o.id()),
+        }
+    }
+}
+
+/// Wraps either an ext or zwlr data-control source.
+enum AnySource {
+    Ext(ExtDataControlSourceV1),
+    Zwlr(ZwlrDataControlSourceV1),
+}
+
+impl AnySource {
+    fn offer(&self, mime: String) {
+        match self {
+            AnySource::Ext(s) => s.offer(mime),
+            AnySource::Zwlr(s) => s.offer(mime),
+        }
+    }
+
+    fn destroy(self) {
+        match self {
+            AnySource::Ext(s) => s.destroy(),
+            AnySource::Zwlr(s) => s.destroy(),
+        }
+    }
+}
+
+/// Wraps either an ext or zwlr data-control device.
+enum AnyDevice {
+    Ext(ExtDataControlDeviceV1),
+    Zwlr(ZwlrDataControlDeviceV1),
+}
+
+impl AnyDevice {
+    fn set_selection(&self, source: Option<&AnySource>) {
+        match (self, source) {
+            (AnyDevice::Ext(d), Some(AnySource::Ext(s))) => d.set_selection(Some(s)),
+            (AnyDevice::Ext(d), None) => d.set_selection(None),
+            (AnyDevice::Zwlr(d), Some(AnySource::Zwlr(s))) => d.set_selection(Some(s)),
+            (AnyDevice::Zwlr(d), None) => d.set_selection(None),
+            _ => tracing::warn!("clipboard_bridge: protocol mismatch in set_selection"),
+        }
+    }
+}
+
+/// Wraps either an ext or zwlr manager; creates sources of the matching type.
+enum AnyManager {
+    Ext(ExtDataControlManagerV1),
+    Zwlr(ZwlrDataControlManagerV1),
+}
+
+impl AnyManager {
+    fn create_source(&self, qh: &QueueHandle<BridgeState>) -> AnySource {
+        match self {
+            AnyManager::Ext(m) => AnySource::Ext(m.create_data_source(qh, ())),
+            AnyManager::Zwlr(m) => AnySource::Zwlr(m.create_data_source(qh, ())),
+        }
+    }
+}
+
 // ── Internal state held in the wayland-client dispatch loop ──────────────────
 
 struct BridgeState {
@@ -46,13 +159,13 @@ struct BridgeState {
     /// Tracks the last text broadcast or received, for echo-loop suppression.
     clipboard_sent_text: Arc<Mutex<Option<String>>>,
     /// The data-control device bound to seat0.
-    device: Option<ZwlrDataControlDeviceV1>,
+    device: Option<AnyDevice>,
     /// Current clipboard offer (if any) from the inner compositor.
-    current_offer: Option<ZwlrDataControlOfferV1>,
-    /// MIME types advertised by the current offer, in preference order.
+    current_offer: Option<AnyOffer>,
+    /// MIME types advertised by the current clipboard offer.
     offer_mime_types: Vec<String>,
     /// The active outbound source we created (if any). Held alive until replaced or dropped.
-    active_source: Option<ZwlrDataControlSourceV1>,
+    active_source: Option<AnySource>,
     /// Text we are currently advertising via `active_source`.
     active_source_text: Option<String>,
 }
@@ -92,8 +205,10 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for BridgeState {
 
 delegate_noop!(BridgeState: ignore WlSeat);
 delegate_noop!(BridgeState: ignore ZwlrDataControlManagerV1);
+delegate_noop!(BridgeState: ignore ExtDataControlManagerV1);
 
-// ZwlrDataControlOfferV1: accumulates the MIME types advertised by the inner clipboard.
+// ── zwlr dispatch impls ───────────────────────────────────────────────────────
+
 impl Dispatch<ZwlrDataControlOfferV1, ()> for BridgeState {
     fn event(
         state: &mut Self,
@@ -104,22 +219,23 @@ impl Dispatch<ZwlrDataControlOfferV1, ()> for BridgeState {
         _: &QueueHandle<Self>,
     ) {
         if let zwlr_data_control_offer_v1::Event::Offer { mime_type } = event {
-            // Only accumulate MIME types for the current pending offer.
-            if state.current_offer.as_ref().map(|o| o == offer).unwrap_or(false) {
+            if state.current_offer.as_ref().map(|o| matches!(o, AnyOffer::Zwlr(z) if z.id() == offer.id())).unwrap_or(false) {
                 state.offer_mime_types.push(mime_type);
             }
         }
     }
 }
 
-// ZwlrDataControlDeviceV1: receives clipboard change notifications from the inner compositor.
 impl Dispatch<ZwlrDataControlDeviceV1, ()> for BridgeState {
     fn event_created_child(opcode: u16, qhandle: &QueueHandle<Self>) -> std::sync::Arc<dyn wayland_client::backend::ObjectData> {
-        // Opcode 0 = data_offer, which creates a ZwlrDataControlOfferV1 child.
         if opcode == 0 {
             qhandle.make_data::<ZwlrDataControlOfferV1, _>(())
         } else {
-            panic!("unexpected event_created_child for ZwlrDataControlDeviceV1 opcode {opcode}")
+            tracing::warn!(
+                "clipboard_bridge: ZwlrDataControlDeviceV1 event_created_child opcode {opcode} — \
+                 using noop fallback"
+            );
+            qhandle.make_data::<ZwlrDataControlOfferV1, _>(())
         }
     }
 
@@ -131,48 +247,36 @@ impl Dispatch<ZwlrDataControlDeviceV1, ()> for BridgeState {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
-        match event {
-            zwlr_data_control_device_v1::Event::DataOffer { id } => {
-                // A new offer object is being constructed; MIME types follow.
-                if let Some(old) = state.current_offer.take() {
-                    old.destroy();
-                }
-                state.offer_mime_types.clear();
-                state.current_offer = Some(id);
+        handle_device_event_zwlr(state, event);
+    }
+}
+
+fn handle_device_event_zwlr(state: &mut BridgeState, event: zwlr_data_control_device_v1::Event) {
+    match event {
+        zwlr_data_control_device_v1::Event::DataOffer { id } => {
+            tracing::debug!("clipboard_bridge: [zwlr] DataOffer {:?}", id);
+            if let Some(old) = state.current_offer.take() {
+                old.destroy();
             }
-            zwlr_data_control_device_v1::Event::Selection { id } => {
-                // `id` is the offer that is now the active clipboard.
-                if let Some(offer_obj) = id {
-                    // Confirm this is the offer we've been accumulating MIME types for.
-                    if state.current_offer.as_ref().map(|o| o == &offer_obj).unwrap_or(false) {
-                        let mime_types = std::mem::take(&mut state.offer_mime_types);
-                        let clipboard_tx = state.clipboard_tx.clone();
-                        let sent_text = Arc::clone(&state.clipboard_sent_text);
-                        try_read_offer(offer_obj, mime_types, clipboard_tx, sent_text);
-                        state.current_offer = None;
-                    } else {
-                        offer_obj.destroy();
-                        state.current_offer = None;
-                        state.offer_mime_types.clear();
-                    }
-                } else {
-                    // Clipboard cleared.
-                    if let Some(old) = state.current_offer.take() {
-                        old.destroy();
-                    }
-                    state.offer_mime_types.clear();
-                    let _ = state.clipboard_tx.send(ClipboardEvent::Cleared);
-                }
-            }
-            zwlr_data_control_device_v1::Event::Finished => {
-                tracing::debug!("clipboard_bridge: data_control_device finished");
-            }
-            _ => {}
+            state.offer_mime_types.clear();
+            state.current_offer = Some(AnyOffer::Zwlr(id));
+        }
+        zwlr_data_control_device_v1::Event::Selection { id } => {
+            let matches = id.as_ref().map(|o| {
+                state.current_offer.as_ref().map(|c| c.matches(&AnyOffer::Zwlr(o.clone()))).unwrap_or(false)
+            }).unwrap_or(false);
+            tracing::debug!("clipboard_bridge: [zwlr] Selection {:?} (matches current: {})", id, matches);
+            handle_selection(state, id.map(AnyOffer::Zwlr));
+        }
+        zwlr_data_control_device_v1::Event::Finished => {
+            tracing::debug!("clipboard_bridge: [zwlr] data_control_device finished");
+        }
+        _ => {
+            tracing::debug!("clipboard_bridge: [zwlr] unhandled device event (likely primary_selection)");
         }
     }
 }
 
-// ZwlrDataControlSourceV1: handles paste requests from apps running in the inner compositor.
 impl Dispatch<ZwlrDataControlSourceV1, ()> for BridgeState {
     fn event(
         state: &mut Self,
@@ -184,38 +288,174 @@ impl Dispatch<ZwlrDataControlSourceV1, ()> for BridgeState {
     ) {
         match event {
             zwlr_data_control_source_v1::Event::Send { mime_type, fd } => {
-                if let Some(ref text) = state.active_source_text {
-                    let data = if mime_type.starts_with("text/") || mime_type == "UTF8_STRING"
-                        || mime_type == "STRING" || mime_type == "TEXT"
-                    {
-                        text.as_bytes().to_vec()
-                    } else {
-                        return;
-                    };
-                    // Write in a background thread so we don't block the dispatch loop.
-                    std::thread::spawn(move || {
-                        let _ = std::fs::File::from(fd).write_all(&data);
-                    });
-                }
+                handle_source_send(state, mime_type, fd);
             }
             zwlr_data_control_source_v1::Event::Cancelled => {
-                // Another client took ownership of the clipboard; release our source.
-                tracing::debug!("clipboard_bridge: outbound source cancelled");
-                if let Some(src) = state.active_source.take() {
-                    src.destroy();
-                }
-                state.active_source_text = None;
+                handle_source_cancelled(state);
             }
             _ => {}
         }
     }
 }
 
+// ── ext dispatch impls ────────────────────────────────────────────────────────
+
+impl Dispatch<ExtDataControlOfferV1, ()> for BridgeState {
+    fn event(
+        state: &mut Self,
+        offer: &ExtDataControlOfferV1,
+        event: ext_data_control_offer_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let ext_data_control_offer_v1::Event::Offer { mime_type } = event {
+            if state.current_offer.as_ref().map(|o| matches!(o, AnyOffer::Ext(e) if e.id() == offer.id())).unwrap_or(false) {
+                state.offer_mime_types.push(mime_type);
+            }
+        }
+    }
+}
+
+impl Dispatch<ExtDataControlDeviceV1, ()> for BridgeState {
+    fn event_created_child(opcode: u16, qhandle: &QueueHandle<Self>) -> std::sync::Arc<dyn wayland_client::backend::ObjectData> {
+        // Opcode 0 = data_offer (creates ExtDataControlOfferV1).
+        if opcode == 0 {
+            qhandle.make_data::<ExtDataControlOfferV1, _>(())
+        } else {
+            tracing::warn!(
+                "clipboard_bridge: ExtDataControlDeviceV1 event_created_child opcode {opcode} — \
+                 using noop fallback"
+            );
+            qhandle.make_data::<ExtDataControlOfferV1, _>(())
+        }
+    }
+
+    fn event(
+        state: &mut Self,
+        _device: &ExtDataControlDeviceV1,
+        event: ext_data_control_device_v1::Event,
+        _: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        handle_device_event_ext(state, event);
+    }
+}
+
+fn handle_device_event_ext(state: &mut BridgeState, event: ext_data_control_device_v1::Event) {
+    match event {
+        ext_data_control_device_v1::Event::DataOffer { id } => {
+            tracing::debug!("clipboard_bridge: [ext] DataOffer {:?}", id);
+            if let Some(old) = state.current_offer.take() {
+                old.destroy();
+            }
+            state.offer_mime_types.clear();
+            state.current_offer = Some(AnyOffer::Ext(id));
+        }
+        ext_data_control_device_v1::Event::Selection { id } => {
+            let matches = id.as_ref().map(|o| {
+                state.current_offer.as_ref().map(|c| c.matches(&AnyOffer::Ext(o.clone()))).unwrap_or(false)
+            }).unwrap_or(false);
+            tracing::debug!("clipboard_bridge: [ext] Selection {:?} (matches current: {})", id, matches);
+            handle_selection(state, id.map(AnyOffer::Ext));
+        }
+        ext_data_control_device_v1::Event::Finished => {
+            tracing::debug!("clipboard_bridge: [ext] data_control_device finished");
+        }
+        _ => {
+            tracing::debug!("clipboard_bridge: [ext] unhandled device event (likely primary_selection)");
+        }
+    }
+}
+
+impl Dispatch<ExtDataControlSourceV1, ()> for BridgeState {
+    fn event(
+        state: &mut Self,
+        _source: &ExtDataControlSourceV1,
+        event: ext_data_control_source_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            ext_data_control_source_v1::Event::Send { mime_type, fd } => {
+                handle_source_send(state, mime_type, fd);
+            }
+            ext_data_control_source_v1::Event::Cancelled => {
+                handle_source_cancelled(state);
+            }
+            _ => {}
+        }
+    }
+}
+
+// ── Shared event handlers ─────────────────────────────────────────────────────
+
+fn handle_selection(state: &mut BridgeState, offer: Option<AnyOffer>) {
+    if let Some(offer_obj) = offer {
+        if state.current_offer.as_ref().map(|o| o.matches(&offer_obj)).unwrap_or(false) {
+            let mime_types = std::mem::take(&mut state.offer_mime_types);
+            let clipboard_tx = state.clipboard_tx.clone();
+            let sent_text = Arc::clone(&state.clipboard_sent_text);
+            try_read_offer(offer_obj, mime_types, clipboard_tx, sent_text);
+            state.current_offer = None;
+        } else {
+            tracing::warn!(
+                "clipboard_bridge: Selection offer {:?} does not match current_offer {:?} — \
+                 discarding (possible primary-selection interleaving)",
+                offer_obj,
+                state.current_offer
+            );
+            offer_obj.destroy();
+            state.current_offer = None;
+            state.offer_mime_types.clear();
+        }
+    } else {
+        // Clipboard cleared.
+        if let Some(old) = state.current_offer.take() {
+            old.destroy();
+        }
+        state.offer_mime_types.clear();
+        let _ = state.clipboard_tx.send(ClipboardEvent::Cleared);
+    }
+}
+
+fn handle_source_send(
+    state: &mut BridgeState,
+    mime_type: String,
+    fd: rustix::fd::OwnedFd,
+) {
+    if let Some(ref text) = state.active_source_text {
+        let data = if mime_type.starts_with("text/")
+            || mime_type == "UTF8_STRING"
+            || mime_type == "STRING"
+            || mime_type == "TEXT"
+        {
+            text.as_bytes().to_vec()
+        } else {
+            return;
+        };
+        // Write in a background thread so we don't block the dispatch loop.
+        std::thread::spawn(move || {
+            let _ = std::fs::File::from(fd).write_all(&data);
+        });
+    }
+}
+
+fn handle_source_cancelled(state: &mut BridgeState) {
+    tracing::debug!("clipboard_bridge: outbound source cancelled");
+    if let Some(src) = state.active_source.take() {
+        src.destroy();
+    }
+    state.active_source_text = None;
+}
+
 // ── Offer reading helper ───────────────────────────────────────────────────────
 
 /// Spawn a thread to read clipboard text from the offer's pipe and broadcast it.
 fn try_read_offer(
-    offer: ZwlrDataControlOfferV1,
+    offer: AnyOffer,
     mime_types: Vec<String>,
     clipboard_tx: broadcast::Sender<ClipboardEvent>,
     sent_text: Arc<Mutex<Option<String>>>,
@@ -265,7 +505,8 @@ fn try_read_offer(
 // ── Socket auto-discovery ─────────────────────────────────────────────────────
 
 /// Scan `$XDG_RUNTIME_DIR` for Wayland socket files and return the name of the
-/// first one (other than `skip_socket`) that advertises `zwlr_data_control_manager_v1`.
+/// first one (other than `skip_socket`) that advertises either
+/// `ext_data_control_manager_v1` or `zwlr_data_control_manager_v1`.
 ///
 /// Returns `None` if no suitable socket is found.
 fn discover_inner_socket(skip_socket: &str) -> Option<String> {
@@ -291,8 +532,8 @@ fn discover_inner_socket(skip_socket: &str) -> Option<String> {
             continue;
         }
         let socket_path = dir.join(&candidate);
-        // Probe: try connecting and see if zwlr_data_control_manager_v1 is available.
-        if probe_has_data_control(&socket_path) {
+        // Probe: try connecting and see if either data-control protocol is available.
+        if probe_has_data_control(&socket_path).is_some() {
             tracing::info!("clipboard_bridge: discovered inner socket {:?}", candidate);
             return Some(candidate);
         }
@@ -300,15 +541,22 @@ fn discover_inner_socket(skip_socket: &str) -> Option<String> {
     None
 }
 
-/// Return `true` if the Wayland socket at `path` advertises `zwlr_data_control_manager_v1`.
-fn probe_has_data_control(path: &std::path::Path) -> bool {
+/// Return which data-control protocol the socket at `path` advertises, or `None`.
+/// Prefers `ext_data_control_manager_v1` over `zwlr_data_control_manager_v1`.
+fn probe_has_data_control(path: &std::path::Path) -> Option<Protocol> {
     let stream = match UnixStream::connect(path) {
         Ok(s) => s,
-        Err(_) => return false,
+        Err(e) => {
+            tracing::debug!("clipboard_bridge: probe {:?} — connect failed: {e}", path);
+            return None;
+        }
     };
     let conn = match Connection::from_socket(stream) {
         Ok(c) => c,
-        Err(_) => return false,
+        Err(e) => {
+            tracing::debug!("clipboard_bridge: probe {:?} — connection setup failed: {e}", path);
+            return None;
+        }
     };
     struct ProbeState;
     impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for ProbeState {
@@ -317,10 +565,34 @@ fn probe_has_data_control(path: &std::path::Path) -> bool {
     }
     let result = registry_queue_init::<ProbeState>(&conn);
     match result {
-        Ok((globals, _)) => globals.contents().with_list(|list| {
-            list.iter().any(|g| g.interface == "zwlr_data_control_manager_v1")
-        }),
-        Err(_) => false,
+        Ok((globals, _)) => {
+            globals.contents().with_list(|list| {
+                tracing::debug!(
+                    "clipboard_bridge: probe {:?} — globals: [{}]",
+                    path,
+                    list.iter()
+                        .map(|g| format!("{} v{}", g.interface, g.version))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                let has_ext = list.iter().any(|g| g.interface == "ext_data_control_manager_v1");
+                let has_zwlr = list.iter().any(|g| g.interface == "zwlr_data_control_manager_v1");
+                if has_ext {
+                    tracing::debug!("clipboard_bridge: probe {:?} — using ext_data_control_manager_v1", path);
+                    Some(Protocol::Ext)
+                } else if has_zwlr {
+                    tracing::debug!("clipboard_bridge: probe {:?} — using zwlr_data_control_manager_v1", path);
+                    Some(Protocol::Zwlr)
+                } else {
+                    tracing::debug!("clipboard_bridge: probe {:?} — no data-control protocol found", path);
+                    None
+                }
+            })
+        }
+        Err(e) => {
+            tracing::debug!("clipboard_bridge: probe {:?} — registry init failed: {e}", path);
+            None
+        }
     }
 }
 
@@ -331,7 +603,8 @@ fn probe_has_data_control(path: &std::path::Path) -> bool {
 /// `inner_display` is either:
 /// - A specific Wayland socket name (e.g. `"wayland-2"`), or
 /// - `"auto"` to auto-discover the inner compositor by scanning `$XDG_RUNTIME_DIR`
-///   for a socket that advertises `zwlr_data_control_manager_v1`.
+///   for a socket that advertises `ext_data_control_manager_v1` or
+///   `zwlr_data_control_manager_v1`.
 ///
 /// - Incoming clipboard changes are broadcast via `clipboard_tx`.
 /// - Text received on `write_rx` is pushed to the inner compositor as a new selection.
@@ -399,19 +672,54 @@ fn try_connect_and_run(
     let (globals, mut queue): (_, EventQueue<BridgeState>) = registry_queue_init(&conn)?;
     let qh = queue.handle();
 
-    // Bind required globals.
-    let manager: ZwlrDataControlManagerV1 = globals
-        .bind(&qh, 1..=2, ())
-        .map_err(|e| format!("zwlr_data_control_manager_v1 not available: {e}"))?;
+    // Log all globals and detect which data-control protocol is available.
+    let protocol = globals.contents().with_list(|list| {
+        tracing::debug!(
+            "clipboard_bridge: inner compositor globals: [{}]",
+            list.iter()
+                .map(|g| format!("{} v{}", g.interface, g.version))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let has_ext = list.iter().any(|g| g.interface == "ext_data_control_manager_v1");
+        let has_zwlr = list.iter().any(|g| g.interface == "zwlr_data_control_manager_v1");
+        if has_ext { Some(Protocol::Ext) } else if has_zwlr { Some(Protocol::Zwlr) } else { None }
+    });
 
+    let protocol = protocol.ok_or_else(|| {
+        "neither ext_data_control_manager_v1 nor zwlr_data_control_manager_v1 advertised".to_string()
+    })?;
+
+    tracing::info!("clipboard_bridge: using protocol {:?}", protocol);
+
+    // Bind wl_seat (needed by both protocols to create a data-control device).
     let seat: WlSeat = globals
-        .bind(&qh, 7..=8, ())
+        .bind(&qh, 1..=9, ())
         .map_err(|e| format!("wl_seat not available: {e}"))?;
 
-    let mut state = BridgeState::new(clipboard_tx.clone(), Arc::clone(clipboard_sent_text));
+    let manager: AnyManager;
+    let device: AnyDevice;
 
-    // Create the data-control device for seat0.
-    let device = manager.get_data_device(&seat, &qh, ());
+    match protocol {
+        Protocol::Ext => {
+            let mgr: ExtDataControlManagerV1 = globals
+                .bind(&qh, 1..=1, ())
+                .map_err(|e| format!("ext_data_control_manager_v1 bind failed: {e}"))?;
+            let dev = mgr.get_data_device(&seat, &qh, ());
+            device = AnyDevice::Ext(dev);
+            manager = AnyManager::Ext(mgr);
+        }
+        Protocol::Zwlr => {
+            let mgr: ZwlrDataControlManagerV1 = globals
+                .bind(&qh, 1..=2, ())
+                .map_err(|e| format!("zwlr_data_control_manager_v1 bind failed: {e}"))?;
+            let dev = mgr.get_data_device(&seat, &qh, ());
+            device = AnyDevice::Zwlr(dev);
+            manager = AnyManager::Zwlr(mgr);
+        }
+    }
+
+    let mut state = BridgeState::new(clipboard_tx.clone(), Arc::clone(clipboard_sent_text));
     state.device = Some(device);
 
     // Initial roundtrip to receive the current clipboard selection.
@@ -436,14 +744,12 @@ fn try_connect_and_run(
                     old.destroy();
                 }
 
-                let source = manager.create_data_source(&qh, ());
+                let source = manager.create_source(&qh);
                 source.offer("text/plain;charset=utf-8".into());
                 source.offer("text/plain".into());
                 source.offer("UTF8_STRING".into());
 
-                if let Some(ref dev) = state.device {
-                    dev.set_selection(Some(&source));
-                }
+                state.device.as_ref().map(|d| d.set_selection(Some(&source)));
 
                 // Update dedup guard so we don't echo this back.
                 *clipboard_sent_text.lock().unwrap() = Some(text.clone());

@@ -5,8 +5,8 @@ body { background: #000; color: #eee; font-family: sans-serif; height: 100vh; wi
 body.fixed-mode {
   overflow: auto;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: safe center;
+  justify-content: safe center;
   min-height: 100vh;
   min-width: 100vw;
   height: auto;

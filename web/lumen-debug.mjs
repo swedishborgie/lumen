@@ -13,6 +13,11 @@
  *   log.verbose('offer', 'SDP:', sdpText);
  */
 
+/** Format elapsed time since page load as a compact `+0.000s` string. */
+function elapsedLabel() {
+  return `+${(performance.now() / 1000).toFixed(3)}s`;
+}
+
 /** Numeric log levels in ascending verbosity order. */
 export const Level = Object.freeze({
   NONE:    0,
@@ -44,7 +49,7 @@ function emit(level, currentLevel, subsystem, phase, args) {
   if (level > currentLevel) return;
   const label  = LEVEL_LABELS[level];
   const style  = LEVEL_STYLES[level];
-  const prefix = `[lumen:${label}] [${subsystem}/${phase}]`;
+  const prefix = `[lumen:${label}] [${elapsedLabel()}] [${subsystem}/${phase}]`;
   if (level === Level.ERROR) {
     console.error(`%c${prefix}`, style, ...args);
   } else if (level === Level.WARN) {

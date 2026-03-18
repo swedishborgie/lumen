@@ -19,7 +19,8 @@ export class LumenUI {
   #els;         // { video, videoContainer, cursorCanvas, perfCanvas, perfToggle,
                 //   debugToggle, debugLevel, debugLevelRow,
                 //   btnConnect, btnDisconnect,
-                //   btnFullscreen, statusEl, fullscreenHint, clipboardInput, splash,
+                //   btnFullscreen, statusEl, fullscreenHint, clipboardInput,
+                //   splash, splashStatus,
                 //   displayAuto, displayFixed, displayFixedControls,
                 //   displayPreset720p, displayPreset1080p,
                 //   displayCustomW, displayCustomH, displayApply,
@@ -33,6 +34,12 @@ export class LumenUI {
   #audioUnlocked       = false;
   #clipboardDebounceTimer = null;
   #connectedGamepads   = new Map(); // gamepad index → name
+
+  // Auto-reconnect state.
+  #intentionalDisconnect = false; // true when the user clicked Disconnect
+  #reconnectAttempt      = 0;     // resets to 0 on successful connect
+  #reconnectTimer        = null;  // setTimeout handle for next reconnect
+  #reconnectCountdown    = null;  // setInterval handle for countdown display
 
   // Keys to capture via the Keyboard Lock API when in fullscreen.
   // Supported only in Chromium-based browsers when fullscreen is active.
@@ -61,6 +68,7 @@ export class LumenUI {
    *           fullscreenHint: HTMLElement,
    *           clipboardInput: HTMLTextAreaElement,
    *           splash: HTMLElement,
+   *           splashStatus: HTMLElement,
    *           displayAuto: HTMLButtonElement,
    *           displayFixed: HTMLButtonElement,
    *           displayFixedControls: HTMLElement,
@@ -115,6 +123,7 @@ export class LumenUI {
 
     this.#client.addEventListener('statuschange', (e) => {
       statusEl.textContent = e.detail;
+      if (this.#els.splashStatus) this.#els.splashStatus.textContent = e.detail;
     });
 
     this.#client.addEventListener('statechange', (e) => {
@@ -124,6 +133,8 @@ export class LumenUI {
       this.#els.btnFullscreen.disabled = state !== 'connected';
 
       if (state === 'connected') {
+        this.#cancelReconnect();
+        this.#reconnectAttempt = 0;
         video.focus();
         if (this.#els.perfToggle?.checked) this.#perf.start();
         // Send the current size immediately so the compositor matches the viewport.
@@ -146,6 +157,12 @@ export class LumenUI {
         // Show splash screen again.
         if (this.#els.splash) {
           this.#els.splash.classList.remove('hidden');
+        }
+        if (this.#intentionalDisconnect) {
+          this.#intentionalDisconnect = false;
+          this.#reconnectAttempt = 0;
+        } else {
+          this.#scheduleReconnect();
         }
       }
     });
@@ -175,8 +192,88 @@ export class LumenUI {
 
   #bindControlEvents() {
     const { btnConnect, btnDisconnect } = this.#els;
-    btnConnect.addEventListener('click',    () => this.#client.connect());
-    btnDisconnect.addEventListener('click', () => this.#client.disconnect());
+    btnConnect.addEventListener('click', () => {
+      this.#cancelReconnect();
+      this.#reconnectAttempt = 0;
+      this.#client.connect();
+    });
+    btnDisconnect.addEventListener('click', () => {
+      this.#intentionalDisconnect = true;
+      this.#cancelReconnect();
+      this.#client.disconnect();
+    });
+  }
+
+  // ── auto-reconnect ────────────────────────────────────────────────────────────
+
+  /** Schedule the next reconnect attempt with exponential backoff (capped at 30s). */
+  #scheduleReconnect() {
+    const attempt = ++this.#reconnectAttempt;
+    const delay   = Math.min(1000 * (2 ** (attempt - 1)), 30_000);
+    let remaining = Math.ceil(delay / 1000);
+
+    const updateCountdown = () => {
+      this.#setStatusAll(`Reconnecting in ${remaining}s\u2026`);
+    };
+    updateCountdown();
+
+    this.#reconnectCountdown = setInterval(() => {
+      remaining--;
+      if (remaining > 0) {
+        updateCountdown();
+      } else {
+        clearInterval(this.#reconnectCountdown);
+        this.#reconnectCountdown = null;
+      }
+    }, 1000);
+
+    this.#reconnectTimer = setTimeout(() => {
+      this.#reconnectTimer = null;
+      clearInterval(this.#reconnectCountdown);
+      this.#reconnectCountdown = null;
+      this.#client.connect();
+    }, delay);
+
+    // Probe for auth failures in the background. The WebSocket API does not
+    // expose the HTTP status of a failed upgrade, so we use a fetch to detect
+    // 401/403. If the session expired the server will also reject the WS — a
+    // page reload is the correct recovery (OAuth2 will redirect to login).
+    this.#probeAuth();
+  }
+
+  /**
+   * Fetch /api/config to check whether the session is still authenticated.
+   * If the server returns 401 or 403, cancels the reconnect countdown and
+   * reloads the page so the OAuth2 flow can re-authenticate.
+   */
+  async #probeAuth() {
+    try {
+      // Use redirect:'manual' so the browser does not follow the OAuth2 redirect
+      // to the auth server (which would be cross-origin and trigger a CORS error).
+      // A redirect response comes back as type='opaqueredirect' with status 0.
+      const res = await fetch('/api/config', { credentials: 'include', redirect: 'manual' });
+      if (res.status === 401 || res.status === 403 || res.type === 'opaqueredirect') {
+        this.#cancelReconnect();
+        this.#setStatusAll('Session expired \u2014 reloading\u2026');
+        location.reload();
+      }
+    } catch {
+      // Network is down or server unreachable — normal reconnect will handle it.
+    }
+  }
+
+  /** Cancel any pending reconnect timer and countdown. */
+  #cancelReconnect() {
+    clearTimeout(this.#reconnectTimer);
+    clearInterval(this.#reconnectCountdown);
+    this.#reconnectTimer     = null;
+    this.#reconnectCountdown = null;
+  }
+
+  /** Update both the tray status element and the splash status element. */
+  #setStatusAll(msg) {
+    if (this.#els.statusEl)    this.#els.statusEl.textContent    = msg;
+    if (this.#els.splashStatus) this.#els.splashStatus.textContent = msg;
   }
 
   // ── fullscreen + pointer lock + keyboard lock ────────────────────────────────

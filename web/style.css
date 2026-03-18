@@ -60,6 +60,15 @@ video {
   color: #444;
   text-transform: uppercase;
 }
+#splash-status {
+  font-family: sans-serif;
+  font-size: 0.85rem;
+  font-weight: 400;
+  color: #555;
+  letter-spacing: 0.05em;
+  margin-top: 4px;
+  min-height: 1.2em;
+}
 #cursor-canvas {
   position: absolute;
   top: 0; left: 0;

@@ -92,12 +92,14 @@ export class LumenClient extends EventTarget {
   async connect(signalUrl) {
     if (this.#state !== 'idle') return;
     this.#setState('connecting');
-    this.#setStatus('Connecting…');
+    this.#setStatus('Opening signaling channel\u2026');
 
     const url = signalUrl ?? `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/signal`;
 
     log.info('websocket', 'Opening WebSocket:', url);
     this.#ws = new WebSocket(url);
+
+    // Persistent handlers active for the lifetime of this connection.
     this.#ws.onerror = () => {
       log.error('websocket', 'WebSocket error');
       this.#setStatus('WebSocket error');
@@ -109,16 +111,18 @@ export class LumenClient extends EventTarget {
       this.disconnect();
     };
 
-    await new Promise((resolve, reject) => {
-      this.#ws.onopen  = () => {
-        log.info('websocket', 'WebSocket opened');
-        resolve();
-      };
-      this.#ws.onerror = reject;
+    // Wait for the WebSocket to open. Use once-listeners so we don't overwrite
+    // the persistent onerror handler above.
+    const wsOpened = await new Promise((resolve) => {
+      this.#ws.addEventListener('open',  () => resolve(true),  { once: true });
+      this.#ws.addEventListener('error', () => resolve(false), { once: true });
     });
+    if (!wsOpened) return; // Failed to open; onerror/onclose will call disconnect().
+    log.info('websocket', 'WebSocket opened');
 
     // Fetch ICE server configuration from the server (includes TURN credentials
     // when the embedded TURN server is enabled).
+    this.#setStatus('Fetching ICE configuration\u2026');
     let iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
     log.debug('ice-config', 'Fetching ICE server config from /api/config');
     try {
@@ -135,6 +139,7 @@ export class LumenClient extends EventTarget {
       console.warn('Could not fetch /api/config, using default ICE servers:', e);
     }
 
+    this.#setStatus('Setting up peer connection\u2026');
     log.info('peer-connection', `Creating RTCPeerConnection (bundlePolicy: max-bundle, ${iceServers.length} ICE server(s))`);
     this.#pc = new RTCPeerConnection({
       iceServers,
@@ -183,7 +188,15 @@ export class LumenClient extends EventTarget {
       const s = this.#pc.connectionState;
       const lvl = s === 'failed' ? 'error' : (s === 'disconnected' || s === 'closed') ? 'warn' : 'info';
       log[lvl]('peer-connection', `Connection state: ${s}`);
-      this.#setStatus(`WebRTC: ${s}`);
+      if (s === 'connecting') {
+        this.#setStatus('Establishing ICE connection\u2026');
+      } else if (s === 'failed') {
+        this.#setStatus('Connection failed');
+      } else if (s === 'disconnected') {
+        this.#setStatus('Connection interrupted\u2026');
+      }
+      // 'connected' → data channel open sets 'Connected'
+      // 'closed'    → disconnect() sets 'Idle'
       if (['failed', 'closed', 'disconnected'].includes(s)) {
         this.disconnect();
       }
@@ -245,6 +258,7 @@ export class LumenClient extends EventTarget {
       }
     };
 
+    this.#setStatus('Waiting for server answer\u2026');
     log.info('offer', 'Sending SDP offer via WebSocket');
     this.#ws.send(JSON.stringify({ type: 'offer', sdp: offer.sdp }));
   }
@@ -256,8 +270,10 @@ export class LumenClient extends EventTarget {
     this.#ws?.close();  this.#ws = null;
     this.#stream  = null;
     this.#sessionId = null;
-    this.#setState('idle');
+    // Emit status before state so the UI's statechange handler can override it
+    // (e.g., with a reconnect countdown message).
     this.#setStatus('Idle');
+    this.#setState('idle');
   }
 
   /**

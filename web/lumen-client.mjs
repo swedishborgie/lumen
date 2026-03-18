@@ -67,6 +67,9 @@ export const KEY_MAP = {
   Eject:161,Sleep:142,WakeUp:143,Power:116,
 };
 
+import { logger } from './lumen-debug.mjs';
+const log = logger.forSubsystem('client');
+
 // Indexed by e.button: 0=left, 1=middle, 2=right, 3=back, 4=forward
 // Linux evdev:       BTN_LEFT=272, BTN_MIDDLE=274, BTN_RIGHT=273,
 //                    BTN_SIDE=275, BTN_EXTRA=276
@@ -93,27 +96,46 @@ export class LumenClient extends EventTarget {
 
     const url = signalUrl ?? `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/signal`;
 
+    log.info('websocket', 'Opening WebSocket:', url);
     this.#ws = new WebSocket(url);
-    this.#ws.onerror = () => { this.#setStatus('WebSocket error'); this.disconnect(); };
-    this.#ws.onclose = () => { this.#setStatus('Signaling closed'); this.disconnect(); };
+    this.#ws.onerror = () => {
+      log.error('websocket', 'WebSocket error');
+      this.#setStatus('WebSocket error');
+      this.disconnect();
+    };
+    this.#ws.onclose = (e) => {
+      log.warn('websocket', `WebSocket closed (code: ${e.code}, reason: ${e.reason || 'none'})`);
+      this.#setStatus('Signaling closed');
+      this.disconnect();
+    };
 
     await new Promise((resolve, reject) => {
-      this.#ws.onopen  = resolve;
+      this.#ws.onopen  = () => {
+        log.info('websocket', 'WebSocket opened');
+        resolve();
+      };
       this.#ws.onerror = reject;
     });
 
     // Fetch ICE server configuration from the server (includes TURN credentials
     // when the embedded TURN server is enabled).
     let iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
+    log.debug('ice-config', 'Fetching ICE server config from /api/config');
     try {
       const cfg = await fetch('/api/config').then(r => r.json());
       if (Array.isArray(cfg.iceServers) && cfg.iceServers.length > 0) {
         iceServers = cfg.iceServers;
+        log.info('ice-config', `Using ${iceServers.length} ICE server(s) from server config`);
+        log.verbose('ice-config', 'ICE servers:', iceServers);
+      } else {
+        log.warn('ice-config', 'Server config contained no ICE servers; using default STUN');
       }
     } catch (e) {
+      log.warn('ice-config', 'Could not fetch /api/config; using default STUN:', e);
       console.warn('Could not fetch /api/config, using default ICE servers:', e);
     }
 
+    log.info('peer-connection', `Creating RTCPeerConnection (bundlePolicy: max-bundle, ${iceServers.length} ICE server(s))`);
     this.#pc = new RTCPeerConnection({
       iceServers,
       bundlePolicy: 'max-bundle',
@@ -122,64 +144,108 @@ export class LumenClient extends EventTarget {
     this.#stream = new MediaStream();
 
     this.#pc.ontrack = (e) => {
+      log.debug('peer-connection', `Track received: kind=${e.track.kind} id=${e.track.id}`);
       this.#stream.addTrack(e.track);
       this.dispatchEvent(new CustomEvent('track', { detail: e.track }));
     };
 
     this.#pc.onicecandidate = (e) => {
-      if (!e.candidate) return;
+      if (!e.candidate) {
+        log.debug('ice', 'ICE gathering complete (null candidate)');
+        return;
+      }
+      log.debug('ice', `ICE candidate gathered: ${e.candidate.type ?? 'unknown'} ${e.candidate.protocol ?? ''}`);
+      log.verbose('ice', 'Candidate string:', e.candidate.candidate);
       if (this.#ws?.readyState === WebSocket.OPEN) {
+        log.debug('ice', 'Sending ICE candidate to server');
         this.#ws.send(JSON.stringify({
           type: 'candidate',
           candidate: e.candidate.candidate,
           sdp_mid: e.candidate.sdpMid,
           sdp_m_line_index: e.candidate.sdpMLineIndex,
         }));
+      } else {
+        log.warn('ice', 'WebSocket not open — dropping outbound ICE candidate');
       }
     };
 
+    this.#pc.onicegatheringstatechange = () => {
+      log.debug('peer-connection', `ICE gathering state: ${this.#pc.iceGatheringState}`);
+    };
+
+    this.#pc.oniceconnectionstatechange = () => {
+      const s = this.#pc.iceConnectionState;
+      const lvl = s === 'failed' ? 'error' : (s === 'disconnected' || s === 'closed') ? 'warn' : 'info';
+      log[lvl]('peer-connection', `ICE connection state: ${s}`);
+    };
+
     this.#pc.onconnectionstatechange = () => {
-      this.#setStatus(`WebRTC: ${this.#pc.connectionState}`);
-      if (['failed', 'closed', 'disconnected'].includes(this.#pc.connectionState)) {
+      const s = this.#pc.connectionState;
+      const lvl = s === 'failed' ? 'error' : (s === 'disconnected' || s === 'closed') ? 'warn' : 'info';
+      log[lvl]('peer-connection', `Connection state: ${s}`);
+      this.#setStatus(`WebRTC: ${s}`);
+      if (['failed', 'closed', 'disconnected'].includes(s)) {
         this.disconnect();
       }
     };
 
+    log.debug('transceiver', 'Adding video transceiver (recvonly)');
     this.#pc.addTransceiver('video', { direction: 'recvonly' });
+    log.debug('transceiver', 'Adding audio transceiver (recvonly)');
     this.#pc.addTransceiver('audio', { direction: 'recvonly' });
 
+    log.debug('data-channel', "Creating data channel 'input'");
     this.#dc = this.#pc.createDataChannel('input');
     this.#dc.onopen  = () => {
+      log.info('data-channel', 'Data channel opened — connection established');
       this.#setState('connected');
       this.#setStatus('Connected');
     };
-    this.#dc.onclose = () => { this.#dc = null; };
-    this.#dc.onerror = (e) => { console.error('[lumen-client] data channel error', e); };
+    this.#dc.onclose = () => {
+      log.warn('data-channel', 'Data channel closed');
+      this.#dc = null;
+    };
+    this.#dc.onerror = (e) => {
+      log.error('data-channel', 'Data channel error:', e);
+      console.error('[lumen-client] data channel error', e);
+    };
     this.#dc.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data);
         this.dispatchEvent(new CustomEvent('dcmessage', { detail: msg }));
       } catch (err) {
+        log.warn('data-channel', 'Failed to parse data channel message:', err);
         console.warn('[lumen-client] data channel message parse error', err);
       }
     };
 
+    log.debug('offer', 'Creating SDP offer');
     const offer = await this.#pc.createOffer();
+    log.debug('offer', 'Setting local description');
     await this.#pc.setLocalDescription(offer);
+    log.verbose('offer', 'Local SDP:\n' + offer.sdp);
 
     this.#ws.onmessage = async (evt) => {
       const msg = JSON.parse(evt.data);
       if (msg.type === 'answer') {
+        log.info('answer', `Answer received (session_id: ${msg.session_id})`);
         this.#sessionId = msg.session_id;
+        log.debug('answer', 'Setting remote description');
         await this.#pc.setRemoteDescription({ type: 'answer', sdp: msg.sdp });
+        log.verbose('answer', 'Remote SDP:\n' + msg.sdp);
         this.#setStatus('Waiting for media…');
       } else if (msg.type === 'candidate') {
+        log.debug('ice', 'Received ICE candidate from server');
+        log.verbose('ice', 'Server candidate:', msg.candidate);
         await this.#pc.addIceCandidate({ candidate: msg.candidate });
+        log.debug('ice', 'Remote ICE candidate added');
       } else if (msg.type === 'error') {
+        log.error('websocket', `Server error: ${msg.message}`);
         this.#setStatus(`Server error: ${msg.message}`);
       }
     };
 
+    log.info('offer', 'Sending SDP offer via WebSocket');
     this.#ws.send(JSON.stringify({ type: 'offer', sdp: offer.sdp }));
   }
 

@@ -66,6 +66,23 @@
           <span class="toggle-track"></span>
         </label>
       </div>
+      <div class="tray-row">
+        <span class="tray-label">Debug logging</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="debug-toggle">
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+      <div id="debug-level-row" class="tray-row" style="display:none">
+        <span class="tray-label">Log level</span>
+        <select id="debug-level">
+          <option value="1">Error</option>
+          <option value="2">Warning</option>
+          <option value="3" selected>Info</option>
+          <option value="4">Debug</option>
+          <option value="5">Verbose</option>
+        </select>
+      </div>
     </div>
   </div>
 
@@ -80,6 +97,9 @@
       cursorCanvas:   document.getElementById('cursor-canvas'),
       perfCanvas:     document.getElementById('perf-canvas'),
       perfToggle:     document.getElementById('perf-toggle'),
+      debugToggle:    document.getElementById('debug-toggle'),
+      debugLevel:     document.getElementById('debug-level'),
+      debugLevelRow:  document.getElementById('debug-level-row'),
       btnConnect:     document.getElementById('btn-connect'),
       btnDisconnect:  document.getElementById('btn-disconnect'),
       btnFullscreen:  document.getElementById('btn-fullscreen'),

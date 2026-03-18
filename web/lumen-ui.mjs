@@ -12,10 +12,13 @@ import { InputHandler }      from './ui/input.mjs';
 import { GamepadController } from './ui/gamepad.mjs';
 import { ResizeManager }     from './ui/resize.mjs';
 import { PerformanceMonitor } from './lumen-perf.mjs';
+import { logger, Level }     from './lumen-debug.mjs';
 
 export class LumenUI {
   #client;
-  #els;         // { video, videoContainer, cursorCanvas, perfCanvas, perfToggle, btnConnect, btnDisconnect,
+  #els;         // { video, videoContainer, cursorCanvas, perfCanvas, perfToggle,
+                //   debugToggle, debugLevel, debugLevelRow,
+                //   btnConnect, btnDisconnect,
                 //   btnFullscreen, statusEl, fullscreenHint, clipboardInput, splash,
                 //   displayAuto, displayFixed, displayFixedControls,
                 //   displayPreset720p, displayPreset1080p,
@@ -48,6 +51,9 @@ export class LumenUI {
    *           cursorCanvas: HTMLCanvasElement,
    *           perfCanvas: HTMLCanvasElement,
    *           perfToggle: HTMLInputElement,
+   *           debugToggle: HTMLInputElement,
+   *           debugLevel: HTMLSelectElement,
+   *           debugLevelRow: HTMLElement,
    *           btnConnect: HTMLButtonElement,
    *           btnDisconnect: HTMLButtonElement,
    *           btnFullscreen: HTMLButtonElement,
@@ -91,6 +97,7 @@ export class LumenUI {
     this.#bindDisplayMode();
     this.#bindSplashEvents();
     this.#bindPerfToggle();
+    this.#bindDebugToggle();
   }
 
   // ── client event bindings ────────────────────────────────────────────────────
@@ -272,6 +279,7 @@ export class LumenUI {
       setActiveToggle('auto');
       setActivePreset(null);
       this.#resize.setAutoMode();
+      localStorage.setItem('lumen.displayMode', 'auto');
     });
 
     displayFixed.addEventListener('click', () => {
@@ -282,6 +290,10 @@ export class LumenUI {
       displayCustomW.value = '';
       displayCustomH.value = '';
       applyFixed(w, h);
+      localStorage.setItem('lumen.displayMode',   'fixed');
+      localStorage.setItem('lumen.displayPreset', '720p');
+      localStorage.removeItem('lumen.displayW');
+      localStorage.removeItem('lumen.displayH');
     });
 
     displayPreset720p.addEventListener('click', () => {
@@ -290,6 +302,10 @@ export class LumenUI {
       displayCustomW.value = '';
       displayCustomH.value = '';
       applyFixed(w, h);
+      localStorage.setItem('lumen.displayMode',   'fixed');
+      localStorage.setItem('lumen.displayPreset', '720p');
+      localStorage.removeItem('lumen.displayW');
+      localStorage.removeItem('lumen.displayH');
     });
 
     displayPreset1080p.addEventListener('click', () => {
@@ -298,6 +314,10 @@ export class LumenUI {
       displayCustomW.value = '';
       displayCustomH.value = '';
       applyFixed(w, h);
+      localStorage.setItem('lumen.displayMode',   'fixed');
+      localStorage.setItem('lumen.displayPreset', '1080p');
+      localStorage.removeItem('lumen.displayW');
+      localStorage.removeItem('lumen.displayH');
     });
 
     displayApply.addEventListener('click', () => {
@@ -306,6 +326,10 @@ export class LumenUI {
       if (!w || !h || w < 2 || h < 2) return;
       setActivePreset(null);
       applyFixed(w, h);
+      localStorage.setItem('lumen.displayMode',   'fixed');
+      localStorage.setItem('lumen.displayPreset', '');
+      localStorage.setItem('lumen.displayW', String(w));
+      localStorage.setItem('lumen.displayH', String(h));
     });
 
     // Allow pressing Enter in either custom input to apply.
@@ -314,6 +338,28 @@ export class LumenUI {
         if (e.key === 'Enter') displayApply.click();
       });
     });
+
+    // Restore saved display mode.
+    const savedMode   = localStorage.getItem('lumen.displayMode');
+    const savedPreset = localStorage.getItem('lumen.displayPreset');
+    const savedW      = localStorage.getItem('lumen.displayW');
+    const savedH      = localStorage.getItem('lumen.displayH');
+    if (savedMode === 'fixed') {
+      setActiveToggle('fixed');
+      if (savedPreset && LumenUI.#PRESETS[savedPreset]) {
+        const [w, h] = LumenUI.#PRESETS[savedPreset];
+        setActivePreset(savedPreset);
+        applyFixed(w, h);
+      } else if (savedW && savedH) {
+        const w = parseInt(savedW, 10);
+        const h = parseInt(savedH, 10);
+        if (w >= 2 && h >= 2) {
+          displayCustomW.value = savedW;
+          displayCustomH.value = savedH;
+          applyFixed(w, h);
+        }
+      }
+    }
   }
 
   // ── gamepad detection ────────────────────────────────────────────────────────
@@ -380,6 +426,7 @@ export class LumenUI {
     perfToggle.addEventListener('change', () => {
       const on = perfToggle.checked;
       perfCanvas.classList.toggle('visible', on);
+      localStorage.setItem('lumen.perfOverlay', on ? '1' : '0');
       const connected = this.#client.state === 'connected';
       if (on && connected) {
         this.#perf.start();
@@ -387,6 +434,49 @@ export class LumenUI {
         this.#perf.stop();
       }
     });
+
+    // Restore saved state.
+    if (localStorage.getItem('lumen.perfOverlay') === '1') {
+      perfToggle.checked = true;
+      perfCanvas.classList.add('visible');
+      // The monitor itself starts on connect (see #bindClientEvents).
+    }
+  }
+
+  // ── debug logging toggle ──────────────────────────────────────────────────────
+
+  #bindDebugToggle() {
+    const { debugToggle, debugLevel, debugLevelRow } = this.#els;
+    if (!debugToggle) return;
+
+    const applyLevel = () => {
+      if (debugToggle.checked) {
+        logger.setLevel(Number(debugLevel?.value ?? Level.INFO));
+      } else {
+        logger.setLevel(Level.NONE);
+      }
+    };
+
+    debugToggle.addEventListener('change', () => {
+      const on = debugToggle.checked;
+      if (debugLevelRow) debugLevelRow.style.display = on ? '' : 'none';
+      localStorage.setItem('lumen.debugLogging', on ? '1' : '0');
+      applyLevel();
+    });
+
+    debugLevel?.addEventListener('change', () => {
+      localStorage.setItem('lumen.debugLevel', debugLevel.value);
+      applyLevel();
+    });
+
+    // Restore saved state.
+    const savedLevel = localStorage.getItem('lumen.debugLevel');
+    if (savedLevel && debugLevel) debugLevel.value = savedLevel;
+    if (localStorage.getItem('lumen.debugLogging') === '1') {
+      debugToggle.checked = true;
+      if (debugLevelRow) debugLevelRow.style.display = '';
+    }
+    applyLevel();
   }
 
   // ── audio unlock ─────────────────────────────────────────────────────────────

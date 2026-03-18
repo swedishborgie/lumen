@@ -237,17 +237,27 @@ export class LumenClient extends EventTarget {
       videoBytes: 0, videoPackets: 0, videoLost: 0,
       framesDecoded: 0, framesDropped: 0, framesReceived: 0,
       jitter: null, rtt: null, decoderImpl: null,
+      // Extended fields (may be null in browsers that don't expose them)
+      nackCount: null, pliCount: null,
+      totalDecodeTime: null, totalInterFrameDelay: null,
+      framesPerSecond: null, keyFramesDecoded: null,
     };
     reports.forEach(r => {
       if (r.type === 'inbound-rtp' && r.kind === 'video') {
-        snap.videoBytes     = r.bytesReceived    ?? 0;
-        snap.videoPackets   = r.packetsReceived  ?? 0;
-        snap.videoLost      = r.packetsLost      ?? 0;
-        snap.framesDecoded  = r.framesDecoded    ?? 0;
-        snap.framesDropped  = r.framesDropped    ?? 0;
-        snap.framesReceived = r.framesReceived   ?? 0;
-        snap.jitter         = r.jitter           ?? null;
-        snap.decoderImpl    = r.decoderImplementation ?? null;
+        snap.videoBytes            = r.bytesReceived           ?? 0;
+        snap.videoPackets          = r.packetsReceived         ?? 0;
+        snap.videoLost             = r.packetsLost             ?? 0;
+        snap.framesDecoded         = r.framesDecoded           ?? 0;
+        snap.framesDropped         = r.framesDropped           ?? 0;
+        snap.framesReceived        = r.framesReceived          ?? 0;
+        snap.jitter                = r.jitter                  ?? null;
+        snap.decoderImpl           = r.decoderImplementation   ?? null;
+        snap.nackCount             = r.nackCount               ?? null;
+        snap.pliCount              = r.pliCount                ?? null;
+        snap.totalDecodeTime       = r.totalDecodeTime         ?? null;
+        snap.totalInterFrameDelay  = r.totalInterFrameDelay    ?? null;
+        snap.framesPerSecond       = r.framesPerSecond         ?? null;
+        snap.keyFramesDecoded      = r.keyFramesDecoded        ?? null;
       }
       if (r.type === 'remote-inbound-rtp' && r.kind === 'video') {
         snap.rtt = r.roundTripTime ?? null;

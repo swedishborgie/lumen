@@ -17,6 +17,7 @@
       <span>LUMEN</span>
     </div>
     <canvas id="cursor-canvas"></canvas>
+    <canvas id="perf-canvas"></canvas>
   </div>
 
   <div id="tray-trigger" title="Open Controls"></div>
@@ -57,7 +58,15 @@
       <div class="tray-label">Controllers</div>
       <div id="gamepad-list"><span class="gamepad-none">No controllers detected</span></div>
     </div>
-    <div id="stats">No stats yet</div>
+    <div id="stats-section">
+      <div class="tray-row">
+        <span class="tray-label">Performance overlay</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="perf-toggle">
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+    </div>
   </div>
 
   <script type="module">
@@ -69,7 +78,8 @@
       video:          document.getElementById('video'),
       videoContainer: document.getElementById('video-container'),
       cursorCanvas:   document.getElementById('cursor-canvas'),
-      stats:          document.getElementById('stats'),
+      perfCanvas:     document.getElementById('perf-canvas'),
+      perfToggle:     document.getElementById('perf-toggle'),
       btnConnect:     document.getElementById('btn-connect'),
       btnDisconnect:  document.getElementById('btn-disconnect'),
       btnFullscreen:  document.getElementById('btn-fullscreen'),

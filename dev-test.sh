@@ -4,6 +4,11 @@
 # or terminal from a priority list; override with LUMEN_LAUNCH or --launch.
 set -euo pipefail
 
+if [ -f secret.env ]; then
+    echo "==> Loading secrets from secret.env (not committed to git)"
+    source secret.env
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LUMEN_BIN="$SCRIPT_DIR/target/debug/lumen"
 

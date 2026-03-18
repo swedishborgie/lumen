@@ -11,10 +11,11 @@ import { CursorManager }     from './ui/cursor.mjs';
 import { InputHandler }      from './ui/input.mjs';
 import { GamepadController } from './ui/gamepad.mjs';
 import { ResizeManager }     from './ui/resize.mjs';
+import { PerformanceMonitor } from './lumen-perf.mjs';
 
 export class LumenUI {
   #client;
-  #els;         // { video, videoContainer, cursorCanvas, stats, btnConnect, btnDisconnect,
+  #els;         // { video, videoContainer, cursorCanvas, perfCanvas, perfToggle, btnConnect, btnDisconnect,
                 //   btnFullscreen, statusEl, fullscreenHint, clipboardInput, splash,
                 //   displayAuto, displayFixed, displayFixedControls,
                 //   displayPreset720p, displayPreset1080p,
@@ -24,11 +25,10 @@ export class LumenUI {
   #input;       // InputHandler
   #gamepad;     // GamepadController
   #resize;      // ResizeManager
+  #perf;        // PerformanceMonitor
 
-  #statsTimer          = null;
   #audioUnlocked       = false;
   #clipboardDebounceTimer = null;
-  #prevSnap            = null;
   #connectedGamepads   = new Map(); // gamepad index → name
 
   // Keys to capture via the Keyboard Lock API when in fullscreen.
@@ -46,7 +46,8 @@ export class LumenUI {
    * @param {{ video: HTMLVideoElement,
    *           videoContainer: HTMLElement,
    *           cursorCanvas: HTMLCanvasElement,
-   *           stats: HTMLElement,
+   *           perfCanvas: HTMLCanvasElement,
+   *           perfToggle: HTMLInputElement,
    *           btnConnect: HTMLButtonElement,
    *           btnDisconnect: HTMLButtonElement,
    *           btnFullscreen: HTMLButtonElement,
@@ -67,7 +68,7 @@ export class LumenUI {
     this.#client = client;
     this.#els    = elements;
 
-    const { video, videoContainer, cursorCanvas } = elements;
+    const { video, videoContainer, cursorCanvas, perfCanvas } = elements;
 
     this.#cursor  = new CursorManager(cursorCanvas, video);
     this.#input   = new InputHandler(video, client, this.#cursor, () => this.#tryUnlockAudio());
@@ -76,6 +77,7 @@ export class LumenUI {
       onDisconnect: (index)       => this.#onGamepadDisconnect(index),
     });
     this.#resize  = new ResizeManager(video, videoContainer, client, this.#cursor);
+    this.#perf    = new PerformanceMonitor(perfCanvas, client, video);
 
     this.#cursor.init();
     this.#input.bind();
@@ -88,6 +90,7 @@ export class LumenUI {
     this.#bindClipboardPanel();
     this.#bindDisplayMode();
     this.#bindSplashEvents();
+    this.#bindPerfToggle();
   }
 
   // ── client event bindings ────────────────────────────────────────────────────
@@ -101,7 +104,7 @@ export class LumenUI {
   }
 
   #bindClientEvents() {
-    const { video, statusEl, stats, btnConnect, btnDisconnect } = this.#els;
+    const { video, statusEl, btnConnect, btnDisconnect } = this.#els;
 
     this.#client.addEventListener('statuschange', (e) => {
       statusEl.textContent = e.detail;
@@ -115,20 +118,18 @@ export class LumenUI {
 
       if (state === 'connected') {
         video.focus();
-        this.#statsTimer = setInterval(() => this.#updateStats(), 1000);
+        if (this.#els.perfToggle?.checked) this.#perf.start();
         // Send the current size immediately so the compositor matches the viewport.
         this.#resize.sendCurrentSize();
         // Re-sync any gamepads that connected before the data channel was open,
         // or that were active during a previous session (reconnect case).
         this.#gamepad.resync();
       } else if (state === 'idle') {
-        if (this.#statsTimer) { clearInterval(this.#statsTimer); this.#statsTimer = null; }
+        this.#perf.stop();
         this.#gamepad.stop();
         this.#connectedGamepads.clear();
         this.#updateGamepadList();
-        this.#prevSnap       = null;
         this.#audioUnlocked  = false;
-        stats.textContent    = 'No stats yet';
         video.srcObject      = null;
         video.muted          = true;
         // Clear the canvas cursor and reset state.
@@ -371,27 +372,21 @@ export class LumenUI {
     this.#els.clipboardInput.value = msg.text;
   }
 
-  // ── stats display ────────────────────────────────────────────────────────────
+  // ── perf toggle ──────────────────────────────────────────────────────────────
 
-  async #updateStats() {
-    const snap = await this.#client.getStats();
-    if (!snap) return;
-    const prev = this.#prevSnap;
-    this.#prevSnap = snap;
-
-    // All WebRTC stats are cumulative totals; compute per-second deltas vs prev sample.
-    const df = (key) => prev != null ? snap[key] - prev[key] : '—';
-
-    const kb      = prev != null ? ((snap.videoBytes - prev.videoBytes) / 1024).toFixed(1) + ' KB/s' : '—';
-    const jitter  = snap.jitter != null ? (snap.jitter * 1000).toFixed(1) + ' ms' : '—';
-    const rtt     = snap.rtt    != null ? '   RTT: ' + (snap.rtt * 1000).toFixed(1) + ' ms' : '';
-    const pktLost = prev != null ? snap.videoLost - prev.videoLost : '—';
-    this.#els.stats.textContent = [
-      `Video       : ${kb}  |  pkts ${df('videoPackets')}  lost ${pktLost}`,
-      `Frames/s    : recv ${df('framesReceived')}  decoded ${df('framesDecoded')}  dropped ${df('framesDropped')}`,
-      `Decoder     : ${snap.decoderImpl ?? '—'}`,
-      `Jitter      : ${jitter}${rtt}`,
-    ].join('\n');
+  #bindPerfToggle() {
+    const { perfToggle, perfCanvas } = this.#els;
+    if (!perfToggle || !perfCanvas) return;
+    perfToggle.addEventListener('change', () => {
+      const on = perfToggle.checked;
+      perfCanvas.classList.toggle('visible', on);
+      const connected = this.#client.state === 'connected';
+      if (on && connected) {
+        this.#perf.start();
+      } else {
+        this.#perf.stop();
+      }
+    });
   }
 
   // ── audio unlock ─────────────────────────────────────────────────────────────

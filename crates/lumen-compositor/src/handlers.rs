@@ -2,16 +2,16 @@
 
 use smithay::{
     backend::renderer::utils::on_commit_buffer_handler,
-    delegate_compositor, delegate_data_device, delegate_dmabuf, delegate_fractional_scale,
-    delegate_layer_shell, delegate_output, delegate_pointer_constraints,
-    delegate_pointer_warp, delegate_presentation, delegate_primary_selection,
-    delegate_relative_pointer, delegate_seat, delegate_shm, delegate_single_pixel_buffer,
-    delegate_viewporter, delegate_virtual_keyboard_manager, delegate_xdg_activation,
-    delegate_xdg_decoration, delegate_xdg_shell, delegate_data_control,
+    delegate_compositor, delegate_cursor_shape, delegate_data_device, delegate_dmabuf,
+    delegate_fractional_scale, delegate_layer_shell, delegate_output,
+    delegate_pointer_constraints, delegate_pointer_warp, delegate_presentation,
+    delegate_primary_selection, delegate_relative_pointer, delegate_seat, delegate_shm,
+    delegate_single_pixel_buffer, delegate_viewporter, delegate_virtual_keyboard_manager,
+    delegate_xdg_activation, delegate_xdg_decoration, delegate_xdg_shell, delegate_data_control,
     delegate_foreign_toplevel_list,
     desktop::Window,
     input::{
-        pointer::CursorImageStatus,
+        pointer::{CursorIcon, CursorImageStatus},
         Seat, SeatHandler, SeatState,
     },
     reexports::wayland_server::{
@@ -53,7 +53,7 @@ use smithay::{
 };
 use smithay::input::pointer::PointerHandle;
 use smithay::backend::allocator::dmabuf::Dmabuf;
-use smithay::backend::renderer::ImportDma;
+use smithay::backend::renderer::{ImportDma, ExportMem};
 
 use crate::state::{AppState, ClientState};
 
@@ -137,17 +137,22 @@ impl SeatHandler for AppState {
     fn seat_state(&mut self) -> &mut SeatState<AppState> { &mut self.seat_state }
     fn focus_changed(&mut self, _seat: &Seat<Self>, _focused: Option<&WlSurface>) {}
     fn cursor_image(&mut self, _seat: &Seat<Self>, image: CursorImageStatus) {
-        use smithay::backend::renderer::utils::RendererSurfaceStateUserData;
         use smithay::input::pointer::CursorImageSurfaceData;
         use smithay::wayland::compositor::with_states;
-        use smithay::wayland::shm::with_buffer_contents;
         use bytes::Bytes;
         use crate::types::CursorEvent;
 
         let event = match &image {
-            // Named cursor (including the default arrow) → let the browser show its own cursor.
-            CursorImageStatus::Named(_) => CursorEvent::Default,
-            CursorImageStatus::Hidden => CursorEvent::Hidden,
+            // Named cursor: convert to the corresponding CSS cursor name.
+            CursorImageStatus::Named(icon) => {
+                let css = cursor_icon_to_css(icon);
+                tracing::debug!("cursor_image: Named({icon:?}) -> css={css:?}");
+                CursorEvent::Named(css.to_string())
+            }
+            CursorImageStatus::Hidden => {
+                tracing::debug!("cursor_image: Hidden");
+                CursorEvent::Hidden
+            }
             CursorImageStatus::Surface(surface) => {
                 // Read hotspot from CursorImageSurfaceData (type alias = Mutex<CursorImageAttributes>).
                 let (hotspot_x, hotspot_y) = with_states(surface, |states| {
@@ -158,45 +163,26 @@ impl SeatHandler for AppState {
                         .unwrap_or((0, 0))
                 });
 
-                // Read RGBA pixels from the committed SHM buffer via the renderer surface state.
-                let pixel_result = with_states(surface, |states| {
-                    let state = states.data_map.get::<RendererSurfaceStateUserData>()?;
-                    let locked = state.lock().ok()?;
-                    let wl_buffer = locked.buffer()?.clone();
-                    drop(locked);
-
-                    // SAFETY: ptr is valid for `len` bytes for the duration of this closure.
-                    let result = with_buffer_contents(&wl_buffer, |ptr, _len, spec| {
-                        let width  = spec.width as u32;
-                        let height = spec.height as u32;
-                        let stride = spec.stride as usize;
-                        let mut rgba = Vec::with_capacity((width * height * 4) as usize);
-                        for row in 0..height as usize {
-                            for col in 0..width as usize {
-                                // WL_SHM_FORMAT_ARGB8888 on LE: stored as [B, G, R, A]
-                                let px = unsafe { ptr.add(row * stride + col * 4) };
-                                unsafe {
-                                    rgba.push(*px.add(2)); // R
-                                    rgba.push(*px.add(1)); // G
-                                    rgba.push(*px       ); // B
-                                    rgba.push(*px.add(3)); // A
-                                }
-                            }
-                        }
-                        (width, height, rgba)
-                    });
-                    result.ok()
-                });
+                // Try CPU paths first (SHM + linear DMA-BUF); fall back to GPU
+                // readback for tiled DMA-BUF buffers (e.g. Intel X-tiled on kwin).
+                let pixel_result = read_cursor_surface_pixels(surface)
+                    .or_else(|| read_cursor_surface_pixels_gpu(surface, self.gles_renderer.as_mut()?));
 
                 match pixel_result {
-                    Some((width, height, rgba)) => CursorEvent::Image {
-                        width,
-                        height,
-                        hotspot_x,
-                        hotspot_y,
-                        rgba: Bytes::from(rgba),
-                    },
-                    None => CursorEvent::Default,
+                    Some((width, height, rgba)) => {
+                        tracing::debug!("cursor_image: Surface {width}x{height} hotspot=({hotspot_x},{hotspot_y})");
+                        CursorEvent::Image {
+                            width,
+                            height,
+                            hotspot_x,
+                            hotspot_y,
+                            rgba: Bytes::from(rgba),
+                        }
+                    }
+                    None => {
+                        tracing::debug!("cursor_image: all read paths failed, falling back to Default");
+                        CursorEvent::Default
+                    }
                 }
             }
         };
@@ -417,3 +403,226 @@ delegate_pointer_constraints!(AppState);
 impl PointerWarpHandler for AppState {}
 delegate_pointer_warp!(AppState);
 delegate_relative_pointer!(AppState);
+
+// ---------------------------------------------------------------------------
+// wp_cursor_shape_manager_v1
+// ---------------------------------------------------------------------------
+
+impl smithay::wayland::tablet_manager::TabletSeatHandler for AppState {
+    fn tablet_tool_image(
+        &mut self,
+        _tool: &smithay::backend::input::TabletToolDescriptor,
+        _image: CursorImageStatus,
+    ) {
+        // Tablet cursor shape changes are not forwarded; tablet support is not enabled.
+    }
+}
+delegate_cursor_shape!(AppState);
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Map a Smithay [`CursorIcon`] to the equivalent CSS `cursor` property value.
+fn cursor_icon_to_css(icon: &CursorIcon) -> &'static str {
+    match icon {
+        CursorIcon::Default      => "default",
+        CursorIcon::ContextMenu  => "context-menu",
+        CursorIcon::Help         => "help",
+        CursorIcon::Pointer      => "pointer",
+        CursorIcon::Progress     => "progress",
+        CursorIcon::Wait         => "wait",
+        CursorIcon::Cell         => "cell",
+        CursorIcon::Crosshair    => "crosshair",
+        CursorIcon::Text         => "text",
+        CursorIcon::VerticalText => "vertical-text",
+        CursorIcon::Alias        => "alias",
+        CursorIcon::Copy         => "copy",
+        CursorIcon::Move         => "move",
+        CursorIcon::NoDrop       => "no-drop",
+        CursorIcon::NotAllowed   => "not-allowed",
+        CursorIcon::Grab         => "grab",
+        CursorIcon::Grabbing     => "grabbing",
+        CursorIcon::EResize      => "e-resize",
+        CursorIcon::NResize      => "n-resize",
+        CursorIcon::NeResize     => "ne-resize",
+        CursorIcon::NwResize     => "nw-resize",
+        CursorIcon::SResize      => "s-resize",
+        CursorIcon::SeResize     => "se-resize",
+        CursorIcon::SwResize     => "sw-resize",
+        CursorIcon::WResize      => "w-resize",
+        CursorIcon::EwResize     => "ew-resize",
+        CursorIcon::NsResize     => "ns-resize",
+        CursorIcon::NeswResize   => "nesw-resize",
+        CursorIcon::NwseResize   => "nwse-resize",
+        CursorIcon::ColResize    => "col-resize",
+        CursorIcon::RowResize    => "row-resize",
+        CursorIcon::AllScroll    => "all-scroll",
+        CursorIcon::ZoomIn       => "zoom-in",
+        CursorIcon::ZoomOut      => "zoom-out",
+        // DndAsk and AllResize have no direct CSS equivalent.
+        _ => "default",
+    }
+}
+
+/// Read RGBA pixel data from a committed cursor surface.
+///
+/// Tries SHM first, then falls back to DMA-BUF mmap for GPU-allocated cursor buffers.
+/// Returns `None` if the buffer cannot be read (e.g. tiled DMA-BUF, unsupported format).
+fn read_cursor_surface_pixels(surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface) -> Option<(u32, u32, Vec<u8>)> {
+    use smithay::backend::allocator::dmabuf::{DmabufMappingMode, DmabufSyncFlags};
+    use smithay::backend::allocator::{Buffer as AllocBuffer, Fourcc};
+    use smithay::backend::renderer::utils::RendererSurfaceStateUserData;
+    use smithay::wayland::compositor::with_states;
+    use smithay::wayland::dmabuf::get_dmabuf;
+    use smithay::wayland::shm::with_buffer_contents;
+
+    with_states(surface, |states| {
+        let state = states.data_map.get::<RendererSurfaceStateUserData>()
+            .or_else(|| { tracing::debug!("cursor read: no RendererSurfaceStateUserData"); None })?;
+        let locked = state.lock().ok()
+            .or_else(|| { tracing::debug!("cursor read: lock failed"); None })?;
+        let buf = locked.buffer().cloned()
+            .or_else(|| { tracing::debug!("cursor read: buffer() is None (surface not yet committed with a buffer)"); None })?;
+        drop(locked);
+
+        // ── Path 1: SHM buffer ───────────────────────────────────────────────
+        let shm_result = with_buffer_contents(&*buf, |ptr, _len, spec| {
+            let width  = spec.width as u32;
+            let height = spec.height as u32;
+            let stride = spec.stride as usize;
+            let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+            for row in 0..height as usize {
+                for col in 0..width as usize {
+                    // WL_SHM_FORMAT_ARGB8888 on LE: stored as [B, G, R, A]
+                    let px = unsafe { ptr.add(row * stride + col * 4) };
+                    unsafe {
+                        rgba.push(*px.add(2)); // R
+                        rgba.push(*px.add(1)); // G
+                        rgba.push(*px       ); // B
+                        rgba.push(*px.add(3)); // A
+                    }
+                }
+            }
+            (width, height, rgba)
+        });
+        if let Ok(result) = shm_result {
+            tracing::debug!("cursor read: SHM path ok");
+            return Some(result);
+        }
+
+        // ── Path 2: DMA-BUF buffer (mmap, linear only) ───────────────────────
+        let dmabuf = match get_dmabuf(&*buf) {
+            Ok(d) => d,
+            Err(_) => {
+                tracing::debug!("cursor read: not SHM and not DMA-BUF — unknown buffer type");
+                return None;
+            }
+        };
+
+        if dmabuf.has_modifier() {
+            tracing::debug!(
+                "cursor read: DMA-BUF has tiling modifier ({:?}), trying GPU readback path",
+                dmabuf.format().modifier
+            );
+            return None;
+        }
+
+        let width  = dmabuf.size().w as u32;
+        let height = dmabuf.size().h as u32;
+        let stride = dmabuf.strides().next().unwrap_or(width * 4) as usize;
+        let fourcc = dmabuf.format().code;
+
+        tracing::debug!("cursor read: DMA-BUF path {width}x{height} stride={stride} fourcc={fourcc:?}");
+
+        // Sync CPU-side before reading.
+        let _ = dmabuf.sync_plane(0, DmabufSyncFlags::READ | DmabufSyncFlags::START);
+        let mapping = dmabuf.map_plane(0, DmabufMappingMode::READ).ok()
+            .or_else(|| { tracing::debug!("cursor read: DMA-BUF mmap failed"); None })?;
+
+        let ptr = mapping.ptr() as *const u8;
+        let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+        let ok = (|| -> Option<()> {
+            for row in 0..height as usize {
+                for col in 0..width as usize {
+                    let offset = row * stride + col * 4;
+                    if offset + 3 >= mapping.length() { return None; }
+                    let px = unsafe { ptr.add(offset) };
+                    match fourcc {
+                        Fourcc::Argb8888 => unsafe {
+                            // LE layout: [B, G, R, A]
+                            rgba.push(*px.add(2)); // R
+                            rgba.push(*px.add(1)); // G
+                            rgba.push(*px       ); // B
+                            rgba.push(*px.add(3)); // A
+                        },
+                        Fourcc::Xrgb8888 => unsafe {
+                            // LE layout: [B, G, R, X] — treat X as fully opaque
+                            rgba.push(*px.add(2)); // R
+                            rgba.push(*px.add(1)); // G
+                            rgba.push(*px       ); // B
+                            rgba.push(255);        // A
+                        },
+                        other => {
+                            tracing::debug!("cursor read: unsupported DMA-BUF fourcc {other:?}");
+                            return None;
+                        }
+                    }
+                }
+            }
+            Some(())
+        })();
+
+        // Sync CPU-side after reading.
+        let _ = dmabuf.sync_plane(0, DmabufSyncFlags::READ | DmabufSyncFlags::END);
+        drop(mapping);
+
+        ok.map(|_| (width, height, rgba))
+    })
+}
+
+/// GPU readback path for tiled DMA-BUF cursor surfaces (e.g. Intel X-tiled on KWin).
+///
+/// Imports the DMA-BUF as a GL texture, copies it to a PBO via `ExportMem::copy_texture`,
+/// then maps the PBO to get RGBA bytes. Returns `None` on any GL failure.
+fn read_cursor_surface_pixels_gpu(
+    surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+    renderer: &mut smithay::backend::renderer::gles::GlesRenderer,
+) -> Option<(u32, u32, Vec<u8>)> {
+    use smithay::backend::allocator::{Buffer as AllocBuffer, Fourcc};
+    use smithay::backend::renderer::utils::RendererSurfaceStateUserData;
+    use smithay::utils::Rectangle;
+    use smithay::wayland::compositor::with_states;
+    use smithay::wayland::dmabuf::get_dmabuf;
+
+    // Clone the DMA-BUF out of with_states so we can call mutable renderer methods after.
+    let dmabuf = with_states(surface, |states| {
+        let state = states.data_map.get::<RendererSurfaceStateUserData>()?;
+        let locked = state.lock().ok()?;
+        let buf = locked.buffer().cloned()?;
+        drop(locked);
+        get_dmabuf(&*buf).ok().cloned()
+    })?;
+
+    let width  = dmabuf.size().w as u32;
+    let height = dmabuf.size().h as u32;
+    tracing::debug!("cursor GPU readback: importing {width}x{height} DMA-BUF modifier={:?}", dmabuf.format().modifier);
+
+    let texture = renderer.import_dmabuf(&dmabuf, None)
+        .map_err(|e| tracing::debug!("cursor GPU readback: import_dmabuf failed: {e:?}"))
+        .ok()?;
+
+    let region = Rectangle::new((0, 0).into(), (width as i32, height as i32).into());
+    // Abgr8888 = GL_RGBA + GL_UNSIGNED_BYTE → bytes stored as [R, G, B, A] — RGBA order.
+    let mapping = renderer.copy_texture(&texture, region, Fourcc::Abgr8888)
+        .map_err(|e| tracing::debug!("cursor GPU readback: copy_texture failed: {e:?}"))
+        .ok()?;
+
+    let data = renderer.map_texture(&mapping)
+        .map_err(|e| tracing::debug!("cursor GPU readback: map_texture failed: {e:?}"))
+        .ok()?;
+
+    let rgba = data.to_vec();
+    tracing::debug!("cursor GPU readback: ok — {} bytes for {width}x{height}", rgba.len());
+    Some((width, height, rgba))
+}

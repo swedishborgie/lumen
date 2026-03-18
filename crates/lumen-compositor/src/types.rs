@@ -87,8 +87,11 @@ pub enum ClipboardEvent {
 /// A cursor update event emitted by the compositor whenever the pointer image changes.
 #[derive(Debug, Clone)]
 pub enum CursorEvent {
-    /// The compositor default cursor should be shown.
+    /// The compositor default cursor should be shown (CSS "default").
     Default,
+    /// A named cursor shape; the inner string is a standard CSS cursor value
+    /// (e.g. `"pointer"`, `"text"`, `"crosshair"`).
+    Named(String),
     /// The cursor should be hidden.
     Hidden,
     /// A custom cursor image from a Wayland client surface.

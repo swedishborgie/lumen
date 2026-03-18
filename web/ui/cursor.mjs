@@ -58,18 +58,29 @@ export class CursorManager {
    * Apply a cursor_update message from the compositor.
    * Decodes the cursor image (if any) and redraws the canvas.
    *
-   * @param {{ kind: string, w?: number, h?: number,
+   * @param {{ kind: string, css?: string, w?: number, h?: number,
    *           hotspot_x?: number, hotspot_y?: number, data?: string }} msg
    */
   async apply(msg) {
+    console.debug('[cursor] apply:', JSON.stringify(msg).slice(0, 120));
     switch (msg.kind) {
       case 'default':
         this.#kind = 'default';
         this.#img  = null;
+        this.#canvas.style.cursor = '';
+        console.debug('[cursor] -> default arrow (canvas draw)');
+        break;
+      case 'named':
+        this.#kind = 'named';
+        this.#img  = null;
+        this.#canvas.style.cursor = msg.css || 'default';
+        console.debug('[cursor] -> named css:', msg.css);
         break;
       case 'hidden':
         this.#kind = 'hidden';
         this.#img  = null;
+        this.#canvas.style.cursor = 'none';
+        console.debug('[cursor] -> hidden');
         break;
       case 'image': {
         const { w, h, hotspot_x, hotspot_y, data } = msg;
@@ -81,8 +92,12 @@ export class CursorManager {
         for (let i = 0; i < raw.length; i++) pixels[i] = raw.charCodeAt(i);
         this.#img  = await createImageBitmap(new ImageData(pixels, w, h));
         this.#kind = 'image';
+        this.#canvas.style.cursor = 'none';
+        console.debug(`[cursor] -> image ${w}x${h} hotspot=(${hotspot_x},${hotspot_y})`);
         break;
       }
+      default:
+        console.warn('[cursor] unknown kind:', msg.kind);
     }
     this.#draw();
   }
@@ -104,7 +119,7 @@ export class CursorManager {
     const ctx = this.#ctx;
     if (!ctx) return;
     ctx.clearRect(0, 0, this.#canvas.width, this.#canvas.height);
-    if (this.#kind === 'hidden') return;
+    if (this.#kind === 'hidden' || this.#kind === 'named') return;
     if (this.#kind === 'image' && this.#img) {
       ctx.drawImage(this.#img, this.#displayX - this.#hotX, this.#displayY - this.#hotY);
     } else {

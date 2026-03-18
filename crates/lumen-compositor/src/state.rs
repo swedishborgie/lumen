@@ -30,6 +30,7 @@ use smithay::{
         pointer_warp::PointerWarpManager,
         presentation::PresentationState,
         relative_pointer::RelativePointerManagerState,
+        cursor_shape::CursorShapeManagerState,
         selection::{
             data_device::DataDeviceState,
             primary_selection::PrimarySelectionState,
@@ -76,6 +77,7 @@ pub struct AppState {
     pub pointer_warp_state: PointerWarpManager,
     pub relative_pointer_state: RelativePointerManagerState,
     pub pointer_constraints_state: PointerConstraintsState,
+    pub cursor_shape_state: CursorShapeManagerState,
     pub foreign_toplevel_list: ForeignToplevelListState,
     pub xdg_decoration_state: XdgDecorationState,
     pub xdg_activation_state: XdgActivationState,

@@ -34,6 +34,7 @@ use smithay::{
         foreign_toplevel_list::ForeignToplevelListState,
         fractional_scale::FractionalScaleManagerState,
         output::OutputManagerState,
+        cursor_shape::CursorShapeManagerState,
         pointer_constraints::PointerConstraintsState,
         pointer_warp::PointerWarpManager,
         presentation::PresentationState,
@@ -198,6 +199,7 @@ impl Compositor {
         let pointer_warp_state = PointerWarpManager::new::<AppState>(&dh);
         let relative_pointer_state = RelativePointerManagerState::new::<AppState>(&dh);
         let pointer_constraints_state = PointerConstraintsState::new::<AppState>(&dh);
+        let cursor_shape_state = CursorShapeManagerState::new::<AppState>(&dh);
         let foreign_toplevel_list = ForeignToplevelListState::new::<AppState>(&dh);
         let xdg_decoration_state = XdgDecorationState::new::<AppState>(&dh);
         let single_pixel_buffer = SinglePixelBufferState::new::<AppState>(&dh);
@@ -217,6 +219,7 @@ impl Compositor {
             seat_state, shell_state, layer_shell_state, space, data_device_state,
             data_control_state, dh: dh.clone(), seat, virtual_keyboard_state,
             pointer_warp_state, relative_pointer_state, pointer_constraints_state,
+            cursor_shape_state,
             outputs: Vec::new(), pending_windows: Vec::new(), foreign_toplevel_list,
             xdg_decoration_state, xdg_activation_state, primary_selection_state, popups,
             frame_buffer: vec![0u8; usize::try_from(width * height * 4).expect("frame buffer size fits usize")],

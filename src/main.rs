@@ -704,8 +704,11 @@ fn build_auth_config(args: &Args) -> Result<lumen_web::AuthConfig> {
 
 fn cursor_event_to_json(ev: &lumen_compositor::CursorEvent) -> Vec<u8> {
     use lumen_compositor::CursorEvent;
-    match ev {
+    let json = match ev {
         CursorEvent::Default => br#"{"type":"cursor_update","kind":"default"}"#.to_vec(),
+        CursorEvent::Named(css) => {
+            format!(r#"{{"type":"cursor_update","kind":"named","css":"{css}"}}"#).into_bytes()
+        }
         CursorEvent::Hidden  => br#"{"type":"cursor_update","kind":"hidden"}"#.to_vec(),
         CursorEvent::Image { width, height, hotspot_x, hotspot_y, rgba } => {
             let data = base64::engine::general_purpose::STANDARD.encode(rgba);
@@ -713,7 +716,9 @@ fn cursor_event_to_json(ev: &lumen_compositor::CursorEvent) -> Vec<u8> {
                 r#"{{"type":"cursor_update","kind":"image","w":{width},"h":{height},"hotspot_x":{hotspot_x},"hotspot_y":{hotspot_y},"data":"{data}"}}"#
             ).into_bytes()
         }
-    }
+    };
+    tracing::debug!("cursor -> browser: {}", String::from_utf8_lossy(&json).chars().take(120).collect::<String>());
+    json
 }
 
 /// Encode a `ClipboardEvent` as a JSON byte string for the data channel.

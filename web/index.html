@@ -3,8 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#000000">
   <title>Lumen</title>
   <link rel="icon" href="images/lumen.svg" type="image/svg+xml">
+  <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -88,6 +90,11 @@
 
     // Auto-connect on page load.
     client.connect();
+
+    // Register service worker (required for PWA installability).
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js');
+    }
 
     // Tray toggle logic
     const tray = document.getElementById('tray');

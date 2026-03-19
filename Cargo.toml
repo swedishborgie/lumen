@@ -46,6 +46,7 @@ anyhow = "1"
 [package]
 name = "lumen"
 version = "0.1.0"
+license = "MIT"
 edition = "2021"
 
 [dependencies]
@@ -63,6 +64,7 @@ anyhow           = { workspace = true }
 base64           = { workspace = true }
 serde_json       = { workspace = true }
 clap             = { version = "4", features = ["derive", "env"] }
+rand             = "0.9"
 rustls           = { version = "0.23", features = ["ring"], default-features = false }
 
 [build-dependencies]
@@ -75,3 +77,50 @@ bindgen = { version = "0.69", features = ["runtime"], default-features = false }
 
 [lints]
 workspace = true
+
+[package.metadata.deb]
+maintainer = "Lumen Contributors"
+extended-description = "A Wayland compositor that streams the desktop to browsers via WebRTC."
+depends = "$auto"
+section = "x11"
+priority = "optional"
+maintainer-scripts = "pkgs/debian/"
+assets = [
+    { source = "target/release/lumen", dest = "/usr/bin/lumen", mode = "755" },
+    { source = "web/**/*", dest = "/usr/share/lumen/web/", mode = "644" },
+    { source = "pkgs/lumen@.service", dest = "/lib/systemd/system/lumen@.service", mode = "644" },
+    { source = "pkgs/lumen.service", dest = "/lib/systemd/system/lumen.service", mode = "644" },
+    { source = "pkgs/example.env", dest = "/usr/share/lumen/example.env", mode = "644" },
+]
+
+[package.metadata.generate-rpm]
+post_install_script = """
+set -e
+if [ ! -d /etc/lumen ]; then
+    mkdir -p /etc/lumen
+    chmod 750 /etc/lumen
+fi
+if [ ! -f /etc/lumen/example.env ]; then
+    cp /usr/share/lumen/example.env /etc/lumen/example.env
+    chmod 640 /etc/lumen/example.env
+fi
+echo ""
+echo "Lumen installed. To get started:"
+echo "  cp /etc/lumen/example.env /etc/lumen/<username>.env"
+echo "  systemctl start lumen@<username>"
+echo "  systemctl enable lumen@<username>  # optional: autostart on boot"
+echo ""
+"""
+assets = [
+    { source = "target/release/lumen", dest = "/usr/bin/lumen", mode = "755" },
+    { source = "web/index.html", dest = "/usr/share/lumen/web/index.html", mode = "644" },
+    { source = "web/*.mjs", dest = "/usr/share/lumen/web/", mode = "644" },
+    { source = "web/*.css", dest = "/usr/share/lumen/web/", mode = "644" },
+    { source = "web/*.json", dest = "/usr/share/lumen/web/", mode = "644" },
+    { source = "web/*.js", dest = "/usr/share/lumen/web/", mode = "644" },
+    { source = "web/images/*", dest = "/usr/share/lumen/web/images/", mode = "644" },
+    { source = "web/ui/*", dest = "/usr/share/lumen/web/ui/", mode = "644" },
+    { source = "pkgs/lumen@.service", dest = "/lib/systemd/system/lumen@.service", mode = "644" },
+    { source = "pkgs/lumen.service", dest = "/lib/systemd/system/lumen.service", mode = "644" },
+    { source = "pkgs/example.env", dest = "/usr/share/lumen/example.env", mode = "644" },
+]

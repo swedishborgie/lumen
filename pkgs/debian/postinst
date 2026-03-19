@@ -1,0 +1,39 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        # Create /etc/lumen/ config directory if it doesn't exist
+        if [ ! -d /etc/lumen ]; then
+            mkdir -p /etc/lumen
+            chmod 750 /etc/lumen
+        fi
+
+        # Install example config only if not already present
+        if [ ! -f /etc/lumen/example.env ]; then
+            cp /usr/share/lumen/example.env /etc/lumen/example.env
+            chmod 640 /etc/lumen/example.env
+        fi
+
+        echo ""
+        echo "╔══════════════════════════════════════════════════════════╗"
+        echo "║              Lumen — Getting Started                     ║"
+        echo "╠══════════════════════════════════════════════════════════╣"
+        echo "║  1. Create a config file for the user you want to run:  ║"
+        echo "║     cp /etc/lumen/example.env /etc/lumen/<username>.env  ║"
+        echo "║     nano /etc/lumen/<username>.env                       ║"
+        echo "║                                                          ║"
+        echo "║  2. Start the service:                                   ║"
+        echo "║     systemctl start lumen@<username>                     ║"
+        echo "║                                                          ║"
+        echo "║  3. Enable autostart on boot (optional):                 ║"
+        echo "║     systemctl enable lumen@<username>                    ║"
+        echo "║                                                          ║"
+        echo "║  4. View logs:                                           ║"
+        echo "║     journalctl -u lumen@<username> -f                    ║"
+        echo "╚══════════════════════════════════════════════════════════╝"
+        echo ""
+        ;;
+esac
+
+exit 0

@@ -42,7 +42,46 @@ Lumen is organized as a Rust workspace with several specialized crates:
 - **`lumen-gamepad`**: Virtual gamepad devices via `uinput` — browser-connected gamepads appear as standard `/dev/input` devices to applications.
 - **`web/`**: The frontend browser client built with vanilla JavaScript and Web APIs.
 
-## Getting Started
+## Installation
+
+### From a package (.deb / .rpm)
+
+The recommended way to install Lumen on a system is via a native package. Packages are built using Docker — no build dependencies required on the host.
+
+```bash
+# Build packages
+docker build -f docker/Dockerfile.packages -t lumen-packages .
+mkdir -p dist
+docker run --rm -v ./dist:/output lumen-packages
+```
+
+Then install the package for your distribution:
+
+```bash
+# Ubuntu / Debian
+sudo apt install ./dist/lumen_*.deb
+
+# Fedora / RHEL
+sudo dnf install ./dist/lumen-*.rpm
+```
+
+After installation, create a config file and start the service:
+
+```bash
+sudo cp /etc/lumen/example.env /etc/lumen/<username>.env
+sudo nano /etc/lumen/<username>.env   # set LUMEN_LAUNCH, auth, etc.
+sudo systemctl start lumen@<username>
+```
+
+See [`pkgs/README.md`](pkgs/README.md) for the full build, configuration, and service management guide.
+
+### From Docker
+
+A Docker image is also available that bundles a full desktop (labwc + Firefox). See [`docker/README.md`](docker/README.md).
+
+---
+
+## Building from Source
 
 ### Prerequisites
 

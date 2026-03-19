@@ -55,8 +55,10 @@ impl Default for TurnServerConfig {
             min_relay_port: 50000,
             max_relay_port: 50010,
             realm: "lumen.local".to_string(),
-            username: "lumen".to_string(),
-            password: "lumen".to_string(),
+            // username and password have no meaningful defaults — they must be
+            // set by the caller before passing this config to TurnServer::start().
+            username: String::new(),
+            password: String::new(),
         }
     }
 }

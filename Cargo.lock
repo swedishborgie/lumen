@@ -1936,6 +1936,7 @@ dependencies = [
  "lumen-turn",
  "lumen-web",
  "lumen-webrtc",
+ "rand 0.9.2",
  "rustls",
  "serde_json",
  "tokio",

@@ -59,12 +59,12 @@ struct Args {
     /// Falls back to 127.0.0.1 (localhost-only) if detection fails.
     #[arg(long, env = "LUMEN_TURN_EXTERNAL_IP")]
     turn_external_ip: Option<std::net::IpAddr>,
-    /// TURN username.
-    #[arg(long, env = "LUMEN_TURN_USERNAME", default_value = "lumen")]
-    turn_username: String,
-    /// TURN password.
-    #[arg(long, env = "LUMEN_TURN_PASSWORD", default_value = "lumenpass", hide_env_values = true)]
-    turn_password: String,
+    /// TURN username. When not set, a random credential is generated at startup.
+    #[arg(long, env = "LUMEN_TURN_USERNAME")]
+    turn_username: Option<String>,
+    /// TURN password. When not set, a random credential is generated at startup.
+    #[arg(long, env = "LUMEN_TURN_PASSWORD", hide_env_values = true)]
+    turn_password: Option<String>,
     /// Lowest UDP port in the TURN relay range.
     #[arg(long, env = "LUMEN_TURN_MIN_PORT", default_value_t = 50000)]
     turn_min_port: u16,
@@ -128,6 +128,18 @@ struct Args {
     tls_key: Option<PathBuf>,
 }
 
+/// Generate a random TURN username and password for ephemeral credentials.
+///
+/// Uses 16 random bytes (hex-encoded) for the username and 24 random bytes
+/// (base64-encoded) for the password, giving ~128 bits of entropy each.
+fn generate_turn_credentials() -> (String, String) {
+    let username_bytes: [u8; 16] = rand::random();
+    let password_bytes: [u8; 24] = rand::random();
+    let username = username_bytes.iter().map(|b| format!("{b:02x}")).collect();
+    let password = base64::engine::general_purpose::STANDARD.encode(password_bytes);
+    (username, password)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Rustls requires an explicit CryptoProvider when multiple backends (ring,
@@ -185,13 +197,31 @@ async fn main() -> Result<()> {
     // Dropping it shuts down the TURN server and invalidates all relay allocations.
     let _turn_server;
     let (turn_client_config, ice_server_list) = if args.turn_port > 0 {
+        // Resolve credentials: use explicit values if provided, otherwise generate
+        // a random ephemeral pair that exists only for the lifetime of this process.
+        let (turn_username, turn_password) = match (args.turn_username, args.turn_password) {
+            (Some(u), Some(p)) => (u, p),
+            (Some(u), None) => {
+                let (_, p) = generate_turn_credentials();
+                (u, p)
+            }
+            (None, Some(p)) => {
+                let (u, _) = generate_turn_credentials();
+                (u, p)
+            }
+            (None, None) => {
+                let creds = generate_turn_credentials();
+                tracing::info!("TURN credentials not configured; using auto-generated ephemeral credentials");
+                creds
+            }
+        };
         let turn_cfg = lumen_turn::TurnServerConfig {
             listen_port: args.turn_port,
             external_ip: turn_external_ip,
             min_relay_port: args.turn_min_port,
             max_relay_port: args.turn_max_port,
-            username: args.turn_username.clone(),
-            password: args.turn_password.clone(),
+            username: turn_username.clone(),
+            password: turn_password.clone(),
             ..Default::default()
         };
         _turn_server = Some(lumen_turn::TurnServer::start(turn_cfg).await?);
@@ -206,8 +236,8 @@ async fn main() -> Result<()> {
 
         let client_cfg = lumen_webrtc::types::TurnClientConfig {
             server_addr,
-            username: args.turn_username.clone(),
-            password: args.turn_password.clone(),
+            username: turn_username.clone(),
+            password: turn_password.clone(),
             relay_ip: turn_external_ip,
         };
 
@@ -216,8 +246,8 @@ async fn main() -> Result<()> {
         let ice_servers = vec![
             lumen_web::IceServerConfig {
                 urls: turn_url,
-                username: Some(args.turn_username.clone()),
-                credential: Some(args.turn_password.clone()),
+                username: Some(turn_username),
+                credential: Some(turn_password),
             },
         ];
         (Some(client_cfg), ice_servers)

@@ -1,0 +1,125 @@
+# syntax=docker/dockerfile:1
+
+# Build args:
+#   VERSION    — package version (defaults to version in Cargo.toml)
+#   BUILD_DEB  — set to 0 to skip the .deb build (default: 1)
+#   BUILD_RPM  — set to 0 to skip the .rpm build (default: 1)
+#
+# Examples:
+#   docker build -f docker/Dockerfile.packages -t lumen-packages .
+#   docker build --build-arg BUILD_RPM=0 -f docker/Dockerfile.packages -t lumen-packages .
+#   docker build --build-arg VERSION=1.2.3 -f docker/Dockerfile.packages -t lumen-packages .
+ARG VERSION
+ARG BUILD_DEB=1
+ARG BUILD_RPM=1
+
+# ─────────────────────────────────────────────────────────────
+# Stage 1: Build .deb package (Ubuntu 24.04)
+# ─────────────────────────────────────────────────────────────
+FROM ubuntu:24.04 AS deb-builder
+
+ARG VERSION
+ARG BUILD_DEB
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Toolchain
+    build-essential pkg-config cmake nasm git curl ca-certificates \
+    # Bindgen / LLVM
+    clang libclang-dev llvm \
+    # Wayland / Smithay
+    libwayland-dev libxkbcommon-dev libpixman-1-dev \
+    # GPU
+    libegl-dev libgles2-mesa-dev libgbm-dev libdrm-dev \
+    # Input
+    libinput-dev libevdev-dev libudev-dev \
+    # Audio
+    libpulse-dev libopus-dev \
+    # Video
+    libx264-dev libva-dev \
+    # FFmpeg
+    libavcodec-dev libavformat-dev libavutil-dev \
+    libavfilter-dev libavdevice-dev libswscale-dev libswresample-dev \
+    # Auth / TLS
+    libpam0g-dev libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Rust toolchain
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --default-toolchain stable --profile minimal
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Install cargo-deb
+RUN cargo install cargo-deb --locked
+
+WORKDIR /build
+COPY . .
+
+RUN mkdir -p /packages
+RUN if [ "${BUILD_DEB}" != "0" ]; then \
+        cargo build --release --bin lumen \
+        && cargo deb --no-build ${VERSION:+--deb-version "$VERSION"} \
+        && cp target/debian/*.deb /packages/; \
+    fi
+
+
+# ─────────────────────────────────────────────────────────────
+# Stage 2: Build .rpm package (Fedora)
+# ─────────────────────────────────────────────────────────────
+FROM fedora:latest AS rpm-builder
+
+ARG VERSION
+ARG BUILD_RPM
+
+# Enable RPMFusion (free) for x264 and FFmpeg
+RUN dnf install -y \
+    "https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm" \
+    && dnf clean all
+
+RUN dnf install -y \
+    # Toolchain
+    gcc gcc-c++ make pkgconf-pkg-config cmake nasm git curl ca-certificates rustup \
+    # Bindgen / LLVM
+    clang clang-devel llvm \
+    # Wayland / Smithay
+    wayland-devel libxkbcommon-devel pixman-devel \
+    # GPU
+    mesa-libEGL-devel mesa-libGLES-devel mesa-libgbm-devel libdrm-devel \
+    # Input
+    libinput-devel libevdev-devel systemd-devel \
+    # Audio
+    pulseaudio-libs-devel opus-devel \
+    # Video
+    x264-devel libva-devel \
+    # FFmpeg
+    ffmpeg-devel \
+    # Auth / TLS
+    pam-devel openssl-devel \
+    && dnf clean all
+
+# Install Rust toolchain via rustup (installed via dnf above)
+RUN rustup-init -y --default-toolchain stable --profile minimal
+ENV PATH="/root/.cargo/bin:${PATH}"
+RUN cargo install cargo-generate-rpm --locked
+
+WORKDIR /build
+COPY . .
+
+RUN mkdir -p /packages
+RUN if [ "${BUILD_RPM}" != "0" ]; then \
+        cargo build --release --bin lumen \
+        && cargo generate-rpm ${VERSION:+--set-metadata "version=\"$VERSION\""} \
+        && cp target/generate-rpm/*.rpm /packages/; \
+    fi
+
+
+# ─────────────────────────────────────────────────────────────
+# Stage 3: Export stage — mount /output as a volume to extract
+#           docker run --rm -v ./dist:/output lumen-packages
+# ─────────────────────────────────────────────────────────────
+FROM busybox AS packages
+
+COPY --from=deb-builder /packages/ /packages/
+COPY --from=rpm-builder /packages/ /packages/
+
+CMD ["sh", "-c", "cp /packages/* /output/ && echo 'Packages exported to /output/'"]

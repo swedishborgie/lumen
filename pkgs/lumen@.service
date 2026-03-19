@@ -1,0 +1,20 @@
+[Unit]
+Description=Lumen Wayland WebRTC compositor (%i)
+After=network.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/home/%i
+PAMName=login
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+EnvironmentFile=-/etc/lumen/%i.env
+EnvironmentFile=-%h/.config/lumen/env
+ExecStart=/usr/bin/lumen
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

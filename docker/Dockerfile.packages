@@ -14,6 +14,43 @@ ARG BUILD_DEB=1
 ARG BUILD_RPM=1
 
 # ─────────────────────────────────────────────────────────────
+# Stage 0: Planner
+#   Computes a cargo-chef recipe from the workspace manifests.
+#   Runs on Ubuntu (minimal image) and produces a platform-agnostic
+#   recipe.json that is shared by both the deb and rpm builder stages.
+#   This stage only needs Rust + cargo-chef, not the full C/C++ stack.
+# ─────────────────────────────────────────────────────────────
+FROM ubuntu:24.04 AS planner
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl ca-certificates build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --default-toolchain stable --profile minimal
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+RUN cargo install cargo-chef --locked --version 0.1.77
+
+WORKDIR /build
+
+COPY Cargo.toml Cargo.lock ./
+COPY crates/lumen-compositor/Cargo.toml crates/lumen-compositor/
+COPY crates/lumen-audio/Cargo.toml      crates/lumen-audio/
+COPY crates/lumen-encode/Cargo.toml     crates/lumen-encode/
+COPY crates/lumen-webrtc/Cargo.toml     crates/lumen-webrtc/
+COPY crates/lumen-web/Cargo.toml        crates/lumen-web/
+COPY crates/lumen-turn/Cargo.toml       crates/lumen-turn/
+COPY crates/lumen-gamepad/Cargo.toml    crates/lumen-gamepad/
+COPY src/ src/
+COPY crates/ crates/
+
+RUN cargo chef prepare --recipe-path recipe.json
+
+
+# ─────────────────────────────────────────────────────────────
 # Stage 1: Build .deb package (Ubuntu 24.04)
 # ─────────────────────────────────────────────────────────────
 FROM ubuntu:24.04 AS deb-builder
@@ -44,16 +81,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpam0g-dev libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Rust toolchain
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     | sh -s -- -y --default-toolchain stable --profile minimal
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-# Install cargo-deb
+RUN cargo install cargo-chef --locked --version 0.1.77
 RUN cargo install cargo-deb --locked
 
 WORKDIR /build
-COPY . .
+
+# Cache layer: compile all third-party dependencies.
+# Only invalidated when Cargo.lock changes; source edits skip straight to the build step.
+COPY --from=planner /build/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
+
+COPY Cargo.toml Cargo.lock ./
+COPY src/ src/
+COPY crates/ crates/
+COPY web/ web/
+COPY pkgs/ pkgs/
 
 RUN mkdir -p /packages
 RUN if [ "${BUILD_DEB}" != "0" ]; then \
@@ -97,13 +143,24 @@ RUN dnf install -y \
     pam-devel openssl-devel \
     && dnf clean all
 
-# Install Rust toolchain via rustup (installed via dnf above)
 RUN rustup-init -y --default-toolchain stable --profile minimal
 ENV PATH="/root/.cargo/bin:${PATH}"
+
+RUN cargo install cargo-chef --locked --version 0.1.77
 RUN cargo install cargo-generate-rpm --locked
 
 WORKDIR /build
-COPY . .
+
+# Cache layer: compile all third-party dependencies against Fedora's system libraries.
+# Only invalidated when Cargo.lock changes; source edits skip straight to the build step.
+COPY --from=planner /build/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
+
+COPY Cargo.toml Cargo.lock ./
+COPY src/ src/
+COPY crates/ crates/
+COPY web/ web/
+COPY pkgs/ pkgs/
 
 RUN mkdir -p /packages
 RUN if [ "${BUILD_RPM}" != "0" ]; then \

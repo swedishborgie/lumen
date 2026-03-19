@@ -9,13 +9,13 @@ lumen-compositor = { path = "../lumen-compositor" }
 
 # HTTP server + WebSocket
 axum        = { version = "0.8", features = ["ws", "macros"] }
-axum-server = { version = "0.7", features = ["tls-rustls"] }
+axum-server = { version = "0.8", features = ["tls-rustls"] }
 tower-http  = { version = "0.6", features = ["fs", "cors", "trace"] }
 
 # Authentication
-pam            = "0.7"
+pam            = "0.8"
 subtle         = "2"
-openidconnect  = { version = "3", features = ["reqwest"] }
+openidconnect  = { version = "4", features = ["reqwest"] }
 cookie         = "0.18"
 uuid           = { version = "1", features = ["v4"] }
 

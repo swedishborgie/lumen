@@ -25,11 +25,25 @@ use axum::{
 };
 use cookie::{Cookie, SameSite};
 use openidconnect::{
-    AuthorizationCode, ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce,
-    PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
+    AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndpointMaybeSet, EndpointNotSet,
+    EndpointSet, IssuerUrl, Nonce, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope,
+    TokenResponse,
     core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata},
-    reqwest::async_http_client,
 };
+
+/// `CoreClient` type produced by `from_provider_metadata` + `set_redirect_uri`.
+///
+/// `from_provider_metadata` sets `HasAuthUrl = EndpointSet` and marks the token
+/// and userinfo endpoints as `EndpointMaybeSet` (present in most but not all
+/// providers).  The remaining endpoint slots are left at `EndpointNotSet`.
+type ConfiguredCoreClient = CoreClient<
+    EndpointSet,
+    EndpointNotSet,
+    EndpointNotSet,
+    EndpointNotSet,
+    EndpointMaybeSet,
+    EndpointMaybeSet,
+>;
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -53,7 +67,8 @@ type SessionStore = Arc<RwLock<HashMap<String, SessionData>>>;
 /// Shared OIDC client state, initialized at server startup via [`OidcState::discover`].
 #[derive(Clone)]
 pub struct OidcState {
-    client: Arc<CoreClient>,
+    client: Arc<ConfiguredCoreClient>,
+    http_client: openidconnect::reqwest::Client,
     expected_subject: String,
     sessions: SessionStore,
 }
@@ -68,9 +83,14 @@ impl OidcState {
         redirect_uri: String,
         expected_subject: String,
     ) -> Result<Self> {
+        let http_client = openidconnect::reqwest::ClientBuilder::new()
+            .redirect(openidconnect::reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {e}"))?;
+
         let provider_metadata = CoreProviderMetadata::discover_async(
             IssuerUrl::new(issuer_url)?,
-            async_http_client,
+            &http_client,
         )
         .await
         .map_err(|e| anyhow::anyhow!("OIDC discovery failed: {e}"))?;
@@ -84,6 +104,7 @@ impl OidcState {
 
         Ok(Self {
             client: Arc::new(client),
+            http_client,
             expected_subject,
             sessions: Arc::new(RwLock::new(HashMap::new())),
         })
@@ -249,11 +270,20 @@ pub async fn callback_handler(
     }
 
     // Exchange authorization code for tokens.
-    let token_response = oidc
+    let code_request = match oidc
         .client
         .exchange_code(AuthorizationCode::new(params.code))
+    {
+        Ok(req) => req,
+        Err(e) => {
+            tracing::warn!("OAuth2 token exchange config error: {e:?}");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "OIDC configuration error")
+                .into_response();
+        }
+    };
+    let token_response = code_request
         .set_pkce_verifier(PkceCodeVerifier::new(pkce_secret))
-        .request_async(async_http_client)
+        .request_async(&oidc.http_client)
         .await;
 
     let token_response = match token_response {

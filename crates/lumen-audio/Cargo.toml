@@ -5,8 +5,8 @@ edition = "2021"
 
 [dependencies]
 # PulseAudio
-libpulse-binding        = "2.28"
-libpulse-simple-binding = "2.28"
+libpulse-binding        = "2.30"
+libpulse-simple-binding = "2.29"
 
 # Opus codec
 opus = "0.3"

@@ -130,6 +130,13 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Rustls requires an explicit CryptoProvider when multiple backends (ring,
+    // aws-lc-rs) are present in the dependency tree.  Install ring as the default
+    // before any TLS code runs.
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install rustls ring CryptoProvider");
+
     // If RUST_LOG is set, use it as-is. Otherwise fall back to per-crate info defaults with
     // targeted Smithay selection/keyboard debug enabled for clipboard troubleshooting.
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()

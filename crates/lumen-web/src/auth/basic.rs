@@ -72,9 +72,9 @@ fn pam_validate(username: &str, password: &str) -> bool {
     // Administrators who need a custom policy can create /etc/pam.d/lumen and set
     // LUMEN_AUTH_PAM_SERVICE=lumen (or change this constant).
     const PAM_SERVICE: &str = "sshd";
-    match pam::Authenticator::with_password(PAM_SERVICE) {
+    match pam::Client::with_password(PAM_SERVICE) {
         Ok(mut auth) => {
-            auth.get_handler().set_credentials(username, password);
+            auth.conversation_mut().set_credentials(username, password);
             match auth.authenticate() {
                 Ok(()) => true,
                 Err(e) => {

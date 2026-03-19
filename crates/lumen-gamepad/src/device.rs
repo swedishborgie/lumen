@@ -1,9 +1,9 @@
 //! Per-gamepad virtual device backed by Linux uinput.
 
 use evdev::{
-    uinput::{VirtualDevice, VirtualDeviceBuilder},
+    uinput::VirtualDevice,
     AbsInfo, AttributeSet, InputEvent as EvdevEvent,
-    Key, UinputAbsSetup,
+    KeyCode, UinputAbsSetup,
 };
 
 use crate::{
@@ -27,7 +27,7 @@ impl GamepadDevice {
     /// Create a new virtual gamepad device with `num_buttons` and `num_axes`
     /// capabilities from the standard layout mapping tables.
     pub(crate) fn new(name: &str, num_buttons: u8, num_axes: u8) -> Result<Self, GamepadError> {
-        let mut keys = AttributeSet::<Key>::new();
+        let mut keys = AttributeSet::<KeyCode>::new();
         for &(idx, key) in BUTTON_MAP {
             if (idx as u8) < num_buttons {
                 keys.insert(key);
@@ -80,7 +80,7 @@ impl GamepadDevice {
             }
         }
 
-        let mut builder = VirtualDeviceBuilder::new()
+        let mut builder = VirtualDevice::builder()
             .map_err(GamepadError::UinputOpen)?
             .name(name)
             .with_keys(&keys)
@@ -114,8 +114,8 @@ impl GamepadDevice {
         // Digital button event.
         if let Some(&(_, key)) = BUTTON_MAP.iter().find(|&&(i, _)| i == button_idx as usize) {
             events.push(EvdevEvent::new(
-                evdev::EventType::KEY,
-                key.code(),
+                evdev::EventType::KEY.0,
+                key.0,
                 i32::from(pressed),
             ));
         }
@@ -127,7 +127,7 @@ impl GamepadDevice {
         {
             #[allow(clippy::cast_possible_truncation)]
             let abs_val = (value.clamp(0.0, 1.0) * TRIGGER_SCALE).round() as i32;
-            events.push(EvdevEvent::new(evdev::EventType::ABSOLUTE, axis.0, abs_val));
+            events.push(EvdevEvent::new(evdev::EventType::ABSOLUTE.0, axis.0, abs_val));
         }
 
         if !events.is_empty() {
@@ -142,7 +142,7 @@ impl GamepadDevice {
         if let Some(&(_, axis)) = AXIS_MAP.iter().find(|&&(i, _)| i == axis_idx as usize) {
             #[allow(clippy::cast_possible_truncation)]
             let scaled = (value.clamp(-1.0, 1.0) * AXIS_SCALE).round() as i32;
-            let event = EvdevEvent::new(evdev::EventType::ABSOLUTE, axis.0, scaled);
+            let event = EvdevEvent::new(evdev::EventType::ABSOLUTE.0, axis.0, scaled);
             return self.device.emit(&[event]).map_err(GamepadError::Emit);
         }
 
@@ -150,14 +150,14 @@ impl GamepadDevice {
         if let Some(&(_, axis)) = TRIGGER_FROM_AXIS_MAP.iter().find(|&&(i, _)| i == axis_idx as usize) {
             #[allow(clippy::cast_possible_truncation)]
             let scaled = ((value.clamp(-1.0, 1.0) + 1.0) / 2.0 * TRIGGER_FROM_AXIS_SCALE).round() as i32;
-            let event = EvdevEvent::new(evdev::EventType::ABSOLUTE, axis.0, scaled);
+            let event = EvdevEvent::new(evdev::EventType::ABSOLUTE.0, axis.0, scaled);
             return self.device.emit(&[event]).map_err(GamepadError::Emit);
         }
 
         // Hat / D-pad axes — values are −1, 0, or 1.
         if let Some(&(_, axis)) = HAT_AXIS_MAP.iter().find(|&&(i, _)| i == axis_idx as usize) {
             let val = value.round() as i32;
-            let event = EvdevEvent::new(evdev::EventType::ABSOLUTE, axis.0, val);
+            let event = EvdevEvent::new(evdev::EventType::ABSOLUTE.0, axis.0, val);
             return self.device.emit(&[event]).map_err(GamepadError::Emit);
         }
 

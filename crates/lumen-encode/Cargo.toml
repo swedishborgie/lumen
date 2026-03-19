@@ -7,8 +7,8 @@ edition = "2021"
 lumen-compositor = { path = "../lumen-compositor" }
 
 # Hardware encoding via FFmpeg (VA-API)
-ffmpeg-next     = "7"
-ffmpeg-sys-next = "7"
+ffmpeg-next     = "8"
+ffmpeg-sys-next = "8"
 
 # Software H.264 encoding
 x264-sys = "0.2"

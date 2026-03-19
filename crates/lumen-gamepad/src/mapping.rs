@@ -26,28 +26,28 @@
 //! reported as buttons (indices 6/7) with an analog value.
 //! `HAT_AXIS_MAP` covers hat/D-pad axes (browser −1..1 → evdev −1..1).
 
-use evdev::AbsoluteAxisType as Abs;
-use evdev::Key;
+use evdev::AbsoluteAxisCode as Abs;
+use evdev::KeyCode;
 
 /// Maps a Web Gamepad button index (0–16) to a Linux `BTN_*` evdev key code.
-pub const BUTTON_MAP: &[(usize, Key)] = &[
-    (0,  Key::BTN_SOUTH),    // A / Cross
-    (1,  Key::BTN_EAST),     // B / Circle
-    (2,  Key::BTN_WEST),     // X / Square
-    (3,  Key::BTN_NORTH),    // Y / Triangle
-    (4,  Key::BTN_TL),       // LB
-    (5,  Key::BTN_TR),       // RB
-    (6,  Key::BTN_TL2),      // LT digital (standard layout only; analog via TRIGGER_AXIS_MAP)
-    (7,  Key::BTN_TR2),      // RT digital (standard layout only; analog via TRIGGER_AXIS_MAP)
-    (8,  Key::BTN_SELECT),   // Select / Back
-    (9,  Key::BTN_START),    // Start
-    (10, Key::BTN_THUMBL),   // L3 – left stick click
-    (11, Key::BTN_THUMBR),   // R3 – right stick click
-    (12, Key::BTN_DPAD_UP),
-    (13, Key::BTN_DPAD_DOWN),
-    (14, Key::BTN_DPAD_LEFT),
-    (15, Key::BTN_DPAD_RIGHT),
-    (16, Key::BTN_MODE),     // Home / Guide
+pub const BUTTON_MAP: &[(usize, KeyCode)] = &[
+    (0,  KeyCode::BTN_SOUTH),    // A / Cross
+    (1,  KeyCode::BTN_EAST),     // B / Circle
+    (2,  KeyCode::BTN_WEST),     // X / Square
+    (3,  KeyCode::BTN_NORTH),    // Y / Triangle
+    (4,  KeyCode::BTN_TL),       // LB
+    (5,  KeyCode::BTN_TR),       // RB
+    (6,  KeyCode::BTN_TL2),      // LT digital (standard layout only; analog via TRIGGER_AXIS_MAP)
+    (7,  KeyCode::BTN_TR2),      // RT digital (standard layout only; analog via TRIGGER_AXIS_MAP)
+    (8,  KeyCode::BTN_SELECT),   // Select / Back
+    (9,  KeyCode::BTN_START),    // Start
+    (10, KeyCode::BTN_THUMBL),   // L3 – left stick click
+    (11, KeyCode::BTN_THUMBR),   // R3 – right stick click
+    (12, KeyCode::BTN_DPAD_UP),
+    (13, KeyCode::BTN_DPAD_DOWN),
+    (14, KeyCode::BTN_DPAD_LEFT),
+    (15, KeyCode::BTN_DPAD_RIGHT),
+    (16, KeyCode::BTN_MODE),     // Home / Guide
 ];
 
 /// Stick axes: Web axis index → ABS axis.  Scaled by [`AXIS_SCALE`] (±32 767).

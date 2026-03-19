@@ -29,7 +29,7 @@ drm = "0.14"
 drm-sys = "0.8"
 
 # Input
-xkbcommon = { version = "0.7", features = ["wayland"] }
+xkbcommon = { version = "0.9", features = ["wayland"] }
 
 # Async channels
 tokio = { workspace = true }

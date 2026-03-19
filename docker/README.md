@@ -11,11 +11,12 @@ A multi-stage container image that builds Lumen from source and runs it inside a
 podman build -f docker/Dockerfile -t lumen:latest .
 ```
 
-The build has two stages:
-1. **builder** — installs the full Rust toolchain and all native C/C++ dependencies, compiles the release binary
-2. **runtime** — minimal Ubuntu image with labwc, XWayland, Firefox, xclock/xeyes, PulseAudio, and the compiled `lumen` binary
+The build has three stages:
+1. **planner** — lightweight stage that runs `cargo chef prepare` to compute a dependency recipe from the workspace manifests
+2. **builder** — installs the full Rust toolchain and all native C/C++ dependencies; uses the recipe to compile all third-party crates into a dedicated cached layer, then compiles only the application code on top
+3. **runtime** — minimal Ubuntu image with labwc, XWayland, Firefox, xclock/xeyes, PulseAudio, and the compiled `lumen` binary
 
-> **Tip:** The first build will take a while (Rust + Smithay compile time). Subsequent builds use the Docker/Podman layer cache for unchanged dependencies.
+> **Tip:** The first build will take a while (Rust + Smithay + FFmpeg bindings compile time). Subsequent builds that only change application source skip the dependency compilation step entirely — Podman reuses the cached layer. The dependency layer is only invalidated when `Cargo.toml` or `Cargo.lock` changes (e.g., adding or upgrading a crate).
 
 ---
 

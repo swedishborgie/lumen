@@ -1,6 +1,46 @@
 # =============================================================================
-# Stage 1 — Builder
-#   Compiles the Lumen Rust workspace and produces a release binary.
+# Stage 1 — Planner
+#   Computes a cargo-chef recipe from the workspace manifests.
+#   This stage is intentionally minimal — it only needs Rust + cargo-chef,
+#   not the full C/C++ library stack.
+# =============================================================================
+FROM ubuntu:24.04 AS planner
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain stable --profile minimal
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Pin with --locked for reproducibility; bump the version to pick up new releases.
+RUN cargo install cargo-chef --locked --version 0.1.77
+
+WORKDIR /build
+
+# Copy the entire workspace so cargo-chef can resolve the full dependency graph.
+COPY Cargo.toml Cargo.lock ./
+COPY crates/lumen-compositor/Cargo.toml crates/lumen-compositor/
+COPY crates/lumen-audio/Cargo.toml      crates/lumen-audio/
+COPY crates/lumen-encode/Cargo.toml     crates/lumen-encode/
+COPY crates/lumen-webrtc/Cargo.toml     crates/lumen-webrtc/
+COPY crates/lumen-web/Cargo.toml        crates/lumen-web/
+COPY crates/lumen-turn/Cargo.toml       crates/lumen-turn/
+COPY crates/lumen-gamepad/Cargo.toml    crates/lumen-gamepad/
+COPY src/ src/
+COPY crates/ crates/
+
+RUN cargo chef prepare --recipe-path recipe.json
+
+# =============================================================================
+# Stage 2 — Builder
+#   1. Compiles all third-party dependencies from the recipe (cached layer).
+#      This layer is only invalidated when Cargo.toml / Cargo.lock changes.
+#   2. Compiles the application code on top (fast; re-runs on source changes).
 # =============================================================================
 FROM ubuntu:24.04 AS builder
 
@@ -61,35 +101,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain stable --profile minimal
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-# ── Cache layer: fetch dependencies before copying full source ─────────────────
+RUN cargo install cargo-chef --locked --version 0.1.77
+
 WORKDIR /build
 
-# Copy manifests and lock file first so dependency fetching is cached
-COPY Cargo.toml Cargo.lock ./
-COPY crates/lumen-compositor/Cargo.toml crates/lumen-compositor/
-COPY crates/lumen-audio/Cargo.toml      crates/lumen-audio/
-COPY crates/lumen-encode/Cargo.toml     crates/lumen-encode/
-COPY crates/lumen-webrtc/Cargo.toml     crates/lumen-webrtc/
-COPY crates/lumen-web/Cargo.toml        crates/lumen-web/
-COPY crates/lumen-turn/Cargo.toml       crates/lumen-turn/
-COPY crates/lumen-gamepad/Cargo.toml    crates/lumen-gamepad/
-
-# Create stub lib/main files so Cargo can resolve the workspace graph
-RUN mkdir -p src \
-    crates/lumen-compositor/src \
-    crates/lumen-audio/src \
-    crates/lumen-encode/src \
-    crates/lumen-webrtc/src \
-    crates/lumen-web/src \
-    crates/lumen-turn/src \
-    crates/lumen-gamepad/src \
- && echo 'fn main() {}' > src/main.rs \
- && for d in crates/*/src; do echo '' > "$d/lib.rs"; done
-
-RUN cargo fetch
+# ── Cache layer: compile all dependencies ─────────────────────────────────────
+# This RUN step is the only one that changes when Cargo.toml / Cargo.lock
+# changes. On source-only rebuilds the layer is reused and this step is
+# skipped entirely, saving the bulk of compile time.
+COPY --from=planner /build/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
 
 # ── Full build ─────────────────────────────────────────────────────────────────
-# Now copy all sources and do the real build
+# All dependencies are already compiled above. Only application crates are
+# recompiled here, which is fast.
+COPY Cargo.toml Cargo.lock ./
 COPY src/         src/
 COPY crates/      crates/
 COPY web/         web/

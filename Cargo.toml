@@ -47,6 +47,7 @@ anyhow = "1"
 name = "lumen"
 version = "0.1.0"
 license = "MIT"
+description = "A Wayland compositor that streams the desktop to browsers via WebRTC."
 edition = "2021"
 
 [dependencies]
@@ -89,7 +90,6 @@ assets = [
     { source = "target/release/lumen", dest = "/usr/bin/lumen", mode = "755" },
     { source = "web/**/*", dest = "/usr/share/lumen/web/", mode = "644" },
     { source = "pkgs/lumen@.service", dest = "/lib/systemd/system/lumen@.service", mode = "644" },
-    { source = "pkgs/lumen.service", dest = "/lib/systemd/system/lumen.service", mode = "644" },
     { source = "pkgs/example.env", dest = "/usr/share/lumen/example.env", mode = "644" },
 ]
 
@@ -121,6 +121,5 @@ assets = [
     { source = "web/images/*", dest = "/usr/share/lumen/web/images/", mode = "644" },
     { source = "web/ui/*", dest = "/usr/share/lumen/web/ui/", mode = "644" },
     { source = "pkgs/lumen@.service", dest = "/lib/systemd/system/lumen@.service", mode = "644" },
-    { source = "pkgs/lumen.service", dest = "/lib/systemd/system/lumen.service", mode = "644" },
     { source = "pkgs/example.env", dest = "/usr/share/lumen/example.env", mode = "644" },
 ]

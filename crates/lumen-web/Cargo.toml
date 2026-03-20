@@ -10,7 +10,8 @@ lumen-compositor = { path = "../lumen-compositor" }
 # HTTP server + WebSocket
 axum        = { version = "0.8", features = ["ws", "macros"] }
 axum-server = { version = "0.8", features = ["tls-rustls"] }
-tower-http  = { version = "0.6", features = ["fs", "cors", "trace"] }
+tower-http  = { version = "0.6", features = ["cors", "trace"] }
+rust-embed  = { version = "8", features = ["mime-guess"] }
 
 # Authentication
 pam            = "0.8"

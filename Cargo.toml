@@ -90,7 +90,6 @@ priority = "optional"
 maintainer-scripts = "pkgs/debian/"
 assets = [
     { source = "target/release/lumen", dest = "/usr/bin/lumen", mode = "755" },
-    { source = "web/**/*", dest = "/usr/share/lumen/web/", mode = "644" },
     { source = "pkgs/lumen@.service", dest = "/lib/systemd/system/lumen@.service", mode = "644" },
     { source = "pkgs/example.env", dest = "/usr/share/lumen/example.env", mode = "644" },
 ]
@@ -125,13 +124,6 @@ echo ""
 """
 assets = [
     { source = "target/release/lumen", dest = "/usr/bin/lumen", mode = "755" },
-    { source = "web/index.html", dest = "/usr/share/lumen/web/index.html", mode = "644" },
-    { source = "web/*.mjs", dest = "/usr/share/lumen/web/", mode = "644" },
-    { source = "web/*.css", dest = "/usr/share/lumen/web/", mode = "644" },
-    { source = "web/*.json", dest = "/usr/share/lumen/web/", mode = "644" },
-    { source = "web/*.js", dest = "/usr/share/lumen/web/", mode = "644" },
-    { source = "web/images/*", dest = "/usr/share/lumen/web/images/", mode = "644" },
-    { source = "web/ui/*", dest = "/usr/share/lumen/web/ui/", mode = "644" },
     { source = "pkgs/lumen@.service", dest = "/lib/systemd/system/lumen@.service", mode = "644" },
     { source = "pkgs/example.env", dest = "/usr/share/lumen/example.env", mode = "644" },
 ]

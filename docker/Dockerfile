@@ -121,8 +121,6 @@ COPY crates/      crates/
 COPY web/         web/
 
 RUN cargo build --release --bin lumen
-
-# =============================================================================
 # Stage 2 — Runtime
 #   Minimal Ubuntu desktop: labwc + XWayland + Firefox + test apps + lumen.
 # =============================================================================
@@ -209,9 +207,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # ── Copy lumen binary from builder ────────────────────────────────────────────
 COPY --from=builder /build/target/release/lumen /usr/local/bin/lumen
-
-# ── Copy static web assets served by the Axum HTTP server ────────────────────
-COPY --from=builder /build/web /opt/lumen/web
 
 # ── Copy and prepare entrypoint ───────────────────────────────────────────────
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh

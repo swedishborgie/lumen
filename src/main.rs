@@ -123,8 +123,6 @@ struct Args {
     inner_display: String,
     #[arg(long, env = "LUMEN_ICE_SERVERS", default_value = "stun:stun.l.google.com:19302")]
     ice_servers: String,
-    #[arg(long, env = "LUMEN_STATIC_DIR", default_value = "./web")]
-    static_dir: PathBuf,
 
     // ── TURN server ───────────────────────────────────────────────────────────
     /// UDP port for the embedded TURN server. Set to 0 to disable.
@@ -797,7 +795,6 @@ async fn main() -> Result<()> {
 
     lumen_web::WebServer::new(lumen_web::WebServerConfig {
         bind_addr: args.bind_addr,
-        static_dir: args.static_dir,
         session_manager,
         input_tx,
         keyframe_flag,

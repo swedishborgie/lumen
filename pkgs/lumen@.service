@@ -9,7 +9,6 @@ WorkingDirectory=/home/%i
 PAMName=login
 SyslogIdentifier=lumen@%i
 Environment=XDG_RUNTIME_DIR=/run/user/%U
-Environment=LUMEN_STATIC_DIR=/usr/share/lumen/web
 Environment=LUMEN_LOG_OUTPUT=journald
 Environment=LUMEN_SYSLOG_IDENTIFIER=lumen@%i
 Environment=LUMEN_DESKTOP=labwc

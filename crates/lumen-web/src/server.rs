@@ -4,8 +4,9 @@ use std::time::SystemTime;
 
 use anyhow::{Context, Result};
 use axum::{middleware, routing::get, Router};
-use tower_http::{cors::CorsLayer, services::{ServeDir, ServeFile}, trace::TraceLayer};
+use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
+use crate::assets::{index_handler, static_file_handler};
 use crate::auth::{basic, bearer, oauth2};
 use crate::signaling::{SignalingState, config_handler, ws_handler};
 use crate::types::{AuthConfig, WebServerConfig};
@@ -100,26 +101,23 @@ impl WebServer {
     }
 
     async fn build_app(&self, signaling_router: Router) -> Result<Router> {
-        let index_file = ServeFile::new(self.config.static_dir.join("index.html"));
-        let static_dir = ServeDir::new(&self.config.static_dir);
-
         // Explicit routes that require authentication. The index page is routed
         // explicitly so that auth protects it while leaving other static assets
         // (service worker, manifest, CSS, JS, images) accessible without
         // credentials — service worker fetches do not carry auth headers.
         let protected = signaling_router
-            .route_service("/", index_file.clone())
-            .route_service("/index.html", index_file);
+            .route("/", get(index_handler))
+            .route("/index.html", get(index_handler));
 
         match &self.config.auth {
             AuthConfig::None => Ok(protected
-                .fallback_service(static_dir)
+                .fallback(static_file_handler)
                 .layer(CorsLayer::permissive())
                 .layer(TraceLayer::new_for_http())),
 
             AuthConfig::Basic => Ok(protected
                 .route_layer(middleware::from_fn(basic::auth_middleware))
-                .fallback_service(static_dir)
+                .fallback(static_file_handler)
                 .layer(CorsLayer::permissive())
                 .layer(TraceLayer::new_for_http())),
 
@@ -128,7 +126,7 @@ impl WebServer {
                 Ok(protected
                     .route_layer(middleware::from_fn(bearer::auth_middleware))
                     .route_layer(axum::Extension(token_arc))
-                    .fallback_service(static_dir)
+                    .fallback(static_file_handler)
                     .layer(CorsLayer::permissive())
                     .layer(TraceLayer::new_for_http()))
             }
@@ -156,7 +154,7 @@ impl WebServer {
                     .merge(protected)
                     .route_layer(middleware::from_fn(oauth2::auth_middleware))
                     .route_layer(axum::Extension(oidc_arc))
-                    .fallback_service(static_dir)
+                    .fallback(static_file_handler)
                     .layer(CorsLayer::permissive())
                     .layer(TraceLayer::new_for_http());
 

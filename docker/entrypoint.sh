@@ -46,19 +46,12 @@ else
     echo "    Pass --device /dev/uinput to enable gamepad forwarding"
 fi
 
-# ── Web asset path ────────────────────────────────────────────────────────────
-WEB_ARGS=()
-if [[ -d /opt/lumen/web ]]; then
-    WEB_ARGS=(--static-dir /opt/lumen/web)
-fi
-
 # ── Start lumen ────────────────────────────────────────────────────────────────
 # DRI node detection, TURN IP detection, clipboard bridge setup, and labwc
 # launch are all handled internally by lumen.
 echo "==> Starting lumen  (Web UI: http://localhost:8080)"
-echo "    Args: ${WEB_ARGS[*]:-} --launch labwc $*"
+echo "    Args: --launch labwc $*"
 exec "$LUMEN_BIN" \
-    "${WEB_ARGS[@]}" \
     --launch labwc \
     "$@"
 

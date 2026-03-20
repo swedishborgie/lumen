@@ -1,12 +1,36 @@
-use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
+use std::sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex};
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use base64::Engine as _;
 use clap::Parser;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use tokio::sync::broadcast;
 
+/// Log output destination.
+#[derive(Clone, Debug)]
+enum LogOutput {
+    Stderr,
+    Journald,
+    File(PathBuf),
+}
+
+impl std::str::FromStr for LogOutput {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "stderr" => Ok(Self::Stderr),
+            "journald" => Ok(Self::Journald),
+            s if s.starts_with("file:") => Ok(Self::File(PathBuf::from(&s[5..]))),
+            _ => Err(format!(
+                "unknown log output {s:?}; expected 'stderr', 'journald', or 'file:/path/to/log'"
+            )),
+        }
+    }
+}
+
+///
 /// Authentication mode for the web server.
 #[derive(clap::ValueEnum, Clone, Debug, Default)]
 enum AuthMode {
@@ -17,9 +41,61 @@ enum AuthMode {
     Oauth2,
 }
 
+/// Named desktop environment preset.
+///
+/// Each preset provides a default launch command and the environment variables
+/// required by that desktop.  `LUMEN_LAUNCH` overrides the launch command but
+/// the preset's env vars are still applied to the child process.
+#[derive(clap::ValueEnum, Clone, Debug)]
+enum DesktopPreset {
+    /// labwc — a lightweight wlroots-based Wayland compositor.
+    Labwc,
+    /// KDE Plasma — full desktop session via `dbus-run-session startplasma-wayland`.
+    /// KDE packages must be installed separately; they are not a lumen dependency.
+    Kde,
+}
+
+impl DesktopPreset {
+    /// Default shell command to launch for this preset (passed to `/bin/sh -c`).
+    fn default_launch_cmd(&self) -> &'static str {
+        match self {
+            Self::Labwc => "labwc",
+            Self::Kde => "dbus-run-session startplasma-wayland",
+        }
+    }
+
+    /// Environment variables to inject into the child process.
+    fn env_vars(&self) -> &'static [(&'static str, &'static str)] {
+        match self {
+            Self::Labwc => &[],
+            Self::Kde => &[
+                ("QT_QPA_PLATFORM", "wayland"),
+                ("XDG_CURRENT_DESKTOP", "KDE"),
+                ("XDG_SESSION_TYPE", "wayland"),
+                ("KDE_SESSION_VERSION", "6"),
+                ("XDG_MENU_PREFIX", "plasma-"),
+                ("PLASMA_SKIP_SPLASH", "1"),
+                ("KDE_FULL_SESSION", "true"),
+                ("DESKTOP_SESSION", "plasma"),
+            ],
+        }
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "lumen", about = "Wayland WebRTC streaming compositor")]
 struct Args {
+    /// Log output destination. Accepted values: `stderr` (default), `journald`,
+    /// or `file:/absolute/path/to/lumen.log`.
+    #[arg(long, env = "LUMEN_LOG_OUTPUT", default_value = "stderr")]
+    log_output: LogOutput,
+
+    /// Syslog identifier to use when logging to journald. Defaults to the binary name.
+    /// Set to the systemd unit instance name (e.g. `lumen@alice`) so that
+    /// `journalctl -u lumen@alice` collects the right logs.
+    #[arg(long, env = "LUMEN_SYSLOG_IDENTIFIER")]
+    syslog_identifier: Option<String>,
+
     #[arg(long, env = "LUMEN_BIND", default_value = "0.0.0.0:8080")]
     bind_addr: SocketAddr,
     #[arg(long, env = "LUMEN_WIDTH", default_value_t = 1920)]
@@ -107,11 +183,21 @@ struct Args {
     auth_oauth2_subject: Option<String>,
 
     // ── Launch ────────────────────────────────────────────────────────────────
+    /// Named desktop environment preset to launch.  Accepted values: `labwc`
+    /// (default when set via the service unit), `kde`.  Each preset provides a
+    /// default launch command and the environment variables required by that
+    /// desktop.  `--launch` / `LUMEN_LAUNCH` overrides the launch command but
+    /// the preset's env vars are still applied.
+    #[arg(long, env = "LUMEN_DESKTOP")]
+    desktop: Option<DesktopPreset>,
+
     /// Shell command to launch as a Wayland client once the compositor socket
     /// is ready.  Passed to `/bin/sh -c`, so arguments and shell syntax are
     /// supported (e.g. `--launch "labwc"` or `--launch "weston --backend=wayland"`).
     /// The child receives `WAYLAND_DISPLAY` and `XDG_RUNTIME_DIR`; `DISPLAY` is
     /// unset so it connects via Wayland rather than X11.
+    /// When `--desktop` is also set, this overrides only the launch command;
+    /// the preset's required environment variables are still applied.
     #[arg(long, env = "LUMEN_LAUNCH")]
     launch: Option<String>,
 
@@ -149,6 +235,10 @@ async fn main() -> Result<()> {
         .install_default()
         .expect("Failed to install rustls ring CryptoProvider");
 
+    // Parse CLI arguments first so --log-output (or LUMEN_LOG_OUTPUT) is available
+    // before the tracing subscriber is initialized.
+    let args = Args::parse();
+
     // If RUST_LOG is set, use it as-is. Otherwise fall back to per-crate info defaults with
     // targeted Smithay selection/keyboard debug enabled for clipboard troubleshooting.
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
@@ -161,11 +251,46 @@ async fn main() -> Result<()> {
                 .add_directive("lumen_webrtc=info".parse().unwrap())
                 .add_directive("lumen_web=info".parse().unwrap())
         });
-    tracing_subscriber::fmt()
-        .with_env_filter(env_filter)
-        .init();
+    match &args.log_output {
+        LogOutput::Stderr => {
+            tracing_subscriber::fmt()
+                .with_env_filter(env_filter)
+                .init();
+        }
+        LogOutput::Journald => {
+            use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+            match tracing_journald::layer() {
+                Ok(journald_layer) => {
+                    let journald_layer = match &args.syslog_identifier {
+                        Some(id) => journald_layer.with_syslog_identifier(id.clone()),
+                        None => journald_layer,
+                    };
+                    tracing_subscriber::registry()
+                        .with(env_filter)
+                        .with(journald_layer)
+                        .init();
+                }
+                Err(e) => {
+                    tracing_subscriber::fmt()
+                        .with_env_filter(env_filter)
+                        .init();
+                    tracing::warn!("journald unavailable ({e}), falling back to stderr");
+                }
+            }
+        }
+        LogOutput::File(path) => {
+            let file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .with_context(|| format!("failed to open log file: {}", path.display()))?;
+            tracing_subscriber::fmt()
+                .with_writer(Mutex::new(file))
+                .with_env_filter(env_filter)
+                .init();
+        }
+    }
 
-    let args = Args::parse();
     tracing::info!(?args.bind_addr, "Starting lumen");
 
     // ── Auth config ───────────────────────────────────────────────────────────
@@ -383,11 +508,19 @@ async fn main() -> Result<()> {
     // the web server. Without --launch, the server runs until interrupted.
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
-    // ── Spawn: --launch task ──────────────────────────────────────────────────
-    // Wait for the compositor's Wayland socket to be ready, then launch the
-    // configured shell command as a child process with WAYLAND_DISPLAY set.
+    // ── Spawn: --launch / --desktop task ─────────────────────────────────────
+    // Resolve the effective launch command and any preset env vars, then wait
+    // for the compositor's Wayland socket to be ready and spawn the child.
     // When the child exits, send on shutdown_tx to stop the web server gracefully.
-    let _shutdown_keep_alive = if let Some(launch_cmd) = args.launch.clone() {
+    let effective_launch: Option<(String, &'static [(&'static str, &'static str)])> =
+        match (&args.desktop, &args.launch) {
+            (Some(preset), Some(cmd)) => Some((cmd.clone(), preset.env_vars())),
+            (Some(preset), None) => Some((preset.default_launch_cmd().to_string(), preset.env_vars())),
+            (None, Some(cmd)) => Some((cmd.clone(), &[])),
+            (None, None) => None,
+        };
+
+    let _shutdown_keep_alive = if let Some((launch_cmd, preset_env)) = effective_launch {
         tokio::task::spawn_blocking(move || {
             let socket_name = match socket_name_rx.recv() {
                 Ok(s) => s,
@@ -400,13 +533,15 @@ async fn main() -> Result<()> {
             let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
                 .unwrap_or_else(|_| "/tmp".to_string());
             tracing::info!(cmd = %launch_cmd, wayland_display = %socket_name, "Launching client");
-            let status = std::process::Command::new("/bin/sh")
-                .args(["-c", &launch_cmd])
+            let mut cmd = std::process::Command::new("/bin/sh");
+            cmd.args(["-c", &launch_cmd])
                 .env("WAYLAND_DISPLAY", &socket_name)
                 .env("XDG_RUNTIME_DIR", &runtime_dir)
-                .env_remove("DISPLAY")
-                .status();
-            match status {
+                .env_remove("DISPLAY");
+            for (key, val) in preset_env {
+                cmd.env(key, val);
+            }
+            match cmd.status() {
                 Ok(s) => tracing::info!(cmd = %launch_cmd, status = %s, "Launched client exited; shutting down"),
                 Err(e) => tracing::error!(cmd = %launch_cmd, "Failed to launch client: {e:#}"),
             }

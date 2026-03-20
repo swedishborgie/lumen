@@ -6,13 +6,13 @@ case "$1" in
         # Create /etc/lumen/ config directory if it doesn't exist
         if [ ! -d /etc/lumen ]; then
             mkdir -p /etc/lumen
-            chmod 750 /etc/lumen
+            chmod 755 /etc/lumen
         fi
 
         # Install example config only if not already present
         if [ ! -f /etc/lumen/example.env ]; then
             cp /usr/share/lumen/example.env /etc/lumen/example.env
-            chmod 640 /etc/lumen/example.env
+            chmod 644 /etc/lumen/example.env
         fi
 
         echo ""
@@ -20,8 +20,14 @@ case "$1" in
         echo "║              Lumen — Getting Started                     ║"
         echo "╠══════════════════════════════════════════════════════════╣"
         echo "║  1. Create a config file for the user you want to run:  ║"
+        echo "║     System-wide (any user):                              ║"
         echo "║     cp /etc/lumen/example.env /etc/lumen/<username>.env  ║"
         echo "║     nano /etc/lumen/<username>.env                       ║"
+        echo "║                                                          ║"
+        echo "║     Or per-user (overrides system config):               ║"
+        echo "║     mkdir -p ~/.config/lumen                             ║"
+        echo "║     cp /etc/lumen/example.env ~/.config/lumen/env        ║"
+        echo "║     nano ~/.config/lumen/env                             ║"
         echo "║                                                          ║"
         echo "║  2. Start the service:                                   ║"
         echo "║     systemctl start lumen@<username>                     ║"

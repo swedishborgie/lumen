@@ -38,6 +38,7 @@ bytes = "1"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-journald = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
@@ -61,6 +62,7 @@ lumen-gamepad    = { path = "crates/lumen-gamepad" }
 tokio            = { workspace = true }
 tracing          = { workspace = true }
 tracing-subscriber = { workspace = true }
+tracing-journald = { workspace = true }
 anyhow           = { workspace = true }
 base64           = { workspace = true }
 serde_json       = { workspace = true }
@@ -82,7 +84,7 @@ workspace = true
 [package.metadata.deb]
 maintainer = "Lumen Contributors"
 extended-description = "A Wayland compositor that streams the desktop to browsers via WebRTC."
-depends = "$auto"
+depends = "$auto, labwc, foot"
 section = "x11"
 priority = "optional"
 maintainer-scripts = "pkgs/debian/"
@@ -98,17 +100,27 @@ post_install_script = """
 set -e
 if [ ! -d /etc/lumen ]; then
     mkdir -p /etc/lumen
-    chmod 750 /etc/lumen
+    chmod 755 /etc/lumen
 fi
 if [ ! -f /etc/lumen/example.env ]; then
     cp /usr/share/lumen/example.env /etc/lumen/example.env
-    chmod 640 /etc/lumen/example.env
+    chmod 644 /etc/lumen/example.env
 fi
 echo ""
 echo "Lumen installed. To get started:"
-echo "  cp /etc/lumen/example.env /etc/lumen/<username>.env"
-echo "  systemctl start lumen@<username>"
-echo "  systemctl enable lumen@<username>  # optional: autostart on boot"
+echo ""
+echo "  System-wide config (any user):"
+echo "    cp /etc/lumen/example.env /etc/lumen/<username>.env"
+echo "    nano /etc/lumen/<username>.env"
+echo ""
+echo "  Or per-user config (overrides system config):"
+echo "    mkdir -p ~/.config/lumen"
+echo "    cp /etc/lumen/example.env ~/.config/lumen/env"
+echo "    nano ~/.config/lumen/env"
+echo ""
+echo "  Start the service:"
+echo "    systemctl start lumen@<username>"
+echo "    systemctl enable lumen@<username>  # optional: autostart on boot"
 echo ""
 """
 assets = [
@@ -123,3 +135,7 @@ assets = [
     { source = "pkgs/lumen@.service", dest = "/lib/systemd/system/lumen@.service", mode = "644" },
     { source = "pkgs/example.env", dest = "/usr/share/lumen/example.env", mode = "644" },
 ]
+
+[package.metadata.generate-rpm.requires]
+labwc = "*"
+foot = "*"

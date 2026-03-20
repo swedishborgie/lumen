@@ -21,6 +21,9 @@ All options accept both a `--flag` and a `LUMEN_*` environment variable.
 
 | Flag | Env Var | Default | Description |
 |------|---------|---------|-------------|
+| `--log-output` | `LUMEN_LOG_OUTPUT` | `stderr` | Log output destination. Values: `stderr`, `journald`, `file:/path/to/log` |
+| `--syslog-identifier` | `LUMEN_SYSLOG_IDENTIFIER` | *(binary name)* | Syslog identifier used when logging to journald (e.g. `lumen@alice` for the systemd unit instance) |
+| `--desktop` | `LUMEN_DESKTOP` | *(none)* | Named desktop environment preset: `labwc` or `kde`. Sets a default launch command and required environment variables. Can be combined with `--launch` to override just the command while keeping preset env vars. |
 | `--bind-addr` | `LUMEN_BIND` | `0.0.0.0:8080` | HTTP bind address |
 | `--width` | `LUMEN_WIDTH` | `1920` | Display width |
 | `--height` | `LUMEN_HEIGHT` | `1080` | Display height |
@@ -46,7 +49,7 @@ All options accept both a `--flag` and a `LUMEN_*` environment variable.
 | `--auth-oauth2-client-secret` | `LUMEN_AUTH_OAUTH2_CLIENT_SECRET` | *(required for oauth2)* | OAuth2 client secret |
 | `--auth-oauth2-redirect-uri` | `LUMEN_AUTH_OAUTH2_REDIRECT_URI` | *(required for oauth2)* | Full callback URL, e.g. `http://localhost:8080/auth/callback` |
 | `--auth-oauth2-subject` | `LUMEN_AUTH_OAUTH2_SUBJECT` | *(required for oauth2)* | Expected `sub` claim in the ID token |
-| `--launch` | `LUMEN_LAUNCH` | *(none)* | Shell command to launch as a Wayland client once the compositor socket is ready (passed to `/bin/sh -c`) |
+| `--launch` | `LUMEN_LAUNCH` | *(none)* | Shell command to launch as a Wayland client once the compositor socket is ready (passed to `/bin/sh -c`). When `--desktop` is also set, this overrides only the launch command; the preset's required environment variables are still applied. Available presets: `labwc` (lightweight wlroots-based compositor; default command: `labwc`) and `kde` (KDE Plasma via `dbus-run-session startplasma-wayland`; sets `QT_QPA_PLATFORM=wayland`, `XDG_CURRENT_DESKTOP=KDE`, `XDG_SESSION_TYPE=wayland`, and other required KDE env vars). |
 | `--tls-cert` | `LUMEN_TLS_CERT` | *(none)* | Path to a PEM-encoded TLS certificate chain (enables HTTPS when combined with `--tls-key`) |
 | `--tls-key` | `LUMEN_TLS_KEY` | *(none)* | Path to a PEM-encoded TLS private key (must be provided together with `--tls-cert`) |
 

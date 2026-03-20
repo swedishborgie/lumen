@@ -89,6 +89,8 @@ All options can be set via CLI flags or environment variables.
 
 | CLI Flag | Environment Variable | Default | Description |
 |----------|----------------------|---------|-------------|
+| `--log-output` | `LUMEN_LOG_OUTPUT` | `stderr` | Log output destination: `stderr` (default), `journald`, or `file:/path/to/log` |
+| `--syslog-identifier` | `LUMEN_SYSLOG_IDENTIFIER` | *(binary name)* | Syslog identifier for journald output; set to systemd unit instance name (e.g. `lumen@alice`) |
 | `--bind-addr` | `LUMEN_BIND` | `0.0.0.0:8080` | HTTP/WebSocket bind address |
 | `--width` | `LUMEN_WIDTH` | `1920` | Output width in pixels |
 | `--height` | `LUMEN_HEIGHT` | `1080` | Output height in pixels |
@@ -114,6 +116,7 @@ All options can be set via CLI flags or environment variables.
 | `--auth-oauth2-client-secret` | `LUMEN_AUTH_OAUTH2_CLIENT_SECRET` | *(required for oauth2)* | OAuth2 client secret |
 | `--auth-oauth2-redirect-uri` | `LUMEN_AUTH_OAUTH2_REDIRECT_URI` | *(required for oauth2)* | Full callback URL, e.g. `http://localhost:8080/auth/callback` |
 | `--auth-oauth2-subject` | `LUMEN_AUTH_OAUTH2_SUBJECT` | *(required for oauth2)* | Expected `sub` claim in the validated ID token |
+| `--desktop` | `LUMEN_DESKTOP` | *(none)* | Named desktop environment preset: `labwc` or `kde`; sets default launch command and required env vars |
 | `--launch` | `LUMEN_LAUNCH` | *(none)* | Shell command to launch as a Wayland client once the compositor is ready (passed to `/bin/sh -c`) |
 | `--tls-cert` | `LUMEN_TLS_CERT` | *(none)* | Path to a PEM-encoded TLS certificate chain (enables HTTPS when combined with `--tls-key`) |
 | `--tls-key` | `LUMEN_TLS_KEY` | *(none)* | Path to a PEM-encoded TLS private key (must be provided together with `--tls-cert`) |

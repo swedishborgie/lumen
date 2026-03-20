@@ -65,9 +65,11 @@ These crates are available to all crates in the workspace.
 | Crate | Version | Purpose | Documentation |
 |-------|---------|---------|---------------|
 | [`axum`](https://crates.io/crates/axum) | 0.8 | Ergonomic, async HTTP framework built on Tokio and `hyper`; handles HTTP routing, WebSocket upgrades, and request/response handling | [docs.rs/axum](https://docs.rs/axum) |
+| [`axum-server`](https://crates.io/crates/axum-server) | 0.8 | TLS-capable Axum server integration; provides HTTPS via `rustls` when `--tls-cert` and `--tls-key` are configured | [docs.rs/axum-server](https://docs.rs/axum-server) |
 | [`tower-http`](https://crates.io/crates/tower-http) | 0.6 | Tower middleware for HTTP services; provides static file serving (`ServeDir`), CORS headers, and request tracing | [docs.rs/tower-http](https://docs.rs/tower-http) |
-| [`pam`](https://crates.io/crates/pam) | 0.7 | Safe Rust bindings to the system PAM (Pluggable Authentication Modules) library; used to validate credentials in Basic auth mode | [docs.rs/pam](https://docs.rs/pam) |
-| [`openidconnect`](https://crates.io/crates/openidconnect) | 3.x | Full OpenID Connect client: OIDC discovery, authorization URL construction, PKCE, authorization code exchange, and ID token signature validation via JWKS | [docs.rs/openidconnect](https://docs.rs/openidconnect) |
+| [`rust-embed`](https://crates.io/crates/rust-embed) | 8 | Embeds browser client assets (HTML/JS/CSS) into the binary at compile time via the `#[derive(RustEmbed)]` macro; in debug builds falls back to serving files from disk | [docs.rs/rust-embed](https://docs.rs/rust-embed) |
+| [`pam`](https://crates.io/crates/pam) | 0.8 | Safe Rust bindings to the system PAM (Pluggable Authentication Modules) library; used to validate credentials in Basic auth mode | [docs.rs/pam](https://docs.rs/pam) |
+| [`openidconnect`](https://crates.io/crates/openidconnect) | 4.x | Full OpenID Connect client: OIDC discovery, authorization URL construction, PKCE, authorization code exchange, and ID token signature validation via JWKS | [docs.rs/openidconnect](https://docs.rs/openidconnect) |
 | [`cookie`](https://crates.io/crates/cookie) | 0.18 | HTTP cookie parsing and serialization (`Set-Cookie` / `Cookie` headers); used to manage the `lumen_session` cookie in OAuth2 mode | [docs.rs/cookie](https://docs.rs/cookie) |
 | [`uuid`](https://crates.io/crates/uuid) | 1.x | UUID generation (v4); used to create unique session tokens for the OAuth2 in-memory session store | [docs.rs/uuid](https://docs.rs/uuid) |
 

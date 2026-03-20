@@ -56,6 +56,14 @@ pub struct CompositorConfig {
     pub scale: f64,
     pub target_fps: f64,
     pub render_node: Option<PathBuf>,  // DRI device path; None = CPU rendering
+    pub inner_display: Option<String>, // Wayland socket name for clipboard bridge
+    /// When `Some` and count is zero, frame rendering is skipped so the compositor idles;
+    /// `None` means always render.
+    pub peer_count: Option<Arc<AtomicUsize>>,
+    /// Optional channel to receive the Wayland socket name once the compositor has created it.
+    /// Sent exactly once, immediately after the socket is bound. Use this to trigger actions
+    /// (e.g. launching a client) that require the socket to exist.
+    pub socket_name_tx: Option<std::sync::mpsc::SyncSender<String>>,
 }
 
 pub struct CapturedFrame {
@@ -65,20 +73,41 @@ pub struct CapturedFrame {
     pub width: u32,
     pub height: u32,
     pub pts_ms: u64,                   // Presentation timestamp (milliseconds)
+    /// Wall-clock instant at which this frame was captured.
+    ///
+    /// Carried through the encoding pipeline so that `push_video` can pass the true capture
+    /// time to `writer.write()`. str0m embeds this in RTCP Sender Reports to establish the
+    /// NTP↔RTP mapping for A/V synchronisation — using `Instant::now()` at send time instead
+    /// would shift the video RTCP SR forward by encode latency, causing the browser to delay
+    /// audio by that amount.
+    pub captured_at: Instant,
 }
 
 pub enum InputEvent {
     KeyboardKey  { scancode: u32, state: u32 },   // state: 0=release, 1=press
     PointerMotion { x: f64, y: f64 },
     PointerButton { btn: u32, state: u32 },       // BTN_LEFT=0x110, etc.
-    PointerAxis   { x: f64, y: f64 },             // Scroll delta
+    PointerAxis {
+        x: f64,
+        y: f64,
+        source: Option<String>,   // "wheel" for mouse wheel, "continuous" for touchpad
+        v120_x: Option<i32>,      // High-resolution horizontal scroll (v120 units)
+        v120_y: Option<i32>,      // High-resolution vertical scroll (v120 units)
+    },
     ClipboardWrite { text: String },
+
+    // Dispatched by main.rs to lumen-gamepad; never injected into the Smithay seat.
+    GamepadConnected { index: u8, name: String, num_axes: u8, num_buttons: u8 },
+    GamepadDisconnected { index: u8 },
+    GamepadButton { index: u8, button: u8, value: f32, pressed: bool },
+    GamepadAxis { index: u8, axis: u8, value: f32 },
 }
 
 pub enum CursorEvent {
     Default,
+    Named(String),  // CSS cursor name e.g. "pointer", "text"
     Hidden,
-    Image { width: u32, height: u32, hotspot_x: u32, hotspot_y: u32, rgba: Bytes },
+    Image { width: u32, height: u32, hotspot_x: i32, hotspot_y: i32, rgba: Bytes },
 }
 
 pub enum ClipboardEvent {

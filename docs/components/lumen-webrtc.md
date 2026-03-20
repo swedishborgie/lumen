@@ -23,12 +23,17 @@ A cheaply cloneable (`Arc` internally) manager for all active peer sessions.
 pub struct SessionManager { ... }  // Clone (Arc)
 
 impl SessionManager {
-    pub fn new(config: SessionConfig) -> Self;
+    pub fn new(config: SessionConfig) -> Arc<Self>;
 
     // Create a new session from an SDP offer; returns (session_id, answer_sdp)
     pub async fn create_session(&self, offer_sdp: &str) -> Result<(SessionId, String)>;
 
     pub async fn get_session(&self, id: &SessionId) -> Option<Arc<Mutex<WebRtcSession>>>;
+
+    // Remove a session by ID, decrementing the peer count. Called by the
+    // per-session drive task in lumen-web when drive() returns SessionState::Closed.
+    pub async fn remove_session(&self, id: &SessionId);
+
     pub async fn all_sessions(&self) -> Vec<Arc<Mutex<WebRtcSession>>>;
 
     // Send a data channel message to all connected peers

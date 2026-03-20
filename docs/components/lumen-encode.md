@@ -53,10 +53,18 @@ pub struct EncoderConfig {
 }
 ```
 
+### `probe_vaapi()`
+
+```rust
+pub fn probe_vaapi(config: &EncoderConfig) -> bool
+```
+
+Returns `true` if a VA-API encoder can be successfully initialized with the given config. Used by the main application to detect hardware acceleration availability at startup. Does not affect the encoder selection; `create_encoder()` always probes VA-API automatically.
+
 ### Factory Function
 
 ```rust
-pub fn create_encoder(config: EncoderConfig) -> Result<Box<dyn VideoEncoder>>
+pub fn create_encoder(config: &EncoderConfig) -> Result<Box<dyn VideoEncoder>>
 ```
 
 Attempts to initialize the VA-API encoder when `render_node` is provided. If that fails (driver not available, unsupported GPU, etc.) it falls back to the x264 software encoder. If no `render_node` is given, the software encoder is used directly.

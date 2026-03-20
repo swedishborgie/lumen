@@ -43,8 +43,8 @@ pub struct TurnServerConfig {
     pub min_relay_port: u16,    // Default: 50000
     pub max_relay_port: u16,    // Default: 50010
     pub realm: String,          // Default: "lumen.local"
-    pub username: String,       // Default: "lumen"
-    pub password: String,       // Default: "lumen"
+    pub username: String,       // No meaningful default — must be set by the caller
+    pub password: String,       // No meaningful default — must be set by the caller
 }
 ```
 

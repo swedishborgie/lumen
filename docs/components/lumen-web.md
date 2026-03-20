@@ -57,7 +57,6 @@ pub enum AuthConfig {
 ```rust
 pub struct WebServerConfig {
     pub bind_addr: SocketAddr,
-    pub static_dir: PathBuf,
     pub session_manager: Arc<SessionManager>,
     pub input_tx: mpsc::Sender<InputEvent>,              // → compositor input forwarding task
     pub keyframe_flag: Arc<AtomicBool>,                  // → encoder: force keyframe
@@ -65,16 +64,33 @@ pub struct WebServerConfig {
     pub last_clipboard_json: Arc<Mutex<Option<Vec<u8>>>>, // cached clipboard state
     pub resize_tx: mpsc::Sender<(u32, u32)>,             // → resize coordinator task
     pub auth: AuthConfig,
+    pub ice_servers: Vec<IceServerConfig>,               // ICE server list sent to browser via /api/config
+    pub shutdown_signal: Option<tokio::sync::oneshot::Receiver<()>>, // optional graceful-shutdown signal
+    pub tls_cert: Option<PathBuf>,                       // PEM TLS certificate chain; HTTPS when both tls_cert and tls_key are set
+    pub tls_key: Option<PathBuf>,                        // PEM TLS private key; must be provided with tls_cert
 }
 ```
+
+### `IceServerConfig`
+
+```rust
+pub struct IceServerConfig {
+    pub urls: String,
+    pub username: Option<String>,   // omitted if None
+    pub credential: Option<String>, // omitted if None
+}
+```
+
+ICE server descriptor sent to the browser via `/api/config`. STUN entries have only `urls`; TURN entries also include `username` and `credential`.
 
 ## HTTP Routes
 
 | Route | Handler | Description |
 |-------|---------|-------------|
 | `GET /ws/signal` | `ws_handler` | WebSocket upgrade for WebRTC signaling |
+| `GET /api/config` | `config_handler` | Returns ICE server configuration as JSON for the browser client |
 | `GET /auth/callback` | `oauth2::callback_handler` | OIDC authorization code callback *(OAuth2 mode only)* |
-| `GET /*` | Static file server | Serves files from `static_dir` |
+| `GET /*` | Static file server | Serves embedded browser client assets (HTML/JS/CSS) |
 
 CORS and request tracing middleware are applied to all routes via `tower-http`.
 
@@ -297,9 +313,11 @@ A deduplication check in the compositor prevents the clipboard from echoing back
 | Library | Purpose |
 |---------|---------|
 | `axum` 0.8 | Async HTTP/WebSocket framework |
-| `tower-http` 0.6 | Middleware: static file serving, CORS, request tracing |
-| `pam` 0.7 | PAM authentication for Basic mode |
-| `openidconnect` 3.x | OIDC discovery, PKCE, token exchange, and ID token validation for OAuth2 mode |
+| `axum-server` 0.8 | TLS-capable Axum server; used when `--tls-cert` and `--tls-key` are configured |
+| `tower-http` 0.6 | Middleware: CORS, request tracing |
+| `rust-embed` 8 | Embeds browser client assets (HTML/JS/CSS) into the binary at compile time; dev builds fall back to reading files from disk |
+| `pam` 0.8 | PAM authentication for Basic mode |
+| `openidconnect` 4.x | OIDC discovery, PKCE, token exchange, and ID token validation for OAuth2 mode |
 | `cookie` 0.18 | Session cookie encoding/decoding for OAuth2 mode |
 | `uuid` 1.x | Session token generation for OAuth2 mode |
 | `tokio` | Async runtime |

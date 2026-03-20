@@ -39,6 +39,7 @@ pub struct AudioConfig {
     pub frame_duration_ms: u32,       // Opus frame size in ms (default: 20)
     pub use_vbr: bool,                // Variable bitrate (default: false)
     pub use_silence_gate: bool,       // Skip silent frames (default: false)
+    pub peer_count: Option<Arc<AtomicUsize>>,  // Active peer count; when Some and zero, encoding is skipped (PCM still drained); None = always encode (default)
 }
 ```
 

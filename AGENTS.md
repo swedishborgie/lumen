@@ -1,9 +1,9 @@
 # Lumen — Agent Instructions
 
-See [`docs/`](./docs/README.md) for full documentation. Key references:
-- [Architecture](./docs/architecture.md)
-- [Component design](./docs/components/)
-- [Third-party libraries](./docs/third-party-libraries.md)
+See [`dev-docs/`](./dev-docs/README.md) for full documentation. Key references:
+- [Architecture](./dev-docs/architecture.md)
+- [Component design](./dev-docs/components/)
+- [Third-party libraries](./dev-docs/third-party-libraries.md)
 
 ---
 
@@ -35,7 +35,7 @@ Crates are **intentionally decoupled** — no crate depends on another crate in 
 - **Everything else** → `tokio::spawn` async tasks.
 - Bridge between async world and compositor: `calloop::channel`. Do not use `tokio::sync` channels to talk to the compositor.
 
-See [architecture threading diagram](./docs/architecture.md#threading-and-execution-model).
+See [architecture threading diagram](./dev-docs/architecture.md#threading-and-execution-model).
 
 ---
 
@@ -47,7 +47,7 @@ See [architecture threading diagram](./docs/architecture.md#threading-and-execut
 - **`Arc<AtomicBool>`** — lock-free keyframe flag; web layer sets, encoder clears.
 - Prefer atomic flags over channels for hot-path signals.
 
-See [channel wiring diagram](./docs/components/main-application.md#channel-wiring).
+See [channel wiring diagram](./dev-docs/components/main-application.md#channel-wiring).
 
 ---
 
@@ -66,7 +66,7 @@ There are two paths — don't conflate them:
 - **GPU path** (`render_node = Some(path)`): `GlesRenderer` → DMA-BUF output → VA-API encoder (zero-copy).
 - **CPU path** (`render_node = None`): `PixmanRenderer` → RGBA `Vec<u8>` → x264 encoder.
 
-When modifying frame handling code, verify the change works for **both** paths. See [rendering paths](./docs/architecture.md#rendering-paths).
+When modifying frame handling code, verify the change works for **both** paths. See [rendering paths](./dev-docs/architecture.md#rendering-paths).
 
 ---
 
@@ -78,7 +78,7 @@ When modifying frame handling code, verify the change works for **both** paths. 
 - The encoder loop skips encoding when `peer_count == 0`.
 - Keyframes are forced on new peer connections and after resize.
 
-See [lumen-encode](./docs/components/lumen-encode.md).
+See [lumen-encode](./dev-docs/components/lumen-encode.md).
 
 ---
 
@@ -89,7 +89,7 @@ See [lumen-encode](./docs/components/lumen-encode.md).
 - Input events from the browser arrive via data channel JSON, collected via `drain_input_events()`.
 - State replay on connect: new data channels receive the last cursor + clipboard JSON immediately.
 
-See [lumen-webrtc](./docs/components/lumen-webrtc.md) and [lumen-web signaling flow](./docs/components/lumen-web.md#signaling-flow).
+See [lumen-webrtc](./dev-docs/components/lumen-webrtc.md) and [lumen-web signaling flow](./dev-docs/components/lumen-web.md#signaling-flow).
 
 ---
 
@@ -123,7 +123,7 @@ See [lumen-webrtc](./docs/components/lumen-webrtc.md) and [lumen-web signaling f
 
 - Vanilla JavaScript, no build step. Files in `web/` are served directly by the Axum static file server.
 - `LumenClient` (`lumen-client.js`) owns all WebRTC logic. `LumenUI` (`lumen-ui.js`) owns DOM interaction.
-- Data channel messages are JSON. Match the schema in [lumen-webrtc data channel docs](./docs/components/lumen-webrtc.md#data-channel-messages).
+- Data channel messages are JSON. Match the schema in [lumen-webrtc data channel docs](./dev-docs/components/lumen-webrtc.md#data-channel-messages).
 - Key mapping table (`KEY_MAP`) maps DOM key names to Linux evdev scancodes — extend it for new keys.
 
 ---

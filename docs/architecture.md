@@ -1,223 +1,128 @@
-# Lumen — Architecture
+---
+title: Architecture
+layout: default
+nav_order: 2
+description: "High-level architecture of Lumen: how the browser connects to the server and how the internal pieces fit together."
+---
 
-This document describes the overall system architecture of Lumen: how its components are structured, how they communicate, and how data flows from the compositor to the browser.
+# Architecture
+{: .no_toc }
 
-## Crate Dependency Graph
+<details open markdown="block">
+  <summary>On this page</summary>
+  {: .text-delta }
+- TOC
+{:toc}
+</details>
 
-Lumen is organized as a Cargo workspace. The main binary depends on all five specialized crates; the crates themselves are intentionally decoupled from one another.
+---
 
-```mermaid
-graph TD
-    main["lumen (binary)"]
-    comp["lumen-compositor"]
-    audio["lumen-audio"]
-    enc["lumen-encode"]
-    webrtc["lumen-webrtc"]
-    web["lumen-web"]
-    turn["lumen-turn"]
-    gamepad["lumen-gamepad"]
+## Browser ↔ Server Overview
 
-    main --> comp
-    main --> audio
-    main --> enc
-    main --> webrtc
-    main --> web
-    main --> turn
-    main --> gamepad
-```
+A browser connects to Lumen using two distinct connections:
 
-## Component Overview
+1. **WebSocket** (TCP) — used during setup to negotiate the WebRTC connection (signaling).
+2. **WebRTC** (UDP) — once connected, all media and input flow over encrypted UDP.
+
+The embedded TURN server acts as a relay so the stream works across NAT without any external infrastructure.
 
 ```mermaid
 graph LR
-    subgraph Server
-        Compositor["lumen-compositor\n(Wayland compositor)"]
-        Encoder["lumen-encode\n(H.264 encoder)"]
-        Audio["lumen-audio\n(PulseAudio + Opus)"]
-        WebRTC["lumen-webrtc\n(WebRTC sessions)"]
-        Web["lumen-web\n(HTTP + WS signaling)"]
+    Browser["🌐 Browser"]
+
+    subgraph lumen["Lumen Server"]
+        Web["lumen-web\nHTTP · WebSocket"]
+        WebRTC["lumen-webrtc\nWebRTC Sessions"]
+        TURN["lumen-turn\nTURN Relay"]
     end
 
-    subgraph Browser
-        JS["JavaScript client\n(WebRTC + data channel)"]
-    end
-
-    Compositor -->|"CapturedFrame\n(broadcast channel)"| Encoder
-    Encoder -->|"EncodedFrame\n(broadcast channel)"| WebRTC
-    Audio -->|"OpusPacket\n(mpsc channel)"| WebRTC
-    Compositor -->|"CursorEvent\n(broadcast channel)"| Web
-    Compositor -->|"ClipboardEvent\n(broadcast channel)"| Web
-    WebRTC <-->|"SRTP (RTP/UDP)\nData Channel"| JS
-    JS <-->|"WebSocket\n(SDP + ICE)"| Web
-    Web -->|"InputEvent\n(mpsc channel)"| Compositor
-    Web -->|"Resize\n(mpsc channel)"| Compositor
-    Web <-->|"Session control"| WebRTC
+    Browser -- "① HTTP\nServes the UI" --> Web
+    Browser -- "② WebSocket\nSDP + ICE signaling" --> Web
+    Browser -- "③ SRTP/UDP\nH.264 video + Opus audio" --> WebRTC
+    Browser -. "④ UDP (if NAT)\nRelayed media" .-> TURN
+    WebRTC -. "Relay" .-> TURN
 ```
 
-## Threading and Execution Model
+---
 
-Different parts of the system require different concurrency models. The compositor and encoders are blocking and live on dedicated threads; networking and coordination are async.
+## Internal Pipeline
+
+Inside the server, data flows in two directions simultaneously — video and audio travel from the server to the browser, while input events travel from the browser back to the compositor.
 
 ```mermaid
-graph TD
-    subgraph OS Thread
-        CT["Compositor\ncalloop event loop\n(blocking)"]
+graph LR
+    Apps["Wayland Apps\nlabwc · Firefox · etc."]
+
+    subgraph lumen["Lumen Server"]
+        Compositor["lumen-compositor\nWayland Compositor"]
+        Encoder["lumen-encode\nH.264 Encoder"]
+        Audio["lumen-audio\nAudio Capture"]
+        WebRTC["lumen-webrtc\nWebRTC Sessions"]
+        Web["lumen-web\nHTTP · Signaling"]
     end
 
-    subgraph Tokio Blocking Tasks
-        AT["Audio Capture\nPulseAudio loop\n(spawn_blocking)"]
-        ET["Encoder\nH.264 encode loop\n(spawn_blocking)"]
-    end
+    Browser["🌐 Browser"]
 
-    subgraph Tokio Async Tasks
-        IF["Input Forwarding"]
-        RC["Resize Coordinator"]
-        VF["Video Fan-Out"]
-        AF["Audio Fan-Out"]
-        CF["Cursor Fan-Out"]
-        ClF["Clipboard Fan-Out"]
-        WS["Web Server\n(Axum)"]
-        DS["Per-Session Drive Tasks"]
-    end
-
-    CT <-->|"calloop channel"| IF
-    AT -->|"mpsc"| AF
-    ET -->|"broadcast"| VF
-    VF --> DS
-    AF --> DS
-    CF --> DS
-    ClF --> DS
-    WS --> DS
-    IF --> CT
-    RC --> CT
-    RC --> ET
+    Apps -- "Wayland" --> Compositor
+    Compositor -- "Raw frames" --> Encoder
+    Encoder -- "H.264" --> WebRTC
+    Audio -- "Opus" --> WebRTC
+    WebRTC -- "SRTP/UDP" --> Browser
+    Browser -- "Keyboard · Mouse\nClipboard" --> WebRTC
+    WebRTC -- "Input events" --> Compositor
+    Browser -- "WebSocket\nSignaling" --> Web
+    Web -- "Session control" --> WebRTC
 ```
 
-## Full Data Flow
+---
 
-### Video Path (Compositor → Browser)
+## How a Connection Is Established
 
-```mermaid
-sequenceDiagram
-    participant C as Compositor
-    participant E as Encoder
-    participant VF as Video Fan-Out
-    participant W as WebRtcSession
-    participant B as Browser
-
-    C->>C: Render frame (GPU or CPU)
-    C->>E: CapturedFrame (DMA-BUF or RGBA)
-    E->>E: Encode H.264 (VA-API or x264)
-    E->>VF: EncodedFrame (Annex-B NAL units)
-    VF->>W: push_video(frame)
-    W->>W: Packetize into RTP (90 kHz clock)
-    W->>B: RTP over SRTP/UDP
-    B->>B: Decode + render in <video>
-```
-
-### Input Path (Browser → Compositor)
-
-```mermaid
-sequenceDiagram
-    participant B as Browser
-    participant W as WebRtcSession
-    participant IF as Input Forwarding Task
-    participant C as Compositor
-
-    B->>W: Data channel message (JSON InputEvent)
-    W->>W: drain_input_events()
-    W->>IF: InputEvent (keyboard/pointer/clipboard)
-    IF->>C: InputSender::send(event)
-    C->>C: inject_input() → Smithay seat dispatch
-    C->>C: Focused Wayland surface receives event
-```
-
-### WebRTC Signaling (Browser ↔ Server)
-
-```mermaid
-sequenceDiagram
-    participant B as Browser
-    participant WS as WebSocket (lumen-web)
-    participant SM as SessionManager
-    participant S as WebRtcSession
-
-    B->>WS: Connect to /ws/signal
-    B->>WS: {"type":"offer","sdp":"..."}
-    WS->>SM: create_session(offer_sdp)
-    SM->>S: new WebRtcSession
-    S-->>SM: answer SDP
-    SM-->>WS: (session_id, answer_sdp)
-    WS-->>B: {"type":"answer","sdp":"...","session_id":"..."}
-    loop ICE trickle
-        B->>WS: {"type":"candidate","candidate":"..."}
-        WS->>S: add_remote_candidate()
-    end
-    B-->S: DTLS handshake + SRTP setup (via UDP)
-    Note over B,S: Media flows directly over SRTP/UDP
-```
-
-### Cursor Synchronization
-
-```mermaid
-sequenceDiagram
-    participant C as Compositor
-    participant CF as Cursor Fan-Out Task
-    participant W as WebRtcSession
-    participant B as Browser
-
-    C->>CF: CursorEvent (Image / Default / Hidden)
-    CF->>CF: Serialize to JSON, cache as last_cursor_json
-    CF->>W: push_dc_message(cursor_json)
-    W->>B: Data channel message
-
-    Note over W,B: On new connection
-    W->>W: DC opens
-    W->>CF: Request last_cursor_json replay
-    CF->>W: push_dc_message(last_cursor_json)
-    W->>B: Current cursor state immediately
-```
-
-## Communication Channels Summary
-
-| Channel | Type | Producer | Consumer(s) | Payload |
-|---------|------|----------|-------------|---------|
-| Captured frames | `tokio::broadcast` | Compositor | Encoder | `CapturedFrame` |
-| Encoded frames | `tokio::broadcast` | Encoder | Video fan-out | `EncodedFrame` |
-| Audio packets | `tokio::mpsc` | Audio capture | Audio fan-out | `OpusPacket` |
-| Cursor events | `tokio::broadcast` | Compositor | Cursor fan-out | `CursorEvent` |
-| Clipboard events | `tokio::broadcast` | Compositor | Clipboard fan-out | `ClipboardEvent` |
-| Input events | `tokio::mpsc` | Web/WebRTC drive tasks | Input forwarding task | `InputEvent` |
-| Resize | `tokio::mpsc` | Web server | Resize coordinator | `(u32, u32)` |
-| Compositor commands | `calloop::channel` | Async tasks | Compositor thread | `InputEvent`, resize |
-
-## Key Protocols
-
-| Protocol | Layer | Purpose |
-|---------|-------|---------|
-| **Wayland** | IPC (Unix socket) | Window manager ↔ application communication |
-| **WebSocket** | TCP/HTTP upgrade | SDP offer/answer and ICE candidate exchange |
-| **ICE** | UDP | NAT traversal and peer connectivity establishment |
-| **DTLS** | UDP | Key exchange for SRTP |
-| **SRTP** | UDP | Encrypted RTP media transport |
-| **RTP** (H.264, RFC 6184) | SRTP | Video frame packetization and delivery |
-| **RTP** (Opus, RFC 7587) | SRTP | Audio packet delivery |
-| **WebRTC Data Channel** | SCTP over DTLS | Input events, cursor updates, clipboard sync |
-
-## Rendering Paths
-
-Lumen supports two rendering paths depending on whether a DRI render node is configured:
+When a browser clicks **Connect**, it goes through a short signaling handshake before media starts flowing:
 
 ```mermaid
 flowchart TD
-    Config{"DRI node\nconfigured?"}
-    Config -->|Yes| GPU["GPU Path\nGBM + EGL + GlesRenderer\nOutput: DMA-BUF (ARGB8888)"]
-    Config -->|No| CPU["CPU Path\nPixmanRenderer\nOutput: RGBA buffer (Vec<u8>)"]
-
-    GPU -->|"DMA-BUF (zero-copy)"| VAAPI["VA-API Encoder\nFFmpeg filter graph\nARGB → NV12 → H.264"]
-    CPU -->|"RGBA buffer"| x264["x264 Encoder\nRGBA → I420 → H.264\n(ultrafast/zerolatency)"]
-
-    VAAPI --> Out["EncodedFrame\n(Annex-B H.264)"]
-    x264 --> Out
+    A([Browser clicks Connect]) --> B[Browser connects to /ws/signal]
+    B --> C[Browser sends SDP offer\ndescribing its media capabilities]
+    C --> D[Lumen creates a WebRTC session\nand replies with SDP answer]
+    D --> E[Browser and server exchange\nICE candidates over WebSocket]
+    E --> F{Can they reach\neach other directly?}
+    F -- Yes --> G[Direct UDP connection\nDTLS handshake → SRTP set up]
+    F -- No --> H[Traffic relayed through\nembedded TURN server]
+    G --> I([H.264 video + Opus audio\nflow to browser over SRTP/UDP])
+    H --> I
 ```
 
-The GPU path avoids any CPU memory copy: the compositor renders into a GPU-allocated DMA-BUF, the FFmpeg filter graph maps that buffer directly into the VA-API encoder pipeline, and H.264 NAL units come out the other side.
+Once the SRTP connection is established, the WebSocket is no longer in the media path — all video, audio, and input flow directly over UDP.
+
+---
+
+## Components at a Glance
+
+| Component | Role |
+|-----------|------|
+| **lumen-compositor** | Wayland compositor built on [Smithay](https://github.com/Smithay/smithay). Runs Wayland apps, captures frames, and injects input events. |
+| **lumen-encode** | H.264 encoder. Uses VA-API (GPU, zero-copy) when available; falls back to x264 (software) automatically. |
+| **lumen-audio** | Captures system audio from a PulseAudio monitor source and encodes it to Opus. |
+| **lumen-webrtc** | Manages WebRTC sessions via [str0m](https://github.com/algesten/str0m). Handles ICE, DTLS, SRTP, and RTP packetization. |
+| **lumen-web** | Axum HTTP server that serves the browser client and handles WebSocket signaling. |
+| **lumen-turn** | Embedded TURN/STUN relay. Ensures streams work across NAT without an external relay service. |
+| **lumen-gamepad** | Creates virtual input devices via `uinput` so browser gamepads appear as standard Linux input devices. |
+| **web/** | Vanilla JavaScript browser client. Handles WebRTC setup, video rendering, and input capture. |
+
+---
+
+## Rendering Paths
+
+Lumen automatically selects a rendering path based on whether a GPU render node is available:
+
+```mermaid
+flowchart LR
+    Check{"GPU available?\n(/dev/dri/renderD128)"}
+    Check -- Yes --> GPU["GPU path\nGlesRenderer → DMA-BUF\n→ VA-API encoder\n(zero-copy)"]
+    Check -- No --> CPU["CPU path\nPixmanRenderer → RGBA buffer\n→ x264 encoder\n(software)"]
+    GPU --> Out["H.264 bitstream\nto WebRTC"]
+    CPU --> Out
+```
+
+The GPU path avoids any CPU memory copy and is strongly preferred. The CPU path works on any machine but uses significantly more CPU resources.

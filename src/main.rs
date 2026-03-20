@@ -34,8 +34,8 @@ impl std::str::FromStr for LogOutput {
 /// Authentication mode for the web server.
 #[derive(clap::ValueEnum, Clone, Debug, Default)]
 enum AuthMode {
-    #[default]
     None,
+    #[default]
     Basic,
     Bearer,
     Oauth2,
@@ -148,7 +148,7 @@ struct Args {
 
     // ── Authentication ────────────────────────────────────────────────────────
     /// Authentication mode: none (default), basic (PAM), bearer (preshared token), or oauth2 (OIDC).
-    #[arg(long, env = "LUMEN_AUTH", default_value = "none")]
+    #[arg(long, env = "LUMEN_AUTH", default_value = "basic")]
     auth: AuthMode,
 
     /// [bearer] Preshared token for bearer-token authentication.

@@ -11,8 +11,11 @@ import { CursorManager }     from './ui/cursor.mjs';
 import { InputHandler }      from './ui/input.mjs';
 import { GamepadController } from './ui/gamepad.mjs';
 import { ResizeManager }     from './ui/resize.mjs';
+import { TouchHandler }      from './ui/touch.mjs';
+import { FloatingKeyboard }  from './ui/keyboard-button.mjs';
 import { PerformanceMonitor } from './lumen-perf.mjs';
 import { logger, Level }     from './lumen-debug.mjs';
+import { compositorToDisplayCoords } from './ui/coords.mjs';
 
 export class LumenUI {
   #client;
@@ -30,6 +33,8 @@ export class LumenUI {
   #gamepad;     // GamepadController
   #resize;      // ResizeManager
   #perf;        // PerformanceMonitor
+  #touch;       // TouchHandler | null (only on touch-capable devices)
+  #keyboard;    // FloatingKeyboard | null (only on touch-capable devices)
 
   #audioUnlocked       = false;
   #clipboardDebounceTimer = null;
@@ -93,6 +98,27 @@ export class LumenUI {
     this.#resize  = new ResizeManager(video, videoContainer, client, this.#cursor);
     this.#perf    = new PerformanceMonitor(perfCanvas, client, video);
 
+    // Touch and keyboard support — only on devices that support touch input.
+    if ('ontouchstart' in window) {
+      this.#input.setTouchActive(true);
+      this.#touch = new TouchHandler(
+        videoContainer,
+        video,
+        client,
+        () => this.#input.getMousePos(),
+        (x, y) => {
+          this.#input.setMousePos(x, y);
+          const dp = compositorToDisplayCoords(video, x, y);
+          this.#cursor.moveTo(dp.x, dp.y);
+        },
+      );
+      this.#touch.bind();
+      this.#keyboard = new FloatingKeyboard(client);
+    } else {
+      this.#touch    = null;
+      this.#keyboard = null;
+    }
+
     this.#cursor.init();
     this.#input.bind();
     this.#gamepad.bind();
@@ -142,6 +168,7 @@ export class LumenUI {
         // Re-sync any gamepads that connected before the data channel was open,
         // or that were active during a previous session (reconnect case).
         this.#gamepad.resync();
+        this.#keyboard?.show();
       } else if (state === 'idle') {
         this.#perf.stop();
         this.#gamepad.stop();
@@ -164,6 +191,7 @@ export class LumenUI {
         } else {
           this.#scheduleReconnect();
         }
+        this.#keyboard?.hide();
       }
     });
 

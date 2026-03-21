@@ -13,9 +13,12 @@ export class InputHandler {
   #client;
   #cursor;
   #onUserGesture;
-  #pointerLocked = false;
-  #vMouseX = 0;   // virtual cursor position in compositor pixel space (pointer-lock only)
+  #pointerLocked  = false;
+  #vMouseX = 0;   // virtual cursor position in compositor pixel space
   #vMouseY = 0;
+  /** When true, pointer events with pointerType==='touch' are ignored so the
+   *  TouchHandler can handle them without double-dispatching. */
+  #touchActive = false;
   #handlers = {}; // saved bound handler refs for unbind()
   /** Evdev scancodes of keys currently held down. Used to synthesise key-up
    *  events when the browser window loses focus (e.g. Super triggering GNOME
@@ -103,6 +106,35 @@ export class InputHandler {
     this.#pointerLocked = false;
   }
 
+  /**
+   * Enable or disable touch-event suppression. When enabled, pointer events
+   * with pointerType==='touch' are silently dropped so that TouchHandler can
+   * handle all touch input without double-dispatching.
+   * @param {boolean} active
+   */
+  setTouchActive(active) {
+    this.#touchActive = active;
+  }
+
+  /**
+   * Return the current virtual cursor position in compositor pixel space.
+   * @returns {{ x: number, y: number }}
+   */
+  getMousePos() {
+    return { x: this.#vMouseX, y: this.#vMouseY };
+  }
+
+  /**
+   * Update the virtual cursor position (called by TouchHandler so the two
+   * share a single source of truth for the compositor cursor location).
+   * @param {number} x
+   * @param {number} y
+   */
+  setMousePos(x, y) {
+    this.#vMouseX = x;
+    this.#vMouseY = y;
+  }
+
   // ── private event handlers ────────────────────────────────────────────────────
 
   #handleKeyDown(e) {
@@ -140,6 +172,7 @@ export class InputHandler {
   }
 
   #handlePointerMove(e) {
+    if (e.pointerType === 'touch' && this.#touchActive) return;
     if (this.#pointerLocked) {
       const { scaleX, scaleY, vw, vh } = getDisplayScale(this.#videoEl);
       this.#vMouseX = Math.max(0, Math.min(vw - 1, this.#vMouseX + e.movementX * scaleX));
@@ -149,6 +182,8 @@ export class InputHandler {
       this.#cursor.moveTo(dp.x, dp.y);
     } else {
       const { x, y } = toCompositorCoords(this.#videoEl, e.clientX, e.clientY);
+      this.#vMouseX = x;
+      this.#vMouseY = y;
       this.#client.sendInput({ type: 'pointer_motion', x, y });
       const rect = this.#videoEl.getBoundingClientRect();
       this.#cursor.moveTo(e.clientX - rect.left, e.clientY - rect.top);
@@ -156,6 +191,7 @@ export class InputHandler {
   }
 
   #handlePointerDown(e) {
+    if (e.pointerType === 'touch' && this.#touchActive) return;
     e.preventDefault();
     this.#videoEl.focus();
     try { this.#videoEl.setPointerCapture(e.pointerId); } catch (err) { console.warn('[lumen] setPointerCapture failed:', err.message); }
@@ -170,6 +206,7 @@ export class InputHandler {
   }
 
   #handlePointerUp(e) {
+    if (e.pointerType === 'touch' && this.#touchActive) return;
     const btn = BTN_CODES[e.button];
     if (btn === undefined) return;
     this.#client.sendInput({ type: 'pointer_button', btn, state: 0 });

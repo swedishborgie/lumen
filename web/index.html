@@ -136,13 +136,20 @@
       trigger.classList.toggle('tray-open');
       e.stopPropagation();
     };
-    // Close tray if clicking outside
+    // Close tray if clicking outside (mouse)
     document.addEventListener('click', (e) => {
       if (!tray.contains(e.target) && e.target !== trigger) {
         tray.classList.remove('open');
         trigger.classList.remove('tray-open');
       }
     });
+    // Close tray if touching outside (touch — click is suppressed by preventDefault in video handlers)
+    document.addEventListener('touchstart', (e) => {
+      if (!tray.contains(e.target) && e.target !== trigger) {
+        tray.classList.remove('open');
+        trigger.classList.remove('tray-open');
+      }
+    }, { passive: true });
   </script>
 </body>
 </html>

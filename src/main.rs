@@ -50,7 +50,10 @@ enum AuthMode {
 enum DesktopPreset {
     /// labwc — a lightweight wlroots-based Wayland compositor.
     Labwc,
-    /// KDE Plasma — full desktop session via `dbus-run-session startplasma-wayland`.
+    /// KDE Plasma — starts `kwin_wayland` as a nested compositor on a dedicated
+    /// socket (`kwin-wayland`), waits for it to be ready, then launches
+    /// `plasmashell` pointed at that socket.  This ensures all KDE apps connect
+    /// to kwin's socket rather than directly to the lumen compositor socket.
     /// KDE packages must be installed separately; they are not a lumen dependency.
     Kde,
 }
@@ -60,7 +63,22 @@ impl DesktopPreset {
     fn default_launch_cmd(&self) -> &'static str {
         match self {
             Self::Labwc => "labwc",
-            Self::Kde => "dbus-run-session startplasma-wayland",
+            // Start kwin_wayland with a known socket name so that we can
+            // reliably redirect WAYLAND_DISPLAY to it before launching
+            // plasmashell.  Using `startplasma-wayland` directly is unreliable
+            // in nested mode because it does not guarantee that WAYLAND_DISPLAY
+            // is updated to kwin's new socket before child apps are launched,
+            // causing them to connect to the outer (lumen) compositor instead.
+            Self::Kde => r#"dbus-run-session sh -c '
+kwin_wayland --socket kwin-wayland --no-lockscreen &
+KWIN_PID=$!
+RUNTIME="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+i=0; while [ $i -lt 30 ] && [ ! -S "$RUNTIME/kwin-wayland" ]; do sleep 0.5; i=$((i+1)); done
+i=0; while [ $i -lt 20 ] && ! dbus-send --session --print-reply --dest=org.freedesktop.DBus / org.freedesktop.DBus.GetNameOwner string:org.kde.KWin >/dev/null 2>&1; do sleep 0.5; i=$((i+1)); done
+for a in "$(command -v polkit-kde-authentication-agent-1 2>/dev/null)" /usr/lib/libexec/polkit-kde-authentication-agent-1 /usr/libexec/polkit-kde-authentication-agent-1; do [ -x "$a" ] && { "$a" & break; }; done
+WAYLAND_DISPLAY=kwin-wayland plasmashell || true
+kill "$KWIN_PID" 2>/dev/null || true
+'"#,
         }
     }
 

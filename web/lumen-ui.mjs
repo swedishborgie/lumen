@@ -227,39 +227,55 @@ export class LumenUI {
       }
     }, 1000);
 
-    this.#reconnectTimer = setTimeout(() => {
+    this.#reconnectTimer = setTimeout(async () => {
       this.#reconnectTimer = null;
       clearInterval(this.#reconnectCountdown);
       this.#reconnectCountdown = null;
-      this.#client.connect();
+      // Re-probe immediately before connecting.  The initial probe at the top
+      // of this method may have silently swallowed a network error (server was
+      // unreachable), so by the time the timer fires the server may be back up
+      // but the session is expired.  This second probe catches that case.
+      if (await this.#probeAuth()) {
+        this.#client.connect();
+      }
     }, delay);
 
-    // Probe for auth failures in the background. The WebSocket API does not
-    // expose the HTTP status of a failed upgrade, so we use a fetch to detect
-    // 401/403. If the session expired the server will also reject the WS — a
-    // page reload is the correct recovery (OAuth2 will redirect to login).
+    // Probe immediately to surface auth failures early — avoids waiting the
+    // full countdown before detecting an expired session.  If the server is
+    // unreachable right now the probe is silently ignored and the pre-connect
+    // probe above handles it once the server comes back.
     this.#probeAuth();
   }
 
   /**
    * Fetch /api/config to check whether the session is still authenticated.
-   * If the server returns 401 or 403, cancels the reconnect countdown and
-   * reloads the page so the OAuth2 flow can re-authenticate.
+   * Returns false and triggers a page reload when the session has expired so
+   * the OAuth2 flow can re-authenticate; returns true otherwise (including
+   * when the server is unreachable, so the normal reconnect loop handles it).
+   *
+   * @returns {Promise<boolean>} true → proceed with connect, false → reloading
    */
   async #probeAuth() {
     try {
       // Use redirect:'manual' so the browser does not follow the OAuth2 redirect
       // to the auth server (which would be cross-origin and trigger a CORS error).
       // A redirect response comes back as type='opaqueredirect' with status 0.
-      const res = await fetch('/api/config', { credentials: 'include', redirect: 'manual' });
+      // cache:'no-store' prevents a stale 200 from masking an expired session.
+      const res = await fetch('/api/config', {
+        credentials: 'include',
+        redirect: 'manual',
+        cache: 'no-store',
+      });
       if (res.status === 401 || res.status === 403 || res.type === 'opaqueredirect') {
         this.#cancelReconnect();
         this.#setStatusAll('Session expired \u2014 reloading\u2026');
         location.reload();
+        return false;
       }
     } catch {
       // Network is down or server unreachable — normal reconnect will handle it.
     }
+    return true;
   }
 
   /** Cancel any pending reconnect timer and countdown. */

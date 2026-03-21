@@ -29,11 +29,12 @@ export PLASMA_SKIP_SPLASH=1
 # Skip detection if --launch or LUMEN_LAUNCH is already set.
 LAUNCH_ARGS=()
 if [[ -z "${LUMEN_LAUNCH:-}" ]] && [[ ! " $* " =~ " --launch " ]]; then
-    # startplasma-wayland is the preferred KDE launcher: it handles the full
-    # session setup (environment, kwin socket sequencing, kbuildsycoca, polkit,
-    # PlasmaWindowManagement registration timing) correctly out of the box.
-    # WAYLAND_DISPLAY is already set by lumen to its own socket, so kwin will
-    # run nested inside lumen automatically.
+    # startplasma-wayland handles kbuildsycoca, polkit, and PlasmaWindowManagement
+    # setup, but does NOT reliably redirect WAYLAND_DISPLAY to kwin's nested socket
+    # before launching child apps (they end up connecting to lumen's socket directly).
+    # The --desktop kde preset uses explicit kwin socket management instead; this
+    # dev-test fallback uses startplasma-wayland only when it is available and the
+    # caller hasn't passed --desktop or --launch explicitly.
     #
     # labwc is the next fallback: wlroots-based, supports
     # zwlr_data_control_manager_v1 for clipboard bridging.

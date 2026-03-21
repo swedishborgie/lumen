@@ -120,6 +120,12 @@ COPY src/         src/
 COPY crates/      crates/
 COPY web/         web/
 
+# Inject the release version so CARGO_PKG_VERSION is not the only source.
+# In CI this is set to the stripped git tag (e.g. "0.2.0"); locally it is unset
+# and build.rs falls back to the version in Cargo.toml.
+ARG LUMEN_VERSION
+ENV LUMEN_VERSION=$LUMEN_VERSION
+
 RUN cargo build --release --bin lumen
 # Stage 2 — Runtime
 #   Minimal Ubuntu desktop: labwc + XWayland + Firefox + test apps + lumen.

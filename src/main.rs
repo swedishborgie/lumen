@@ -83,7 +83,7 @@ impl DesktopPreset {
 }
 
 #[derive(Parser, Debug)]
-#[command(name = "lumen", about = "Wayland WebRTC streaming compositor")]
+#[command(name = "lumen", about = "Wayland WebRTC streaming compositor", version = env!("LUMEN_VERSION"))]
 struct Args {
     /// Log output destination. Accepted values: `stderr` (default), `journald`,
     /// or `file:/absolute/path/to/lumen.log`.
@@ -536,6 +536,12 @@ async fn main() -> Result<()> {
                 .env("WAYLAND_DISPLAY", &socket_name)
                 .env("XDG_RUNTIME_DIR", &runtime_dir)
                 .env_remove("DISPLAY");
+            // Strip all LUMEN_ vars so secrets don't leak into the child process.
+            for (key, _) in std::env::vars() {
+                if key.starts_with("LUMEN_") {
+                    cmd.env_remove(&key);
+                }
+            }
             for (key, val) in preset_env {
                 cmd.env(key, val);
             }

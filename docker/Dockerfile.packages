@@ -57,6 +57,8 @@ FROM ubuntu:24.04 AS deb-builder
 
 ARG VERSION
 ARG BUILD_DEB
+ARG LUMEN_VERSION
+ENV LUMEN_VERSION=$LUMEN_VERSION
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -116,6 +118,8 @@ FROM fedora:latest AS rpm-builder
 
 ARG VERSION
 ARG BUILD_RPM
+ARG LUMEN_VERSION
+ENV LUMEN_VERSION=$LUMEN_VERSION
 
 # Enable RPMFusion (free) for x264 and FFmpeg
 RUN dnf install -y \

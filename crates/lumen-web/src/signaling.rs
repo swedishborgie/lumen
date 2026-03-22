@@ -147,6 +147,15 @@ fn spawn_drive_task(
     last_clipboard_json: Arc<tokio::sync::Mutex<Option<Vec<u8>>>>,
 ) {
     tokio::spawn(async move {
+        // Grab the video notifier once — push_video() fires it every time a new
+        // frame is written to str0m, waking this task immediately instead of
+        // waiting for the pacer-timeout sleep.  This prevents the fan-out task
+        // from piling up multiple frames in str0m before we flush them.
+        let video_notify = match sessions.get_session(&id).await {
+            Some(s) => s.lock().await.video_notify(),
+            None => return,
+        };
+
         let mut cursor_sent = false;
         let mut clipboard_sent = false;
         loop {
@@ -204,15 +213,17 @@ fn spawn_drive_task(
                 break;
             }
 
-            // Sleep until str0m's next deadline rather than a fixed 1ms.  This
-            // activates str0m's built-in RTP pacer, which spreads packet bursts
-            // evenly across the inter-frame interval instead of sending all RTP
-            // packets for a frame at once (which confuses Firefox's jitter buffer).
-            // We cap the sleep at 5ms so ICE keepalives and RTCP are handled promptly.
+            // Sleep until str0m's next deadline OR until push_video signals that
+            // new data is queued — whichever comes first.  The notify path means
+            // we flush the pacer immediately on every new frame instead of waiting
+            // for the timeout, which eliminates the burst that confuses Firefox.
             let sleep_dur = next_wakeup
                 .saturating_duration_since(Instant::now())
                 .min(std::time::Duration::from_millis(5));
-            tokio::time::sleep(sleep_dur).await;
+            tokio::select! {
+                _ = tokio::time::sleep(sleep_dur) => {}
+                _ = video_notify.notified() => {}
+            }
         }
         // Always clean up — whether the peer disconnected cleanly, the drive
         // task errored, or the session was already removed externally.

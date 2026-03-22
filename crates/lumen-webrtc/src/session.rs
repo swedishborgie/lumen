@@ -15,7 +15,7 @@ use str0m::{
     net::{Protocol, Receive},
     Candidate, Event, Input, IceConnectionState, Output, Rtc,
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Notify};
 use webrtc_util::conn::Conn;
 
 use crate::types::SessionConfig;
@@ -40,6 +40,11 @@ pub struct WebRtcSession {
     pub keyframe_requested: bool,
     /// Wall-clock time of the last `push_video` call; used to log inter-frame spacing.
     last_push_video_at: Option<Instant>,
+    /// Notified whenever a new video frame is written to str0m's queue.
+    /// The drive task waits on this so it wakes up immediately after `push_video`
+    /// rather than waiting for the fixed pacer-timeout sleep, eliminating the
+    /// packet-burst starvation that causes Firefox FPS inconsistency.
+    video_notify: Arc<Notify>,
     // ── TURN relay ────────────────────────────────────────────────────────────
     /// Relay address allocated from the TURN server (`None` when TURN is off).
     relay_addr: Option<std::net::SocketAddr>,
@@ -129,6 +134,7 @@ impl WebRtcSession {
                 connected: false,
                 keyframe_requested: false,
                 last_push_video_at: None,
+                video_notify: Arc::new(Notify::new()),
                 relay_addr,
                 relay_recv_rx,
                 relay_send_tx,
@@ -231,6 +237,12 @@ impl WebRtcSession {
         Ok((Some(relay_addr), Some(recv_rx), Some(send_tx), Some(client)))
     }
 
+    /// Returns a shareable handle to the video-ready notifier.
+    /// The drive task clones this once at startup and waits on it in its sleep loop.
+    pub fn video_notify(&self) -> Arc<Notify> {
+        self.video_notify.clone()
+    }
+
     /// Push an encoded H.264 frame to the video RTP track.
     pub fn push_video(&mut self, frame: &EncodedFrame) -> Result<()> {
         let mid = match self.video_mid {
@@ -261,8 +273,14 @@ impl WebRtcSession {
             .find(|p| matches!(p.spec().codec, Codec::H264))
             .map(PayloadParams::pt)
             .ok_or_else(|| anyhow!("No H264 PT negotiated"))?;
-        writer.write(pt, frame.captured_at, rtp_time, frame.data.to_vec())
-            .map_err(|e| anyhow!("Video write error: {:?}", e))
+        let result = writer.write(pt, frame.captured_at, rtp_time, frame.data.to_vec())
+            .map_err(|e| anyhow!("Video write error: {:?}", e));
+        if result.is_ok() {
+            // Wake the drive task immediately so it can flush the queued RTP
+            // packets without waiting for the pacer-timeout sleep to expire.
+            self.video_notify.notify_one();
+        }
+        result
     }
 
     /// Push an Opus packet to the audio RTP track.

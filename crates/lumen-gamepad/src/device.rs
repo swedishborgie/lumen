@@ -11,7 +11,7 @@ use evdev::{
 
 use crate::{
     mapping::{
-        AXIS_MAP, AXIS_SCALE, BUTTON_MAP,
+        AXIS_MAP, AXIS_SCALE, BUTTON_MAP, RAW_BUTTON_MAP,
         TRIGGER_AXIS_MAP, TRIGGER_SCALE,
         TRIGGER_FROM_AXIS_MAP, TRIGGER_FROM_AXIS_SCALE,
         HAT_AXIS_MAP,
@@ -33,6 +33,9 @@ type StoredEffect = (u16, u16, u32);
 /// A single virtual gamepad device created via uinput.
 pub(crate) struct GamepadDevice {
     device: VirtualDevice,
+    /// True when the controller uses raw evdev layout (triggers as analog axes,
+    /// no digital trigger buttons at indices 6/7).
+    raw_layout: bool,
     /// Free effect-ID pool (0..FF_EFFECTS_MAX).
     free_ids: BTreeSet<u16>,
     /// Uploaded effects: effect_id → (strong_raw, weak_raw, duration_ms).
@@ -43,8 +46,14 @@ impl GamepadDevice {
     /// Create a new virtual gamepad device with `num_buttons` and `num_axes`
     /// capabilities from the standard layout mapping tables.
     pub(crate) fn new(name: &str, num_buttons: u8, num_axes: u8) -> Result<Self, GamepadError> {
+        // Detect layout: controllers with more than 2 axes expose triggers as
+        // analog axes (raw evdev layout); others use the W3C standard layout
+        // where triggers appear as digital buttons at indices 6/7.
+        let raw_layout = num_axes > 2;
+        let button_map = if raw_layout { RAW_BUTTON_MAP } else { BUTTON_MAP };
+
         let mut keys = AttributeSet::<KeyCode>::new();
-        for &(idx, key) in BUTTON_MAP {
+        for &(idx, key) in button_map {
             if (idx as u8) < num_buttons {
                 keys.insert(key);
             }
@@ -65,8 +74,7 @@ impl GamepadDevice {
         // Trigger axes — prefer axis-based triggers (raw evdev layout, e.g.
         // 8BitDo) when axis indices 2 or 5 are present; otherwise fall back to
         // button-based triggers (W3C standard layout).
-        let triggers_from_axes = num_axes > 2;
-        if triggers_from_axes {
+        if raw_layout {
             for &(idx, axis) in TRIGGER_FROM_AXIS_MAP {
                 if (idx as u8) < num_axes {
                     abs_axes.push(UinputAbsSetup::new(
@@ -132,7 +140,7 @@ impl GamepadDevice {
             keys.iter().count(),
             abs_axes_len,
         );
-        Ok(Self { device, free_ids, effects: HashMap::new() })
+        Ok(Self { device, raw_layout, free_ids, effects: HashMap::new() })
     }
 
     /// Emit a button press or release event.
@@ -144,8 +152,11 @@ impl GamepadDevice {
     ) -> Result<(), GamepadError> {
         let mut events: Vec<EvdevEvent> = Vec::with_capacity(3);
 
+        // Select the correct button map for this controller's layout.
+        let button_map = if self.raw_layout { RAW_BUTTON_MAP } else { BUTTON_MAP };
+
         // Digital button event.
-        if let Some(&(_, key)) = BUTTON_MAP.iter().find(|&&(i, _)| i == button_idx as usize) {
+        if let Some(&(_, key)) = button_map.iter().find(|&&(i, _)| i == button_idx as usize) {
             events.push(EvdevEvent::new(
                 evdev::EventType::KEY.0,
                 key.0,
@@ -153,14 +164,17 @@ impl GamepadDevice {
             ));
         }
 
-        // Trigger buttons also drive ABS_Z / ABS_RZ.
-        if let Some(&(_, axis)) = TRIGGER_AXIS_MAP
-            .iter()
-            .find(|&&(i, _)| i == button_idx as usize)
-        {
-            #[allow(clippy::cast_possible_truncation)]
-            let abs_val = (value.clamp(0.0, 1.0) * TRIGGER_SCALE).round() as i32;
-            events.push(EvdevEvent::new(evdev::EventType::ABSOLUTE.0, axis.0, abs_val));
+        // Trigger buttons also drive ABS_Z / ABS_RZ — standard layout only.
+        // Raw-layout controllers send triggers as axis events, not button events.
+        if !self.raw_layout {
+            if let Some(&(_, axis)) = TRIGGER_AXIS_MAP
+                .iter()
+                .find(|&&(i, _)| i == button_idx as usize)
+            {
+                #[allow(clippy::cast_possible_truncation)]
+                let abs_val = (value.clamp(0.0, 1.0) * TRIGGER_SCALE).round() as i32;
+                events.push(EvdevEvent::new(evdev::EventType::ABSOLUTE.0, axis.0, abs_val));
+            }
         }
 
         if !events.is_empty() {

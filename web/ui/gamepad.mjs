@@ -67,19 +67,33 @@ export class GamepadController {
    * Apply a haptic (rumble) command received from the compositor.
    *
    * Called by the UI layer when a `{ type: "haptic", ... }` data channel
-   * message arrives.  Uses the Gamepad API's `vibrationActuator` if available;
-   * silently no-ops when the browser or controller does not support it.
+   * message arrives.  Supports both the W3C `vibrationActuator` API (Chrome)
+   * and the older `hapticActuators` array API (Firefox).  Silently no-ops
+   * when the browser or physical controller does not support rumble.
    *
    * @param {{ index: number, strong_magnitude: number, weak_magnitude: number, duration_ms: number }} msg
    */
   handleHaptic({ index, strong_magnitude, weak_magnitude, duration_ms }) {
     const gp = navigator.getGamepads()[index];
-    if (!gp?.vibrationActuator) return;
-    gp.vibrationActuator.playEffect('dual-rumble', {
-      duration:        duration_ms,
-      strongMagnitude: strong_magnitude,
-      weakMagnitude:   weak_magnitude,
-    }).catch(() => {});
+    if (!gp) return;
+
+    // W3C GamepadHapticActuator (Chrome 68+, Edge 79+).
+    if (gp.vibrationActuator) {
+      gp.vibrationActuator.playEffect('dual-rumble', {
+        duration:        duration_ms,
+        strongMagnitude: strong_magnitude,
+        weakMagnitude:   weak_magnitude,
+      }).catch(() => {});
+      return;
+    }
+
+    // Legacy hapticActuators array (Firefox, some older browsers).
+    // pulse() takes a single combined magnitude and a duration in milliseconds.
+    const actuator = gp.hapticActuators?.[0];
+    if (actuator) {
+      const magnitude = Math.max(strong_magnitude, weak_magnitude);
+      actuator.pulse(magnitude, duration_ms).catch(() => {});
+    }
   }
 
   #handleConnected(e) {

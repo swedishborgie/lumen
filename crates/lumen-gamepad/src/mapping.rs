@@ -30,6 +30,9 @@ use evdev::AbsoluteAxisCode as Abs;
 use evdev::KeyCode;
 
 /// Maps a Web Gamepad button index (0–16) to a Linux `BTN_*` evdev key code.
+///
+/// Used for W3C standard-layout controllers where triggers are reported as
+/// buttons (indices 6/7) with an analog value.
 pub const BUTTON_MAP: &[(usize, KeyCode)] = &[
     (0,  KeyCode::BTN_SOUTH),    // A / Cross
     (1,  KeyCode::BTN_EAST),     // B / Circle
@@ -48,6 +51,26 @@ pub const BUTTON_MAP: &[(usize, KeyCode)] = &[
     (14, KeyCode::BTN_DPAD_LEFT),
     (15, KeyCode::BTN_DPAD_RIGHT),
     (16, KeyCode::BTN_MODE),     // Home / Guide
+];
+
+/// Maps a Web Gamepad button index to a Linux `BTN_*` evdev key code for
+/// controllers that expose triggers as analog axes (raw evdev layout).
+///
+/// In the raw layout the browser has no digital trigger buttons at indices 6/7,
+/// so those slots shift to Back/Start.  The face-button and bumper entries
+/// (0–5) are identical to [`BUTTON_MAP`].
+pub const RAW_BUTTON_MAP: &[(usize, KeyCode)] = &[
+    (0,  KeyCode::BTN_SOUTH),   // A / Cross
+    (1,  KeyCode::BTN_EAST),    // B / Circle
+    (2,  KeyCode::BTN_WEST),    // X / Square
+    (3,  KeyCode::BTN_NORTH),   // Y / Triangle
+    (4,  KeyCode::BTN_TL),      // LB
+    (5,  KeyCode::BTN_TR),      // RB
+    (6,  KeyCode::BTN_SELECT),  // Select / Back (no digital triggers in raw layout)
+    (7,  KeyCode::BTN_START),   // Start
+    (8,  KeyCode::BTN_MODE),    // Home / Guide
+    (9,  KeyCode::BTN_THUMBL),  // L3 – left stick click
+    (10, KeyCode::BTN_THUMBR),  // R3 – right stick click
 ];
 
 /// Stick axes: Web axis index → ABS axis.  Scaled by [`AXIS_SCALE`] (±32 767).

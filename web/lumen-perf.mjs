@@ -20,7 +20,7 @@ const HISTORY = 120;
 const OVERLAY_W = 220;
 
 /** Height of the text-header panel in CSS pixels. */
-const HEADER_H = 44;
+const HEADER_H = 56;
 
 /** Height of each graph panel in CSS pixels. */
 const GRAPH_H = 50;

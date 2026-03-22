@@ -1,4 +1,5 @@
 use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
+use std::time::Instant;
 
 use axum::{
     extract::{
@@ -83,6 +84,7 @@ async fn handle_socket(mut socket: WebSocket, state: SignalingState) {
 
         match client_msg {
             ClientMessage::Offer { sdp } => {
+                tracing::debug!("SDP offer:\n{}", sdp);
                 match state.sessions.create_session(&sdp).await {
                     Ok((id, answer_sdp)) => {
                         session_id = Some(id.clone());
@@ -152,10 +154,10 @@ fn spawn_drive_task(
                 Some(s) => s,
                 None => break,
             };
-            let (state, input_events, kf_requested, dc_open) = {
+            let (state, input_events, kf_requested, dc_open, next_wakeup) = {
                 let mut s = session.lock().await;
-                let drive_state = match s.drive().await {
-                    Ok(st) => st,
+                let (drive_state, next_wakeup) = match s.drive().await {
+                    Ok(r) => r,
                     Err(e) => {
                         tracing::debug!("Session drive error: {e:#}");
                         break;
@@ -165,7 +167,7 @@ fn spawn_drive_task(
                 let kf = s.keyframe_requested;
                 if kf { s.keyframe_requested = false; }
                 let dc_open = s.is_dc_open();
-                (drive_state, events, kf, dc_open)
+                (drive_state, events, kf, dc_open, next_wakeup)
             };
 
             // Forward input events to compositor (best-effort, don't block).
@@ -201,7 +203,16 @@ fn spawn_drive_task(
                 tracing::info!("WebRTC peer disconnected");
                 break;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+
+            // Sleep until str0m's next deadline rather than a fixed 1ms.  This
+            // activates str0m's built-in RTP pacer, which spreads packet bursts
+            // evenly across the inter-frame interval instead of sending all RTP
+            // packets for a frame at once (which confuses Firefox's jitter buffer).
+            // We cap the sleep at 5ms so ICE keepalives and RTCP are handled promptly.
+            let sleep_dur = next_wakeup
+                .saturating_duration_since(Instant::now())
+                .min(std::time::Duration::from_millis(5));
+            tokio::time::sleep(sleep_dur).await;
         }
         // Always clean up — whether the peer disconnected cleanly, the drive
         // task errored, or the session was already removed externally.

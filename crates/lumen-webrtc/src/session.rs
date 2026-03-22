@@ -1,7 +1,7 @@
 use std::collections::{HashSet, VecDeque};
 use std::net::UdpSocket;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
 use lumen_audio::OpusPacket;
@@ -38,6 +38,8 @@ pub struct WebRtcSession {
     connected: bool,
     /// Whether a keyframe was requested by the peer since last drain.
     pub keyframe_requested: bool,
+    /// Wall-clock time of the last `push_video` call; used to log inter-frame spacing.
+    last_push_video_at: Option<Instant>,
     // ── TURN relay ────────────────────────────────────────────────────────────
     /// Relay address allocated from the TURN server (`None` when TURN is off).
     relay_addr: Option<std::net::SocketAddr>,
@@ -126,6 +128,7 @@ impl WebRtcSession {
                 dc_channel_id: None,
                 connected: false,
                 keyframe_requested: false,
+                last_push_video_at: None,
                 relay_addr,
                 relay_recv_rx,
                 relay_send_tx,
@@ -241,6 +244,15 @@ impl WebRtcSession {
                 return Ok(());
             }
         };
+
+        // Log inter-frame interval to help diagnose delivery jitter.
+        let now = Instant::now();
+        if let Some(prev) = self.last_push_video_at {
+            let interval_ms = now.duration_since(prev).as_secs_f64() * 1000.0;
+            tracing::debug!(interval_ms, pts_ms = frame.pts_ms, keyframe = frame.is_keyframe, "push_video interval");
+        }
+        self.last_push_video_at = Some(now);
+
         let pts_90k = frame.pts_ms * 90;
         let rtp_time = MediaTime::new(pts_90k, Frequency::NINETY_KHZ);
         let writer = self.rtc.writer(mid)
@@ -249,7 +261,6 @@ impl WebRtcSession {
             .find(|p| matches!(p.spec().codec, Codec::H264))
             .map(PayloadParams::pt)
             .ok_or_else(|| anyhow!("No H264 PT negotiated"))?;
-        tracing::debug!(pts_ms = frame.pts_ms, keyframe = frame.is_keyframe, "Sending video RTP");
         writer.write(pt, frame.captured_at, rtp_time, frame.data.to_vec())
             .map_err(|e| anyhow!("Video write error: {:?}", e))
     }
@@ -311,8 +322,14 @@ impl WebRtcSession {
     }
 
     /// Drive the str0m I/O state machine once. Must be called in a tight loop.
-    pub async fn drive(&mut self) -> Result<SessionState> {
+    ///
+    /// Returns the session state and the wall-clock `Instant` at which the
+    /// caller should invoke `drive()` again. Sleeping until that deadline
+    /// activates str0m's built-in RTP pacer, which smooths packet bursting.
+    pub async fn drive(&mut self) -> Result<(SessionState, Instant)> {
         let now = Instant::now();
+        // Default: wake up in at most 5ms if str0m doesn't give us a tighter deadline.
+        let mut next_wakeup = now + Duration::from_millis(5);
 
         // ── Drain relay packets (TURN relay → str0m) ──────────────────────────
         if let (Some(ref mut relay_rx), Some(relay_addr)) =
@@ -392,7 +409,7 @@ impl WebRtcSession {
                     }
                 }
                 Ok(Output::Event(Event::IceConnectionStateChange(IceConnectionState::Disconnected))) => {
-                    return Ok(SessionState::Closed);
+                    return Ok((SessionState::Closed, next_wakeup));
                 }
                 Ok(Output::Event(Event::ChannelData(data))) => {
                     match serde_json::from_slice::<InputEvent>(&data.data) {
@@ -410,7 +427,10 @@ impl WebRtcSession {
                     self.keyframe_requested = true;
                 }
                 Ok(Output::Event(_)) => {}
-                Ok(Output::Timeout(_)) => break,
+                Ok(Output::Timeout(t)) => {
+                    next_wakeup = t;
+                    break;
+                }
                 Err(e) => {
                     tracing::debug!("str0m error: {:?}", e);
                     break;
@@ -434,7 +454,7 @@ impl WebRtcSession {
             }
         }
 
-        Ok(SessionState::Active)
+        Ok((SessionState::Active, next_wakeup))
     }
 }
 

@@ -8,7 +8,7 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 use crate::assets::{index_handler, static_file_handler};
 use crate::auth::{basic, bearer, oauth2};
-use crate::signaling::{SignalingState, config_handler, ws_handler};
+use crate::signaling::{SignalingState, config_handler, manifest_handler, ws_handler};
 use crate::types::{AuthConfig, WebServerConfig};
 
 pub struct WebServer {
@@ -29,14 +29,21 @@ impl WebServer {
             last_clipboard_json: self.config.last_clipboard_json.clone(),
             resize_tx: self.config.resize_tx.clone(),
             ice_servers: self.config.ice_servers.clone(),
+            hostname: self.config.hostname.clone(),
         };
 
         let signaling_router = Router::new()
             .route("/ws/signal", get(ws_handler))
             .route("/api/config", get(config_handler))
+            .with_state(state.clone());
+
+        // Public routes that must remain accessible without authentication
+        // (service worker and browser PWA installs do not carry auth headers).
+        let public_router = Router::new()
+            .route("/manifest.json", get(manifest_handler))
             .with_state(state);
 
-        let app = self.build_app(signaling_router).await?;
+        let app = self.build_app(signaling_router, public_router).await?;
 
         match (self.config.tls_cert, self.config.tls_key) {
             (Some(cert), Some(key)) => {
@@ -100,7 +107,7 @@ impl WebServer {
         Ok(())
     }
 
-    async fn build_app(&self, signaling_router: Router) -> Result<Router> {
+    async fn build_app(&self, signaling_router: Router, public_router: Router) -> Result<Router> {
         // Explicit routes that require authentication. The index page is routed
         // explicitly so that auth protects it while leaving other static assets
         // (service worker, manifest, CSS, JS, images) accessible without
@@ -112,12 +119,14 @@ impl WebServer {
         match &self.config.auth {
             AuthConfig::None => Ok(protected
                 .fallback(static_file_handler)
+                .merge(public_router)
                 .layer(CorsLayer::permissive())
                 .layer(TraceLayer::new_for_http())),
 
             AuthConfig::Basic => Ok(protected
                 .route_layer(middleware::from_fn(basic::auth_middleware))
                 .fallback(static_file_handler)
+                .merge(public_router)
                 .layer(CorsLayer::permissive())
                 .layer(TraceLayer::new_for_http())),
 
@@ -127,6 +136,7 @@ impl WebServer {
                     .route_layer(middleware::from_fn(bearer::auth_middleware))
                     .route_layer(axum::Extension(token_arc))
                     .fallback(static_file_handler)
+                    .merge(public_router)
                     .layer(CorsLayer::permissive())
                     .layer(TraceLayer::new_for_http()))
             }
@@ -155,6 +165,7 @@ impl WebServer {
                     .route_layer(middleware::from_fn(oauth2::auth_middleware))
                     .route_layer(axum::Extension(oidc_arc))
                     .fallback(static_file_handler)
+                    .merge(public_router)
                     .layer(CorsLayer::permissive())
                     .layer(TraceLayer::new_for_http());
 

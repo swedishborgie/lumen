@@ -134,6 +134,9 @@ export class LumenClient extends EventTarget {
       } else {
         log.warn('ice-config', 'Server config contained no ICE servers; using default STUN');
       }
+      if (cfg.hostname) {
+        document.title = `${cfg.hostname} - Lumen`;
+      }
     } catch (e) {
       log.warn('ice-config', 'Could not fetch /api/config; using default STUN:', e);
       console.warn('Could not fetch /api/config, using default ICE servers:', e);

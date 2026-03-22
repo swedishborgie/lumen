@@ -153,6 +153,7 @@ async fn main() -> Result<()> {
         resize_tx,
         auth,
         ice_servers: turn_setup.ice_servers,
+        hostname: args.hostname,
         shutdown_signal: Some(shutdown_rx),
         tls_cert: args.tls_cert,
         tls_key: args.tls_key,

@@ -73,6 +73,8 @@ pub struct WebServerConfig {
     pub auth: AuthConfig,
     /// ICE server list sent to the browser via `/api/config`.
     pub ice_servers: Vec<IceServerConfig>,
+    /// Hostname shown in the browser tab title and PWA app name.
+    pub hostname: String,
     /// Optional graceful-shutdown signal. When the sender is dropped or sends,
     /// the web server stops accepting new connections and drains existing ones.
     pub shutdown_signal: Option<tokio::sync::oneshot::Receiver<()>>,

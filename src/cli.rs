@@ -88,6 +88,13 @@ impl DesktopPreset {
     }
 }
 
+fn default_hostname() -> String {
+    hostname::get()
+        .ok()
+        .and_then(|h| h.into_string().ok())
+        .unwrap_or_else(|| "localhost".to_string())
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "lumen", about = "Wayland WebRTC streaming compositor", version = env!("LUMEN_VERSION"))]
 pub struct Args {
@@ -104,6 +111,11 @@ pub struct Args {
 
     #[arg(long, env = "LUMEN_BIND", default_value = "0.0.0.0:8080")]
     pub bind_addr: SocketAddr,
+
+    /// Hostname shown in the browser tab title and PWA app name
+    /// (default: OS hostname).
+    #[arg(long, env = "LUMEN_HOSTNAME", default_value_t = default_hostname())]
+    pub hostname: String,
     #[arg(long, env = "LUMEN_WIDTH", default_value_t = 1920)]
     pub width: u32,
     #[arg(long, env = "LUMEN_HEIGHT", default_value_t = 1080)]

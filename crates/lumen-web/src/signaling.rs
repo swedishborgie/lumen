@@ -29,6 +29,8 @@ pub struct SignalingState {
     pub resize_tx: mpsc::Sender<(u32, u32)>,
     /// ICE server configuration served to the browser via `/api/config`.
     pub ice_servers: Vec<crate::types::IceServerConfig>,
+    /// Hostname served to the browser via `/api/config` and the PWA manifest.
+    pub hostname: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -55,12 +57,46 @@ pub async fn ws_handler(
 }
 
 /// Returns the ICE server list (and any future client-side configuration)
-/// as a JSON object: `{ "iceServers": [...] }`.
+/// as a JSON object: `{ "iceServers": [...], "hostname": "..." }`.
 pub async fn config_handler(
     State(state): State<SignalingState>,
 ) -> axum::response::Json<serde_json::Value> {
     let ice = serde_json::to_value(&state.ice_servers).unwrap_or(serde_json::json!([]));
-    axum::response::Json(serde_json::json!({ "iceServers": ice }))
+    axum::response::Json(serde_json::json!({ "iceServers": ice, "hostname": state.hostname }))
+}
+
+/// Returns a dynamically generated PWA manifest with the hostname injected
+/// into the app `name` and `short_name` fields.
+pub async fn manifest_handler(
+    State(state): State<SignalingState>,
+) -> axum::response::Response<axum::body::Body> {
+    let manifest = serde_json::json!({
+        "name": format!("{} - Lumen", state.hostname),
+        "short_name": state.hostname,
+        "description": "Remote desktop streaming via WebRTC",
+        "start_url": "/",
+        "display": "standalone",
+        "background_color": "#000000",
+        "theme_color": "#000000",
+        "icons": [
+            {
+                "src": "images/lumen.svg",
+                "sizes": "any",
+                "type": "image/svg+xml",
+                "purpose": "any maskable"
+            },
+            {
+                "src": "images/logo.png",
+                "sizes": "512x512",
+                "type": "image/png",
+                "purpose": "any maskable"
+            }
+        ]
+    });
+    axum::response::Response::builder()
+        .header("content-type", "application/manifest+json")
+        .body(axum::body::Body::from(manifest.to_string()))
+        .unwrap()
 }
 
 async fn handle_socket(mut socket: WebSocket, state: SignalingState) {

@@ -31,7 +31,11 @@ sudo dnf install \
     gcc gcc-c++ \
     cmake \
     pkg-config \
-    libx264-devel \
+    x264-devel \
+    pam-devel \
+    pixman-devel \
+    libinput-devel \
+    mesa-libgbm-devel \
     libva-devel \
     libdrm-devel \
     opus-devel \
@@ -42,6 +46,9 @@ sudo dnf install \
     libxkbcommon-devel \
     clang-devel
 ```
+
+You'll need the [RPM Fusion enabled](https://rpmfusion.org/Configuration).
+You will also need to [Switch to full ffmpeg](https://rpmfusion.org/Howto/Multimedia).
 
 ### Ubuntu / Debian
 

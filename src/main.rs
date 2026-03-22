@@ -164,7 +164,11 @@ async fn main() -> Result<()> {
         tls_key: args.tls_key,
     })
     .run()
-    .await?;
+    .await
+    .map_err(|e| {
+        tracing::error!("Web server error: {e:#}");
+        e
+    })?;
 
     // The web server has shut down (either via graceful shutdown signal or
     // by returning normally).  Stop the compositor, which closes the broadcast

@@ -1,17 +1,20 @@
 # syntax=docker/dockerfile:1
 
 # Build args:
-#   VERSION    — package version (defaults to version in Cargo.toml)
-#   BUILD_DEB  — set to 0 to skip the .deb build (default: 1)
-#   BUILD_RPM  — set to 0 to skip the .rpm build (default: 1)
+#   VERSION     — package version (defaults to version in Cargo.toml)
+#   BUILD_DEB   — set to 0 to skip the .deb build (default: 1)
+#   BUILD_RPM   — set to 0 to skip the .rpm build (default: 1)
+#   BUILD_NVENC — set to 0 to build without NVENC support (default: 1)
 #
 # Examples:
 #   docker build -f docker/Dockerfile.packages -t lumen-packages .
 #   docker build --build-arg BUILD_RPM=0 -f docker/Dockerfile.packages -t lumen-packages .
 #   docker build --build-arg VERSION=1.2.3 -f docker/Dockerfile.packages -t lumen-packages .
+#   docker build --build-arg BUILD_NVENC=0 -f docker/Dockerfile.packages -t lumen-packages .
 ARG VERSION
 ARG BUILD_DEB=1
 ARG BUILD_RPM=1
+ARG BUILD_NVENC=0
 
 # ─────────────────────────────────────────────────────────────
 # Stage 0: Planner
@@ -57,6 +60,7 @@ FROM ubuntu:24.04 AS deb-builder
 
 ARG VERSION
 ARG BUILD_DEB
+ARG BUILD_NVENC
 ARG LUMEN_VERSION
 ENV LUMEN_VERSION=$LUMEN_VERSION
 ENV DEBIAN_FRONTEND=noninteractive
@@ -95,7 +99,7 @@ WORKDIR /build
 # Cache layer: compile all third-party dependencies.
 # Only invalidated when Cargo.lock changes; source edits skip straight to the build step.
 COPY --from=planner /build/recipe.json recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json
+RUN cargo chef cook --release --features nvenc --recipe-path recipe.json
 
 COPY Cargo.toml Cargo.lock ./
 COPY src/ src/
@@ -105,7 +109,8 @@ COPY pkgs/ pkgs/
 
 RUN mkdir -p /packages
 RUN if [ "${BUILD_DEB}" != "0" ]; then \
-        cargo build --release --bin lumen \
+        FEATURES=$([ "${BUILD_NVENC}" != "0" ] && echo "--features nvenc" || echo ""); \
+        cargo build --release $FEATURES --bin lumen \
         && cargo deb --no-build ${VERSION:+--deb-version "$VERSION"} \
         && cp target/debian/*.deb /packages/; \
     fi
@@ -118,6 +123,7 @@ FROM fedora:latest AS rpm-builder
 
 ARG VERSION
 ARG BUILD_RPM
+ARG BUILD_NVENC
 ARG LUMEN_VERSION
 ENV LUMEN_VERSION=$LUMEN_VERSION
 
@@ -158,7 +164,7 @@ WORKDIR /build
 # Cache layer: compile all third-party dependencies against Fedora's system libraries.
 # Only invalidated when Cargo.lock changes; source edits skip straight to the build step.
 COPY --from=planner /build/recipe.json recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json
+RUN cargo chef cook --release --features nvenc --recipe-path recipe.json
 
 COPY Cargo.toml Cargo.lock ./
 COPY src/ src/
@@ -168,7 +174,8 @@ COPY pkgs/ pkgs/
 
 RUN mkdir -p /packages
 RUN if [ "${BUILD_RPM}" != "0" ]; then \
-        cargo build --release --bin lumen \
+        FEATURES=$([ "${BUILD_NVENC}" != "0" ] && echo "--features nvenc" || echo ""); \
+        cargo build --release $FEATURES --bin lumen \
         && cargo generate-rpm ${VERSION:+--set-metadata "version=\"$VERSION\""} \
         && cp target/generate-rpm/*.rpm /packages/; \
     fi

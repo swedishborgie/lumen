@@ -44,33 +44,6 @@ if [[ -z "${LUMEN_LAUNCH:-}" ]] && [[ ! " $* " =~ " --launch " ]]; then
     if command -v startplasma-wayland &>/dev/null; then
         LAUNCH_DESC="startplasma-wayland (KDE desktop)"
         LAUNCH_CMD="dbus-run-session startplasma-wayland"
-    elif command -v kwin_wayland &>/dev/null && command -v plasmashell &>/dev/null; then
-        # Fallback for non-NixOS systems where startplasma-wayland is absent.
-        LAUNCH_DESC="kwin_wayland + plasmashell (KDE desktop)"
-        LAUNCH_CMD='dbus-run-session sh -c '"'"'
-            export KDE_FULL_SESSION=true
-            export DESKTOP_SESSION=plasma
-            kwin_wayland --socket kwin-wayland --no-lockscreen &
-            KWIN_PID=$!
-            RUNTIME="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-            i=0
-            while [ $i -lt 30 ] && [ ! -S "$RUNTIME/kwin-wayland" ]; do
-                sleep 0.5; i=$((i+1))
-            done
-            i=0
-            while [ $i -lt 20 ] && ! dbus-send --session --print-reply \
-                    --dest=org.freedesktop.DBus / \
-                    org.freedesktop.DBus.GetNameOwner \
-                    string:org.kde.KWin >/dev/null 2>&1; do
-                sleep 0.5; i=$((i+1))
-            done
-            POLKIT=$(command -v polkit-kde-authentication-agent-1 2>/dev/null || true)
-            for a in "$POLKIT" /usr/lib/libexec/polkit-kde-authentication-agent-1 /usr/libexec/polkit-kde-authentication-agent-1; do
-                [ -x "$a" ] && { "$a" & break; }
-            done
-            WAYLAND_DISPLAY=kwin-wayland plasmashell || true
-            kill "$KWIN_PID" 2>/dev/null || true
-        '"'"
     elif command -v labwc &>/dev/null; then
         LAUNCH_DESC="labwc"
         LAUNCH_CMD="labwc"

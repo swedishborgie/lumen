@@ -66,16 +66,7 @@ impl DesktopPreset {
             // in nested mode because it does not guarantee that WAYLAND_DISPLAY
             // is updated to kwin's new socket before child apps are launched,
             // causing them to connect to the outer (lumen) compositor instead.
-            Self::Kde => r#"dbus-run-session sh -c '
-kwin_wayland --socket kwin-wayland --no-lockscreen &
-KWIN_PID=$!
-RUNTIME="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-i=0; while [ $i -lt 30 ] && [ ! -S "$RUNTIME/kwin-wayland" ]; do sleep 0.5; i=$((i+1)); done
-i=0; while [ $i -lt 20 ] && ! dbus-send --session --print-reply --dest=org.freedesktop.DBus / org.freedesktop.DBus.GetNameOwner string:org.kde.KWin >/dev/null 2>&1; do sleep 0.5; i=$((i+1)); done
-for a in "$(command -v polkit-kde-authentication-agent-1 2>/dev/null)" /usr/lib/libexec/polkit-kde-authentication-agent-1 /usr/libexec/polkit-kde-authentication-agent-1; do [ -x "$a" ] && { "$a" & break; }; done
-WAYLAND_DISPLAY=kwin-wayland plasmashell || true
-kill "$KWIN_PID" 2>/dev/null || true
-'"#,
+            Self::Kde => r#"dbus-run-session startplasma-wayland"#,
         }
     }
 

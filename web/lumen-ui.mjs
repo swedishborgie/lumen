@@ -27,6 +27,7 @@ export class LumenUI {
                 //   displayAuto, displayFixed, displayFixedControls,
                 //   displayPreset720p, displayPreset1080p,
                 //   displayCustomW, displayCustomH, displayApply,
+                //   uiScaleRow, uiScaleToggle,
                 //   gamepadList }
   #cursor;      // CursorManager
   #input;       // InputHandler
@@ -129,6 +130,7 @@ export class LumenUI {
     this.#bindFullscreenEvents();
     this.#bindClipboardPanel();
     this.#bindDisplayMode();
+    this.#bindUiScaleToggle();
     this.#bindSplashEvents();
     this.#bindPerfToggle();
     this.#bindDebugToggle();
@@ -390,6 +392,7 @@ export class LumenUI {
       displayAuto, displayFixed, displayFixedControls,
       displayPreset720p, displayPreset1080p,
       displayCustomW, displayCustomH, displayApply,
+      uiScaleRow,
     } = this.#els;
 
     if (!displayAuto) return; // elements not present (graceful degradation)
@@ -398,6 +401,7 @@ export class LumenUI {
       displayAuto.classList.toggle('active',  mode === 'auto');
       displayFixed.classList.toggle('active', mode === 'fixed');
       displayFixedControls.style.display = mode === 'fixed' ? '' : 'none';
+      if (uiScaleRow) uiScaleRow.style.display = mode === 'auto' ? '' : 'none';
       if (mode === 'auto') {
         document.body.classList.remove('fixed-mode');
       } else {
@@ -501,6 +505,23 @@ export class LumenUI {
         }
       }
     }
+  }
+
+  // ── UI-scale-aware toggle ─────────────────────────────────────────────────────
+
+  #bindUiScaleToggle() {
+    const { uiScaleToggle } = this.#els;
+    if (!uiScaleToggle) return;
+
+    const saved = localStorage.getItem('lumen.uiScaleAware') === '1';
+    uiScaleToggle.checked = saved;
+    this.#resize.setUiScaleAware(saved);
+
+    uiScaleToggle.addEventListener('change', () => {
+      const enabled = uiScaleToggle.checked;
+      localStorage.setItem('lumen.uiScaleAware', enabled ? '1' : '0');
+      this.#resize.setUiScaleAware(enabled);
+    });
   }
 
   // ── gamepad detection ────────────────────────────────────────────────────────

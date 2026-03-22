@@ -38,6 +38,13 @@
         <button id="display-auto" class="active">Auto</button>
         <button id="display-fixed">Fixed</button>
       </div>
+      <div id="ui-scale-row" class="tray-row">
+        <span class="tray-label">Match browser UI scale</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="ui-scale-toggle">
+          <span class="toggle-track"></span>
+        </label>
+      </div>
       <div id="display-fixed-controls" style="display:none">
         <div id="display-presets">
           <button id="display-preset-720p">1280×720</button>
@@ -117,6 +124,8 @@
       displayCustomW:       document.getElementById('display-custom-w'),
       displayCustomH:       document.getElementById('display-custom-h'),
       displayApply:         document.getElementById('display-apply'),
+      uiScaleRow:           document.getElementById('ui-scale-row'),
+      uiScaleToggle:        document.getElementById('ui-scale-toggle'),
       gamepadList:          document.getElementById('gamepad-list'),
     });
 

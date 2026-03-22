@@ -16,11 +16,12 @@ export class ResizeManager {
   #containerEl;
   #client;
   #cursor;
-  #observer      = null;
-  #debounceTimer = null;
-  #mode          = 'auto';  // 'auto' | 'fixed'
-  #fixedW        = 0;
-  #fixedH        = 0;
+  #observer       = null;
+  #debounceTimer  = null;
+  #mode           = 'auto';  // 'auto' | 'fixed'
+  #fixedW         = 0;
+  #fixedH         = 0;
+  #uiScaleAware   = false;
 
   /**
    * @param {HTMLVideoElement}   videoEl
@@ -38,6 +39,18 @@ export class ResizeManager {
   /** Current mode: 'auto' | 'fixed'. */
   get mode() { return this.#mode; }
 
+  /**
+   * Convert a CSS-pixel dimension to the compositor pixel count, respecting
+   * the current UI-scale-aware setting.
+   * @param {number} cssPx
+   * @returns {number}
+   */
+  #toCompositorPx(cssPx) {
+    return this.#uiScaleAware
+      ? Math.round(cssPx)
+      : Math.round(cssPx * devicePixelRatio);
+  }
+
   /** Start observing the video element for resize changes. */
   bind() {
     this.#observer = new ResizeObserver((entries) => {
@@ -46,8 +59,8 @@ export class ResizeManager {
         const rect = entry.contentRect;
         clearTimeout(this.#debounceTimer);
         this.#debounceTimer = setTimeout(() => {
-          const w = Math.round(rect.width  * devicePixelRatio) & ~1;
-          const h = Math.round(rect.height * devicePixelRatio) & ~1;
+          const w = this.#toCompositorPx(rect.width)  & ~1;
+          const h = this.#toCompositorPx(rect.height) & ~1;
           if (w > 0 && h > 0) {
             this.#client.sendResize(w, h);
           }
@@ -95,6 +108,21 @@ export class ResizeManager {
     this.#cursor.resize();
   }
 
+  /**
+   * Enable or disable UI-scale-aware resizing in auto mode.
+   * When enabled, the compositor is resized to logical (CSS-pixel) dimensions
+   * rather than physical pixel dimensions, proportionally matching the
+   * browser's UI scale (devicePixelRatio). Has no effect in fixed mode.
+   *
+   * @param {boolean} enabled
+   */
+  setUiScaleAware(enabled) {
+    this.#uiScaleAware = enabled;
+    if (this.#mode === 'auto') {
+      this.sendCurrentSize();
+    }
+  }
+
   /** Send the current size to the compositor, respecting the active mode. */
   sendCurrentSize() {
     if (this.#mode === 'fixed') {
@@ -104,8 +132,8 @@ export class ResizeManager {
       return;
     }
     const rect = this.#videoEl.getBoundingClientRect();
-    const w = Math.round(rect.width  * devicePixelRatio) & ~1;
-    const h = Math.round(rect.height * devicePixelRatio) & ~1;
+    const w = this.#toCompositorPx(rect.width)  & ~1;
+    const h = this.#toCompositorPx(rect.height) & ~1;
     if (w > 0 && h > 0) {
       this.#client.sendResize(w, h);
     }

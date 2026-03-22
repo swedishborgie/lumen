@@ -1,9 +1,12 @@
 //! Per-gamepad virtual device backed by Linux uinput.
 
+use std::collections::{BTreeSet, HashMap};
+use std::os::fd::AsRawFd as _;
+
 use evdev::{
     uinput::VirtualDevice,
-    AbsInfo, AttributeSet, InputEvent as EvdevEvent,
-    KeyCode, UinputAbsSetup,
+    AbsInfo, AttributeSet, EventSummary, FFEffectCode, FFStatusCode,
+    InputEvent as EvdevEvent, KeyCode, UInputCode, UinputAbsSetup,
 };
 
 use crate::{
@@ -13,14 +16,27 @@ use crate::{
         TRIGGER_FROM_AXIS_MAP, TRIGGER_FROM_AXIS_SCALE,
         HAT_AXIS_MAP,
     },
-    GamepadError,
+    GamepadError, HapticCommand,
 };
 
 use tracing::trace;
 
+/// Maximum number of force-feedback effect slots per virtual device.
+const FF_EFFECTS_MAX: u16 = 16;
+
+/// Raw evdev magnitude range (u16 0–65535) → normalized float.
+const FF_MAG_SCALE: f32 = 65535.0;
+
+/// A stored FF_RUMBLE effect: (strong_magnitude_raw, weak_magnitude_raw, duration_ms).
+type StoredEffect = (u16, u16, u32);
+
 /// A single virtual gamepad device created via uinput.
 pub(crate) struct GamepadDevice {
     device: VirtualDevice,
+    /// Free effect-ID pool (0..FF_EFFECTS_MAX).
+    free_ids: BTreeSet<u16>,
+    /// Uploaded effects: effect_id → (strong_raw, weak_raw, duration_ms).
+    effects: HashMap<u16, StoredEffect>,
 }
 
 impl GamepadDevice {
@@ -93,13 +109,30 @@ impl GamepadDevice {
                 .map_err(GamepadError::DeviceSetup)?;
         }
 
+        let mut ff_set = AttributeSet::<FFEffectCode>::new();
+        ff_set.insert(FFEffectCode::FF_RUMBLE);
+        builder = builder
+            .with_ff(&ff_set)
+            .map_err(GamepadError::DeviceSetup)?
+            .with_ff_effects_max(FF_EFFECTS_MAX as u32);
+
         let device = builder.build().map_err(GamepadError::DeviceSetup)?;
+
+        // Set the uinput fd to non-blocking so poll_ff_events() never stalls.
+        let fd = device.as_raw_fd();
+        // SAFETY: fd is valid for the lifetime of `device`.
+        unsafe {
+            let flags = libc::fcntl(fd, libc::F_GETFL, 0);
+            libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
+        }
+
+        let free_ids = (0..FF_EFFECTS_MAX).collect();
         trace!(
-            "GamepadDevice::new: created {name:?} with {} keys, {} abs axes",
+            "GamepadDevice::new: created {name:?} with {} keys, {} abs axes, FF_RUMBLE enabled",
             keys.iter().count(),
             abs_axes_len,
         );
-        Ok(Self { device })
+        Ok(Self { device, free_ids, effects: HashMap::new() })
     }
 
     /// Emit a button press or release event.
@@ -162,5 +195,76 @@ impl GamepadDevice {
         }
 
         Ok(())
+    }
+
+    /// Poll pending force-feedback events from the uinput fd (non-blocking).
+    ///
+    /// Returns a list of `HapticCommand`s for any `FF_RUMBLE` effects that
+    /// an application has started playing since the last call.  Returns an
+    /// empty `Vec` when no events are pending.
+    pub(crate) fn poll_ff_events(&mut self) -> Vec<HapticCommand> {
+        let events = match self.device.fetch_events() {
+            Ok(iter) => iter.collect::<Vec<_>>(),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return vec![],
+            Err(e) => {
+                tracing::warn!("gamepad: fetch_events error: {e}");
+                return vec![];
+            }
+        };
+
+        const PLAYING: i32 = FFStatusCode::FF_STATUS_PLAYING.0 as i32;
+
+        let mut commands = Vec::new();
+        for event in events {
+            match event.destructure() {
+                EventSummary::UInput(ev, UInputCode::UI_FF_UPLOAD, ..) => {
+                    match self.device.process_ff_upload(ev) {
+                        Ok(mut upload) => {
+                            if let Some(id) = self.free_ids.iter().next().copied() {
+                                self.free_ids.remove(&id);
+                                let effect = upload.effect();
+                                let (strong, weak, duration) =
+                                    if let evdev::FFEffectKind::Rumble { strong_magnitude, weak_magnitude } = effect.kind {
+                                        (strong_magnitude, weak_magnitude, effect.replay.length)
+                                    } else {
+                                        (0, 0, 0)
+                                    };
+                                self.effects.insert(id, (strong, weak, duration as u32));
+                                upload.set_effect_id(id as i16);
+                                upload.set_retval(0);
+                                trace!("gamepad FF: upload effect id={id} strong={strong} weak={weak} duration={duration}ms");
+                            } else {
+                                upload.set_retval(-1);
+                                tracing::warn!("gamepad FF: no free effect slots");
+                            }
+                        }
+                        Err(e) => tracing::warn!("gamepad FF: process_ff_upload error: {e}"),
+                    }
+                }
+                EventSummary::UInput(ev, UInputCode::UI_FF_ERASE, ..) => {
+                    match self.device.process_ff_erase(ev) {
+                        Ok(erase) => {
+                            let id = erase.effect_id() as u16;
+                            self.effects.remove(&id);
+                            self.free_ids.insert(id);
+                            trace!("gamepad FF: erase effect id={id}");
+                        }
+                        Err(e) => tracing::warn!("gamepad FF: process_ff_erase error: {e}"),
+                    }
+                }
+                EventSummary::ForceFeedback(_, effect_id, PLAYING) => {
+                    if let Some(&(strong, weak, duration_ms)) = self.effects.get(&effect_id.0) {
+                        commands.push(HapticCommand {
+                            strong_magnitude: strong as f32 / FF_MAG_SCALE,
+                            weak_magnitude: weak as f32 / FF_MAG_SCALE,
+                            duration_ms,
+                        });
+                        trace!("gamepad FF: play effect id={} strong={strong} weak={weak}", effect_id.0);
+                    }
+                }
+                _ => {}
+            }
+        }
+        commands
     }
 }

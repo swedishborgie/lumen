@@ -6,6 +6,7 @@ description = "Virtual gamepad device management for the Lumen compositor via Li
 
 [dependencies]
 evdev    = { version = "0.13" }
+libc     = "0.2"
 tokio    = { workspace = true }
 tracing  = { workspace = true }
 thiserror = { workspace = true }

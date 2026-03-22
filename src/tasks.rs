@@ -137,14 +137,75 @@ pub fn spawn_encoder(
 ///
 /// Runs in `spawn_blocking` because uinput file descriptor writes are
 /// synchronous.  A channel bridges the async world to the blocking loop.
-pub fn spawn_gamepad_manager(gamepad_rx: tokio::sync::mpsc::Receiver<lumen_gamepad::GamepadEvent>) {
+///
+/// FF (force-feedback) events are polled at ~60 Hz; when an application
+/// plays a rumble effect the resulting `HapticCommand` is forwarded to
+/// `haptic_tx` so it can be relayed back to the browser.
+pub fn spawn_gamepad_manager(
+    gamepad_rx: tokio::sync::mpsc::Receiver<lumen_gamepad::GamepadEvent>,
+    haptic_tx: tokio::sync::mpsc::Sender<(u8, lumen_gamepad::HapticCommand)>,
+) {
     let mut rx = gamepad_rx;
     tokio::task::spawn_blocking(move || {
+        let handle = tokio::runtime::Handle::current();
+        let poll_interval = std::time::Duration::from_millis(16);
         let mut manager = lumen_gamepad::GamepadManager::new();
-        while let Some(ev) = rx.blocking_recv() {
-            manager.handle_event(ev);
+        loop {
+            // Block for up to 16 ms waiting for the next gamepad input event.
+            // The timeout ensures we poll FF events regularly even when the
+            // browser isn't actively pressing buttons.
+            let recv = handle.block_on(
+                tokio::time::timeout(poll_interval, rx.recv())
+            );
+
+            match recv {
+                // A gamepad input event arrived within the timeout.
+                Ok(Some(ev)) => manager.handle_event(ev),
+                // Channel closed — exit.
+                Ok(None) => {
+                    tracing::debug!("Gamepad manager: channel closed, exiting");
+                    break;
+                }
+                // Timeout elapsed with no input — just fall through to FF poll.
+                Err(_) => {}
+            }
+
+            // Poll force-feedback events from all connected virtual devices.
+            for (index, cmd) in manager.poll_haptic_commands() {
+                if haptic_tx.blocking_send((index, cmd)).is_err() {
+                    tracing::debug!("Gamepad haptic channel closed");
+                }
+            }
         }
-        tracing::debug!("Gamepad manager: channel closed, exiting");
+    });
+}
+
+/// Spawn the haptic fan-out task.
+///
+/// Receives `(gamepad_index, HapticCommand)` from the gamepad manager,
+/// serialises each command as a JSON data channel message, and broadcasts it
+/// to all active WebRTC sessions.
+pub fn spawn_haptic_fanout(
+    mut haptic_rx: tokio::sync::mpsc::Receiver<(u8, lumen_gamepad::HapticCommand)>,
+    session_manager: Arc<lumen_webrtc::SessionManager>,
+) {
+    tokio::spawn(async move {
+        while let Some((index, cmd)) = haptic_rx.recv().await {
+            let json = format!(
+                r#"{{"type":"haptic","index":{index},"strong_magnitude":{:.6},"weak_magnitude":{:.6},"duration_ms":{}}}"#,
+                cmd.strong_magnitude,
+                cmd.weak_magnitude,
+                cmd.duration_ms,
+            ).into_bytes();
+            tracing::debug!(
+                index,
+                strong_magnitude = cmd.strong_magnitude,
+                weak_magnitude = cmd.weak_magnitude,
+                duration_ms = cmd.duration_ms,
+                "haptic -> browser"
+            );
+            session_manager.broadcast_dc_message(json).await;
+        }
     });
 }
 

@@ -2017,6 +2017,7 @@ name = "lumen-gamepad"
 version = "0.1.0"
 dependencies = [
  "evdev",
+ "libc",
  "thiserror 2.0.18",
  "tokio",
  "tracing",

@@ -214,6 +214,7 @@ export class LumenUI {
       const msg = e.detail;
       if (msg.type === 'cursor_update') this.#cursor.apply(msg).catch(console.warn);
       else if (msg.type === 'clipboard_update') this.#applyClipboard(msg);
+      else if (msg.type === 'haptic') this.#gamepad.handleHaptic(msg);
       else console.warn('[lumen] dcmessage unknown type:', msg.type);
     });
   }

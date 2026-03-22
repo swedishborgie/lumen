@@ -63,6 +63,25 @@ export class GamepadController {
 
   // ── private helpers ──────────────────────────────────────────────────────────
 
+  /**
+   * Apply a haptic (rumble) command received from the compositor.
+   *
+   * Called by the UI layer when a `{ type: "haptic", ... }` data channel
+   * message arrives.  Uses the Gamepad API's `vibrationActuator` if available;
+   * silently no-ops when the browser or controller does not support it.
+   *
+   * @param {{ index: number, strong_magnitude: number, weak_magnitude: number, duration_ms: number }} msg
+   */
+  handleHaptic({ index, strong_magnitude, weak_magnitude, duration_ms }) {
+    const gp = navigator.getGamepads()[index];
+    if (!gp?.vibrationActuator) return;
+    gp.vibrationActuator.playEffect('dual-rumble', {
+      duration:        duration_ms,
+      strongMagnitude: strong_magnitude,
+      weakMagnitude:   weak_magnitude,
+    }).catch(() => {});
+  }
+
   #handleConnected(e) {
     const gp    = e.gamepad;
     const index = gp.index;

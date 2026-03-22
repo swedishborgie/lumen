@@ -93,6 +93,20 @@ pub enum GamepadEvent {
     },
 }
 
+/// A haptic (rumble) command produced when a Linux application plays a
+/// force-feedback effect on one of the virtual gamepad devices.
+///
+/// Magnitudes are in the range `0.0` (no vibration) to `1.0` (maximum).
+#[derive(Debug, Clone)]
+pub struct HapticCommand {
+    /// Low-frequency (strong) motor magnitude, 0.0–1.0.
+    pub strong_magnitude: f32,
+    /// High-frequency (weak) motor magnitude, 0.0–1.0.
+    pub weak_magnitude: f32,
+    /// Requested effect duration in milliseconds.
+    pub duration_ms: u32,
+}
+
 /// Manages up to [`MAX_GAMEPADS`] virtual uinput gamepad devices.
 ///
 /// This type is `!Send`; run it inside [`tokio::task::spawn_blocking`].
@@ -196,6 +210,21 @@ impl GamepadManager {
             .get_mut(&index)
             .ok_or(GamepadError::NotConnected(index))?;
         dev.send_axis(axis, value)
+    }
+
+    /// Poll all connected devices for pending force-feedback play events.
+    ///
+    /// Returns `(gamepad_index, command)` pairs for each `FF_RUMBLE` effect
+    /// that a Linux application has triggered since the last call.  Should be
+    /// called periodically (e.g. every ~16 ms) from the gamepad manager task.
+    pub fn poll_haptic_commands(&mut self) -> Vec<(u8, HapticCommand)> {
+        let mut out = Vec::new();
+        for (&index, device) in &mut self.devices {
+            for cmd in device.poll_ff_events() {
+                out.push((index, cmd));
+            }
+        }
+        out
     }
 }
 

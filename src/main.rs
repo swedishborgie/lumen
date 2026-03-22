@@ -102,6 +102,8 @@ async fn main() -> Result<()> {
     // Gamepad events from the browser are forwarded to the gamepad manager which
     // creates and drives virtual uinput devices.
     let (gamepad_tx, gamepad_rx) = tokio::sync::mpsc::channel::<lumen_gamepad::GamepadEvent>(64);
+    // Haptic commands from the gamepad manager are broadcast back to browsers.
+    let (haptic_tx, haptic_rx) = tokio::sync::mpsc::channel::<(u8, lumen_gamepad::HapticCommand)>(64);
 
     // ── Shutdown signal ───────────────────────────────────────────────────────
     // When --launch is used, the child exiting triggers a graceful shutdown of
@@ -119,13 +121,14 @@ async fn main() -> Result<()> {
         enc_resize_rx,
         peer_count,
     );
-    tasks::spawn_gamepad_manager(gamepad_rx);
+    tasks::spawn_gamepad_manager(gamepad_rx, haptic_tx);
     let _shutdown_keep_alive = tasks::spawn_launch_task(
         args.effective_launch(),
         socket_name_rx,
         shutdown_tx,
     );
     tasks::spawn_input_forwarder(input_rx, compositor_input_tx.clone(), gamepad_tx);
+    tasks::spawn_haptic_fanout(haptic_rx, session_manager.clone());
     tasks::spawn_resize_coordinator(
         resize_rx,
         compositor_input_tx.clone(),

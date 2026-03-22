@@ -84,6 +84,8 @@ async fn main() -> Result<()> {
         bitrate_kbps: args.video_bitrate_kbps,
         max_bitrate_kbps: args.max_bitrate_kbps.unwrap_or(args.video_bitrate_kbps * 2),
         render_node: effective_dri_node,
+        #[cfg(feature = "nvenc")]
+        cuda_device: hardware::resolve_cuda_device(&args),
         ..Default::default()
     };
 

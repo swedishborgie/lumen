@@ -20,6 +20,14 @@ pub struct EncoderConfig {
     /// VA-API DRM render node. `None` triggers auto-detection.
     /// Use `Some(PathBuf::from(""))` to force software encoding.
     pub render_node: Option<PathBuf>,
+    /// CUDA device index for NVENC encoding (e.g. `"0"` for the first GPU).
+    ///
+    /// Only meaningful when the `nvenc` feature is enabled.  `None` disables
+    /// the NVENC probe and falls through to VA-API / x264.  Defaults to `"0"`
+    /// so that the first NVIDIA GPU is tried automatically when the feature is
+    /// active.
+    #[cfg(feature = "nvenc")]
+    pub cuda_device: Option<String>,
 }
 
 impl Default for EncoderConfig {
@@ -31,6 +39,8 @@ impl Default for EncoderConfig {
             bitrate_kbps: 4000,
             max_bitrate_kbps: 8000,
             render_node: None,
+            #[cfg(feature = "nvenc")]
+            cuda_device: Some("0".to_string()),
         }
     }
 }
@@ -86,12 +96,41 @@ pub fn probe_vaapi(config: &EncoderConfig) -> bool {
     }
 }
 
+/// Probe whether NVENC hardware encoding is available for the given config.
+///
+/// Returns `true` if an `NvencEncoder` can be successfully initialised with
+/// the CUDA device specified in `config`.  Requires the `nvenc` Cargo feature.
+#[cfg(feature = "nvenc")]
+pub fn probe_nvenc(config: &EncoderConfig) -> bool {
+    config
+        .cuda_device
+        .as_deref()
+        .map(|d| !d.is_empty())
+        .unwrap_or(false)
+        && crate::nvenc::NvencEncoder::new(config).is_ok()
+}
+
 /// Auto-select the best available encoder backend.
 ///
-/// Probes VA-API on `config.render_node` when a path is set; otherwise uses
-/// the software x264 encoder.  The VA-API path is currently a compile-time
-/// feature stub — set `render_node` to `None` or `Some("")` to force software.
+/// Probe order (when features are active):
+///   1. NVENC  — when `nvenc` feature is enabled and `config.cuda_device` is set.
+///   2. VA-API — when `config.render_node` is a non-empty path.
+///   3. x264   — always available software fallback.
 pub fn create_encoder(config: &EncoderConfig) -> Result<Box<dyn VideoEncoder>> {
+    // NVENC path: only when feature is enabled and a CUDA device is configured.
+    #[cfg(feature = "nvenc")]
+    if config.cuda_device.as_deref().map(|d| !d.is_empty()).unwrap_or(false) {
+        match crate::nvenc::NvencEncoder::new(config) {
+            Ok(enc) => {
+                tracing::info!("Using NVENC hardware encoder");
+                return Ok(Box::new(enc));
+            }
+            Err(e) => {
+                tracing::warn!("NVENC encoder unavailable ({}), trying VA-API / x264", e);
+            }
+        }
+    }
+
     // VA-API path: only attempt if a non-empty render node path is specified.
     if config.render_node.as_deref().map(|p| !p.as_os_str().is_empty()).unwrap_or(false) {
         match crate::vaapi::VaapiEncoder::new(config) {

@@ -133,6 +133,12 @@ pub struct Args {
     pub audio_device: Option<String>,
     #[arg(long, env = "LUMEN_DRI_NODE")]
     pub dri_node: Option<PathBuf>,
+    /// CUDA device index for NVENC hardware encoding. Only used when lumen is
+    /// compiled with the `nvenc` feature. Defaults to `"0"` (first NVIDIA GPU).
+    /// Set to an empty string to disable NVENC and fall back to VA-API / x264.
+    #[cfg(feature = "nvenc")]
+    #[arg(long, env = "LUMEN_CUDA_DEVICE")]
+    pub cuda_device: Option<String>,
     /// Wayland socket name of a nested inner compositor whose clipboard should be bridged
     /// (e.g. `wayland-inner`). Defaults to `auto`, which scans `$XDG_RUNTIME_DIR` for a
     /// compositor advertising `zwlr_data_control_manager_v1`. Set to an empty string to

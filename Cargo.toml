@@ -51,6 +51,15 @@ license = "MIT"
 description = "A Wayland compositor that streams the desktop to browsers via WebRTC."
 edition = "2021"
 
+[features]
+# Enable NVIDIA NVENC hardware H.264 encoding.
+#
+# Requires (at runtime):
+#   - NVIDIA GPU with NVENC support (Kepler or newer)
+#   - NVIDIA driver 470+ (DMA-BUF external memory import)
+#   - FFmpeg built with --enable-nvenc and --enable-cuda
+nvenc = ["lumen-encode/nvenc"]
+
 [dependencies]
 lumen-compositor = { path = "crates/lumen-compositor" }
 lumen-audio      = { path = "crates/lumen-audio" }

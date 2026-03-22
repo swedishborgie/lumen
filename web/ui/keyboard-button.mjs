@@ -158,8 +158,31 @@ export class FloatingKeyboard {
 
   // ── drag behaviour ────────────────────────────────────────────────────────────
 
+  /** Re-clamp button position after a viewport resize or orientation change. */
+  #clampPosition() {
+    const btn = this.#btn;
+    const maxRight  = window.innerWidth  - btn.offsetWidth;
+    const maxBottom = window.innerHeight - btn.offsetHeight;
+    const right  = Math.max(0, Math.min(maxRight,  parseFloat(btn.style.right)  || 16));
+    const bottom = Math.max(0, Math.min(maxBottom, parseFloat(btn.style.bottom) || 16));
+    btn.style.right  = `${right}px`;
+    btn.style.bottom = `${bottom}px`;
+  }
+
   #bindDrag() {
     const btn = this.#btn;
+
+    window.addEventListener('resize', () => this.#clampPosition());
+
+    // Blur the hidden textarea when the user taps outside the button so that
+    // iOS does not re-show the soft keyboard on the next canvas interaction.
+    // Capture phase fires before the canvas pointerdown handler.
+    document.addEventListener('pointerdown', (e) => {
+      if (e.target !== btn && e.target !== this.#input) {
+        this.#input.blur();
+      }
+    }, { capture: true });
+
     let startX = 0, startY = 0;
     let startRight = 0, startBottom = 0;
     let dragging = false;
@@ -187,8 +210,10 @@ export class FloatingKeyboard {
       }
       if (dragging) {
         // right/bottom anchoring keeps the button visible when viewport resizes.
-        const newRight  = Math.max(0, startRight  - dx);
-        const newBottom = Math.max(0, startBottom + dy);
+        const maxRight  = window.innerWidth  - btn.offsetWidth;
+        const maxBottom = window.innerHeight - btn.offsetHeight;
+        const newRight  = Math.max(0, Math.min(maxRight,  startRight  - dx));
+        const newBottom = Math.max(0, Math.min(maxBottom, startBottom - dy));
         btn.style.right  = `${newRight}px`;
         btn.style.bottom = `${newBottom}px`;
       }

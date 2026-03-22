@@ -308,6 +308,7 @@ button:disabled { opacity: 0.4; cursor: default; }
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
   transition: background 0.15s, border-color 0.15s, opacity 0.15s;
   display: flex;
   align-items: center;

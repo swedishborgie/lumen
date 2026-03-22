@@ -47,7 +47,7 @@ use smithay::{
         xdg_activation::{
             XdgActivationHandler, XdgActivationState, XdgActivationToken, XdgActivationTokenData,
         },
-        pointer_constraints::{PointerConstraintsHandler},
+        pointer_constraints::{PointerConstraintsHandler, with_pointer_constraint},
         pointer_warp::PointerWarpHandler,
     },
 };
@@ -395,7 +395,17 @@ delegate_xdg_activation!(AppState);
 // ---------------------------------------------------------------------------
 
 impl PointerConstraintsHandler for AppState {
-    fn new_constraint(&mut self, _surface: &WlSurface, _pointer: &PointerHandle<Self>) {}
+    fn new_constraint(&mut self, surface: &WlSurface, pointer: &PointerHandle<Self>) {
+        // Activate the constraint immediately so that the client receives the
+        // `locked` / `confined` event and can proceed with its input setup.
+        // Fullscreen games (e.g. SDL-based Steam games) require this to start
+        // consuming relative pointer motion.
+        with_pointer_constraint(surface, pointer, |constraint| {
+            if let Some(c) = constraint {
+                c.activate();
+            }
+        });
+    }
     fn cursor_position_hint(&mut self, _surface: &WlSurface, _pointer: &PointerHandle<Self>, _location: Point<f64, Logical>) {}
 }
 delegate_pointer_constraints!(AppState);

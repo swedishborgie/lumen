@@ -3,7 +3,7 @@ use smithay::{
     desktop::WindowSurfaceType,
     input::{
         keyboard::{FilterResult, Keycode},
-        pointer::{AxisFrame, ButtonEvent, MotionEvent},
+        pointer::{AxisFrame, ButtonEvent, MotionEvent, RelativeMotionEvent},
     },
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{Point, Serial, SERIAL_COUNTER},
@@ -43,6 +43,16 @@ pub enum InputEvent {
     PointerMotion {
         x: f64,
         y: f64,
+    },
+    /// Relative pointer motion, used when the browser has acquired pointer lock
+    /// (e.g. fullscreen games). Carries raw, unaccelerated, unclamped deltas in
+    /// compositor logical pixel space. The compositor sends these as
+    /// `zwp_relative_pointer_v1` events so that games receive the motion they
+    /// need, while also delivering a `wl_pointer.motion` at the updated absolute
+    /// position for surface-focus purposes.
+    PointerMotionRelative {
+        dx: f64,
+        dy: f64,
     },
     PointerButton {
         /// Linux evdev button code (e.g. BTN_LEFT = 0x110).
@@ -125,6 +135,9 @@ pub fn inject_input(state: &mut AppState, event: InputEvent) {
         InputEvent::PointerMotion { x, y } => {
             inject_pointer_motion(state, serial, time, x, y);
         }
+        InputEvent::PointerMotionRelative { dx, dy } => {
+            inject_pointer_motion_relative(state, serial, time, dx, dy);
+        }
         InputEvent::PointerButton { btn, state: btn_state } => {
             let n_windows = state.space.elements().count();
             tracing::debug!(btn, btn_state, n_windows, "inject_input: PointerButton");
@@ -178,6 +191,10 @@ fn inject_pointer_motion(state: &mut AppState, serial: Serial, time: u32, x: f64
     let pointer = state.seat.get_pointer().unwrap();
     let location = Point::from((x, y));
 
+    // Keep cursor_pos in sync so relative motion can compute a correct
+    // absolute position when it's delivered later.
+    state.cursor_pos = location;
+
     // Resolve the actual surface under the cursor, including popup surfaces.
     let focus = surface_under_at(state, location)
         .map(|(s, offset)| (s, offset.to_f64()));
@@ -188,6 +205,47 @@ fn inject_pointer_motion(state: &mut AppState, serial: Serial, time: u32, x: f64
     }
 
     pointer.motion(state, focus, &MotionEvent { location, serial, time });
+    pointer.frame(state);
+}
+
+/// Inject a relative pointer motion event.
+///
+/// Called when the browser has pointer lock active (e.g. a fullscreen game).
+/// Delivers both a `zwp_relative_pointer_v1` event (which games consume for
+/// camera / aim control) and a `wl_pointer.motion` at the updated absolute
+/// position (for surface-focus bookkeeping and non-relative-aware clients).
+fn inject_pointer_motion_relative(state: &mut AppState, serial: Serial, time: u32, dx: f64, dy: f64) {
+    let pointer = state.seat.get_pointer().unwrap();
+
+    // Advance the virtual cursor position and clamp to the output bounds so
+    // that button events after a relative-motion sequence still hit the right
+    // surface even when the game has been moving the mouse past screen edges.
+    let new_x = (state.cursor_pos.x + dx).clamp(0.0, (state.width - 1).max(0) as f64);
+    let new_y = (state.cursor_pos.y + dy).clamp(0.0, (state.height - 1).max(0) as f64);
+    state.cursor_pos = Point::from((new_x, new_y));
+
+    // Resolve the surface under the updated cursor position.
+    let focus = surface_under_at(state, state.cursor_pos)
+        .map(|(s, offset)| (s, offset.to_f64()));
+
+    // Deliver the relative motion event — this is what fullscreen games (e.g.
+    // Steam games using SDL) rely on for mouse-look / camera control.
+    // `utime` is a microsecond timestamp as required by the protocol.
+    let utime = current_time_ms() as u64 * 1000;
+    pointer.relative_motion(
+        state,
+        focus.clone(),
+        &RelativeMotionEvent {
+            delta: Point::from((dx, dy)),
+            delta_unaccel: Point::from((dx, dy)),
+            utime,
+        },
+    );
+
+    // Also deliver an absolute motion event so that the focused surface's
+    // wl_pointer.enter / wl_pointer.motion serial stays up to date, and so
+    // that any client that does not use relative pointer still gets movement.
+    pointer.motion(state, focus, &MotionEvent { location: state.cursor_pos, serial, time });
     pointer.frame(state);
 }
 

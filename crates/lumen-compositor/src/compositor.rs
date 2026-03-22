@@ -233,6 +233,7 @@ impl Compositor {
             bridge_write_tx: None,
             last_log_time: Instant::now(), encoded_frame_count: 0, start_time: Instant::now(),
             use_gpu,
+            cursor_pos: smithay::utils::Point::from((0.0, 0.0)),
         };
 
         // -----------------------------------------------------------------------

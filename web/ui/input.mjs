@@ -175,9 +175,15 @@ export class InputHandler {
     if (e.pointerType === 'touch' && this.#touchActive) return;
     if (this.#pointerLocked) {
       const { scaleX, scaleY, vw, vh } = getDisplayScale(this.#videoEl);
-      this.#vMouseX = Math.max(0, Math.min(vw - 1, this.#vMouseX + e.movementX * scaleX));
-      this.#vMouseY = Math.max(0, Math.min(vh - 1, this.#vMouseY + e.movementY * scaleY));
-      this.#client.sendInput({ type: 'pointer_motion', x: this.#vMouseX, y: this.#vMouseY });
+      // Send raw, unclamped deltas so that fullscreen games (which rely on
+      // zwp_relative_pointer_v1) receive accurate motion past screen edges.
+      const dx = e.movementX * scaleX;
+      const dy = e.movementY * scaleY;
+      this.#client.sendInput({ type: 'pointer_motion_relative', dx, dy });
+      // Keep the virtual cursor position clamped so that button events
+      // (clicks) after a lock session still target the correct surface.
+      this.#vMouseX = Math.max(0, Math.min(vw - 1, this.#vMouseX + dx));
+      this.#vMouseY = Math.max(0, Math.min(vh - 1, this.#vMouseY + dy));
       const dp = compositorToDisplayCoords(this.#videoEl, this.#vMouseX, this.#vMouseY);
       this.#cursor.moveTo(dp.x, dp.y);
     } else {

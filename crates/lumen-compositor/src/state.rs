@@ -19,7 +19,7 @@ use smithay::{
     },
     output::Output,
     reexports::wayland_server::DisplayHandle,
-    utils::{Clock, Monotonic},
+    utils::{Clock, Logical, Monotonic, Point},
     wayland::{
         compositor::CompositorState,
         dmabuf::{DmabufGlobal, DmabufState},
@@ -130,6 +130,12 @@ pub struct AppState {
     pub last_log_time: Instant,
     pub encoded_frame_count: u32,
     pub start_time: Instant,
+
+    /// Current virtual cursor position in compositor logical space.
+    /// Updated by absolute and relative pointer motion events. Used by
+    /// `inject_pointer_motion_relative` to maintain a sane absolute position
+    /// for surface-focus resolution alongside relative motion delivery.
+    pub cursor_pos: Point<f64, Logical>,
 }
 
 /// Per-client data stored by the Wayland server.

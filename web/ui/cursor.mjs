@@ -68,18 +68,21 @@ export class CursorManager {
         this.#kind = 'default';
         this.#img  = null;
         this.#canvas.style.cursor = '';
+        this.#setContainerCursor('none'); // canvas draws arrow; hide native cursor
         console.debug('[cursor] -> default arrow (canvas draw)');
         break;
       case 'named':
         this.#kind = 'named';
         this.#img  = null;
         this.#canvas.style.cursor = msg.css || 'default';
+        this.#setContainerCursor(msg.css || 'default');
         console.debug('[cursor] -> named css:', msg.css);
         break;
       case 'hidden':
         this.#kind = 'hidden';
         this.#img  = null;
         this.#canvas.style.cursor = 'none';
+        this.#setContainerCursor('none');
         console.debug('[cursor] -> hidden');
         break;
       case 'image': {
@@ -93,6 +96,7 @@ export class CursorManager {
         this.#img  = await createImageBitmap(new ImageData(pixels, w, h));
         this.#kind = 'image';
         this.#canvas.style.cursor = 'none';
+        this.#setContainerCursor('none'); // canvas draws custom image; hide native cursor
         console.debug(`[cursor] -> image ${w}x${h} hotspot=(${hotspot_x},${hotspot_y})`);
         break;
       }
@@ -103,6 +107,15 @@ export class CursorManager {
   }
 
   // ── private helpers ──────────────────────────────────────────────────────────
+
+  /** Apply a CSS cursor value to the video container element.
+   *  The cursor canvas has pointer-events:none so the browser resolves cursor
+   *  style from the container div.  Chrome on macOS also ignores cursor:none
+   *  on <video> elements, making this the reliable place to set it. */
+  #setContainerCursor(css) {
+    const el = this.#videoEl.parentElement ?? this.#videoEl;
+    el.style.cursor = css;
+  }
 
   #resizeCanvas() {
     const rect = this.#videoEl.getBoundingClientRect();

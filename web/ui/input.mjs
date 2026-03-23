@@ -8,6 +8,19 @@
 import { KEY_MAP, BTN_CODES } from '../lumen-client.mjs';
 import { getDisplayScale, toCompositorCoords, compositorToDisplayCoords } from './coords.mjs';
 
+// Evdev scancodes that are modifier keys. Used to distinguish regular keys
+// from modifiers when synthesising missing keyup events (see #releaseNonModifierKeys).
+const MODIFIER_SCANCODES = new Set([
+  29,  // ControlLeft
+  42,  // ShiftLeft
+  54,  // ShiftRight
+  56,  // AltLeft
+  97,  // ControlRight
+  100, // AltRight
+  125, // MetaLeft
+  126, // MetaRight
+]);
+
 export class InputHandler {
   #videoEl;
   #client;
@@ -172,6 +185,25 @@ export class InputHandler {
     if (sc === undefined) return;
     this.#pressedKeys.delete(sc);
     this.#client.sendInput({ type: 'keyboard_key', scancode: sc, state: 0 });
+    // macOS intercepts Cmd+key shortcuts at the OS level and does not fire
+    // keyup for the non-modifier key (e.g. Cmd+C never gets keyup for C).
+    // In Mac Mode the Cmd (Meta) key acts as Ctrl, so when it is released we
+    // synthesise keyup for any regular keys that were stuck held.
+    if (this.#macModeEl?.checked && (e.code === 'MetaLeft' || e.code === 'MetaRight')) {
+      this.#releaseNonModifierKeys();
+    }
+  }
+
+  /** Send key-up for every currently held non-modifier key and remove it from
+   *  the tracking set.  Used to recover from macOS swallowing keyup events for
+   *  non-modifier keys used in Cmd+key chords (Mac Mode only). */
+  #releaseNonModifierKeys() {
+    for (const sc of [...this.#pressedKeys]) {
+      if (!MODIFIER_SCANCODES.has(sc)) {
+        this.#pressedKeys.delete(sc);
+        this.#client.sendInput({ type: 'keyboard_key', scancode: sc, state: 0 });
+      }
+    }
   }
 
   /** Send key-up for every currently held key and clear the tracking set.

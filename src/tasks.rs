@@ -389,6 +389,14 @@ pub fn spawn_video_fanout(
                     tracing::debug!("Video push error: {e:#}");
                 }
             }
+            // Yield to the tokio scheduler so each drive task gets a chance to
+            // flush the frame we just pushed into str0m before the next frame
+            // arrives.  Without this the fan-out loop can immediately receive
+            // and push the next frame before any drive task runs, causing two
+            // frames to accumulate in str0m's pacer queue and be sent as a
+            // burst — producing the 59ms/0ms double-frame pattern visible in
+            // push_video interval logs and perceived as a stall by Firefox.
+            tokio::task::yield_now().await;
         }
     });
 }

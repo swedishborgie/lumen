@@ -10,8 +10,6 @@
 
 use std::collections::VecDeque;
 use std::ffi::CString;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
@@ -74,7 +72,9 @@ pub struct VaapiEncoder {
     filter_buffersink: *mut AVFilterContext,
     dmabuf_path_ok: bool,
 
-    keyframe_requested: Arc<AtomicBool>,
+    /// Set by `request_keyframe()`; consumed in `encode_from_dmabuf()` to force
+    /// an IDR on the current frame by setting `pict_type = AV_PICTURE_TYPE_I`.
+    force_keyframe: bool,
     width: i32,
     height: i32,
     frame_index: i64,
@@ -186,7 +186,7 @@ impl VaapiEncoder {
             (*codec_ctx).pix_fmt = AVPixelFormat::AV_PIX_FMT_VAAPI;
             (*codec_ctx).time_base = AVRational { num: 1, den: 1000 };
             (*codec_ctx).framerate = AVRational { num: config.fps as i32, den: 1 };
-            (*codec_ctx).gop_size = (config.fps * 2.0) as i32;
+            (*codec_ctx).gop_size = config.fps as i32;
             (*codec_ctx).max_b_frames = 0;
             (*codec_ctx).bit_rate = (config.bitrate_kbps as i64) * 1000;
             (*codec_ctx).rc_max_rate = (config.max_bitrate_kbps as i64) * 1000;
@@ -278,7 +278,7 @@ impl VaapiEncoder {
                 filter_buffersrc,
                 filter_buffersink,
                 dmabuf_path_ok,
-                keyframe_requested: Arc::new(AtomicBool::new(false)),
+                force_keyframe: false,
                 width: w,
                 height: h,
                 frame_index: 0,
@@ -351,6 +351,15 @@ impl VaapiEncoder {
         if ret == AVERROR(EAGAIN) { return Ok(None); }
         if ret < 0 { bail!("av_buffersink_get_frame failed: {}", ret); }
 
+        // Force an IDR if one was requested (e.g. browser sent a PLI/FIR).
+        // Must be set on the VAAPI frame going to avcodec_send_frame, not the
+        // DRM_PRIME input frame — the filter graph does not propagate pict_type.
+        if self.force_keyframe {
+            (*nv12_frame.as_mut()).pict_type = AVPictureType::AV_PICTURE_TYPE_I;
+            (*nv12_frame.as_mut()).key_frame = 1;
+            self.force_keyframe = false;
+        }
+
         self.send_and_receive(&mut nv12_frame, frame.pts_ms, frame.captured_at)
     }
 
@@ -406,10 +415,6 @@ impl Drop for VaapiEncoder {
 
 impl VideoEncoder for VaapiEncoder {
     fn encode(&mut self, frame: CapturedFrame) -> Result<Option<EncodedFrame>> {
-        if self.keyframe_requested.swap(false, Ordering::Relaxed) {
-            tracing::debug!("Keyframe requested (VA-API: will emit on next GOP boundary)");
-        }
-
         unsafe {
             if frame.dmabuf.is_some() {
                 if !self.dmabuf_path_ok {
@@ -427,7 +432,7 @@ impl VideoEncoder for VaapiEncoder {
     }
 
     fn request_keyframe(&mut self) {
-        self.keyframe_requested.store(true, Ordering::Relaxed);
+        self.force_keyframe = true;
     }
 
     fn update_bitrate(&mut self, kbps: u32) {
@@ -480,7 +485,7 @@ impl VideoEncoder for VaapiEncoder {
             (*codec_ctx).pix_fmt = AVPixelFormat::AV_PIX_FMT_VAAPI;
             (*codec_ctx).time_base = AVRational { num: 1, den: 1000 };
             (*codec_ctx).framerate = AVRational { num: self.fps as i32, den: 1 };
-            (*codec_ctx).gop_size = (self.fps * 2.0) as i32;
+            (*codec_ctx).gop_size = self.fps as i32;
             (*codec_ctx).max_b_frames = 0;
             (*codec_ctx).bit_rate = (self.bitrate_kbps as i64) * 1000;
             (*codec_ctx).rc_max_rate = (self.max_bitrate_kbps as i64) * 1000;
@@ -544,6 +549,7 @@ impl VideoEncoder for VaapiEncoder {
             self.height = h;
             self.frame_index = 0;
             self.pending_captured_at.clear();
+            self.force_keyframe = true; // ensure the first frame after resize is an IDR
         }
 
         tracing::info!("VA-API encoder resized to {}x{}", width, height);

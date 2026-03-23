@@ -117,7 +117,10 @@ fn render_gles(
         );
     }
 
-    match damage_tracker.render_output(&mut renderer, &mut target, 1, &elements, [0.05, 0.05, 0.05, 1.0]) {
+    // age=0: always do a full repaint.  The VA-API encoder processes the entire
+    // NV12 frame regardless of damage, so partial repaints offer no benefit on
+    // the GPU path and the extra bookkeeping just adds complexity.
+    match damage_tracker.render_output(&mut renderer, &mut target, 0, &elements, [0.05, 0.05, 0.05, 1.0]) {
         Ok(_) => {
             // Flush pending GL commands so the compositor's write fence is submitted
             // promptly before the render target is unbound.  glFlush (non-blocking)

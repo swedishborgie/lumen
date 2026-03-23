@@ -13,6 +13,7 @@ export class InputHandler {
   #client;
   #cursor;
   #onUserGesture;
+  #macModeEl;     // HTMLInputElement checkbox for Mac Mode (may be null)
   #pointerLocked  = false;
   #vMouseX = 0;   // virtual cursor position in compositor pixel space
   #vMouseY = 0;
@@ -30,12 +31,14 @@ export class InputHandler {
    * @param {import('../lumen-client.mjs').LumenClient} client
    * @param {import('./cursor.mjs').CursorManager} cursor
    * @param {(() => void) | null} onUserGesture  Called on first keydown or pointerdown gesture.
+   * @param {HTMLInputElement | null} macModeEl  Checkbox that enables Mac Mode (swaps Cmd↔Ctrl).
    */
-  constructor(videoEl, client, cursor, onUserGesture = null) {
+  constructor(videoEl, client, cursor, onUserGesture = null, macModeEl = null) {
     this.#videoEl       = videoEl;
     this.#client        = client;
     this.#cursor        = cursor;
     this.#onUserGesture = onUserGesture;
+    this.#macModeEl     = macModeEl ?? null;
   }
 
   /** Attach all input event listeners. */
@@ -137,6 +140,16 @@ export class InputHandler {
 
   // ── private event handlers ────────────────────────────────────────────────────
 
+  /** Swap Meta↔Control scancodes when Mac Mode is active. */
+  #applyMacMode(sc) {
+    if (!this.#macModeEl?.checked) return sc;
+    if (sc === 125) return 29;  // MetaLeft  → ControlLeft
+    if (sc === 126) return 97;  // MetaRight → ControlRight
+    if (sc === 29)  return 125; // ControlLeft  → MetaLeft
+    if (sc === 97)  return 126; // ControlRight → MetaRight
+    return sc;
+  }
+
   #handleKeyDown(e) {
     e.preventDefault();
     // Browser auto-repeat events (e.repeat=true) arrive at the OS repeat rate
@@ -147,7 +160,7 @@ export class InputHandler {
     // timer on every event, so the timer never fires and repeat never works.
     if (e.repeat) return;
     this.#onUserGesture?.();
-    const sc = KEY_MAP[e.code];
+    const sc = this.#applyMacMode(KEY_MAP[e.code]);
     if (sc === undefined) return;
     this.#pressedKeys.add(sc);
     this.#client.sendInput({ type: 'keyboard_key', scancode: sc, state: 1 });
@@ -155,7 +168,7 @@ export class InputHandler {
 
   #handleKeyUp(e) {
     e.preventDefault();
-    const sc = KEY_MAP[e.code];
+    const sc = this.#applyMacMode(KEY_MAP[e.code]);
     if (sc === undefined) return;
     this.#pressedKeys.delete(sc);
     this.#client.sendInput({ type: 'keyboard_key', scancode: sc, state: 0 });

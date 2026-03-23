@@ -27,19 +27,18 @@
 
   <div id="tray">
     <div id="controls">
-      <button id="btn-connect">Connect</button>
-      <button id="btn-disconnect" disabled>Disconnect</button>
-      <button id="btn-fullscreen" disabled>⛶ Fullscreen</button>
+      <button id="btn-connect-toggle">Connect</button>
+      <button id="btn-fullscreen" disabled title="Enter fullscreen mode. In Chromium, system keys like Escape and Super are captured for the compositor.">⛶ Fullscreen</button>
     </div>
     <div id="status">Idle</div>
     <div id="display-section">
-      <div class="tray-label">Display</div>
+      <div class="tray-label">Display<i class="help-icon" title="Controls the compositor output resolution. Auto follows your browser window; Fixed locks to a specific size.">ⓘ</i></div>
       <div id="display-mode-toggle">
-        <button id="display-auto" class="active">Auto</button>
-        <button id="display-fixed">Fixed</button>
+        <button id="display-auto" class="active" title="Automatically resize the compositor to match your browser window.">Auto</button>
+        <button id="display-fixed" title="Lock the compositor to a fixed resolution regardless of browser window size.">Fixed</button>
       </div>
       <div id="ui-scale-row" class="tray-row">
-        <span class="tray-label">Match browser UI scale</span>
+        <span class="tray-label">Match browser UI scale<i class="help-icon" title="Scales the compositor output to match your browser's device pixel ratio, improving sharpness on HiDPI and Retina displays.">ⓘ</i></span>
         <label class="toggle-switch">
           <input type="checkbox" id="ui-scale-toggle">
           <span class="toggle-track"></span>
@@ -59,16 +58,25 @@
       </div>
     </div>
     <div id="clipboard-section">
-      <div class="tray-label">Clipboard</div>
+      <div class="tray-label">Clipboard<i class="help-icon" title="Paste text here to send it to the compositor clipboard. Updates automatically when the compositor clipboard changes.">ⓘ</i></div>
       <textarea id="clipboard-input" placeholder="Paste or type here to send to compositor. Updated automatically when compositor clipboard changes." rows="5" spellcheck="false"></textarea>
     </div>
     <div id="gamepad-section">
-      <div class="tray-label">Controllers</div>
+      <div class="tray-label">Controllers<i class="help-icon" title="Connected gamepads are forwarded to the compositor. Plug in a controller and it will appear here.">ⓘ</i></div>
       <div id="gamepad-list"><span class="gamepad-none">No controllers detected</span></div>
+    </div>
+    <div id="input-section">
+      <div class="tray-row">
+        <span class="tray-label">Mac Mode<i class="help-icon" title="Swaps the Command (⌘) and Control keys so Mac shortcuts like ⌘C work as Ctrl+C in Linux apps.">ⓘ</i></span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="mac-mode-toggle">
+          <span class="toggle-track"></span>
+        </label>
+      </div>
     </div>
     <div id="stats-section">
       <div class="tray-row">
-        <span class="tray-label">Performance overlay</span>
+        <span class="tray-label">Performance overlay<i class="help-icon" title="Shows a real-time overlay with frame rate, bitrate, and latency statistics.">ⓘ</i></span>
         <div class="tray-row-actions">
           <button id="btn-copy-metrics" class="tray-action-btn" title="Copy metrics to clipboard" style="display:none">Copy</button>
           <label class="toggle-switch">
@@ -78,14 +86,14 @@
         </div>
       </div>
       <div class="tray-row">
-        <span class="tray-label">Debug logging</span>
+        <span class="tray-label">Debug logging<i class="help-icon" title="Writes detailed connection and protocol events to the browser console for troubleshooting.">ⓘ</i></span>
         <label class="toggle-switch">
           <input type="checkbox" id="debug-toggle">
           <span class="toggle-track"></span>
         </label>
       </div>
       <div id="debug-level-row" class="tray-row" style="display:none">
-        <span class="tray-label">Log level</span>
+        <span class="tray-label">Log level<i class="help-icon" title="Controls how much detail is written to the browser console. Error shows the least; Verbose shows the most.">ⓘ</i></span>
         <select id="debug-level">
           <option value="1">Error</option>
           <option value="2">Warning</option>
@@ -112,8 +120,8 @@
       debugToggle:    document.getElementById('debug-toggle'),
       debugLevel:     document.getElementById('debug-level'),
       debugLevelRow:  document.getElementById('debug-level-row'),
-      btnConnect:     document.getElementById('btn-connect'),
-      btnDisconnect:  document.getElementById('btn-disconnect'),
+      btnConnect:     document.getElementById('btn-connect-toggle'),
+      macModeToggle:  document.getElementById('mac-mode-toggle'),
       btnFullscreen:  document.getElementById('btn-fullscreen'),
       statusEl:       document.getElementById('status'),
       fullscreenHint: document.getElementById('fullscreen-hint'),

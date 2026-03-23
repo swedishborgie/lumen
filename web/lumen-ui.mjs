@@ -21,13 +21,14 @@ export class LumenUI {
   #client;
   #els;         // { video, videoContainer, cursorCanvas, perfCanvas, perfToggle,
                 //   debugToggle, debugLevel, debugLevelRow,
-                //   btnConnect, btnDisconnect,
+                //   btnConnect,
                 //   btnFullscreen, statusEl, fullscreenHint, clipboardInput,
                 //   splash, splashStatus,
                 //   displayAuto, displayFixed, displayFixedControls,
                 //   displayPreset720p, displayPreset1080p,
                 //   displayCustomW, displayCustomH, displayApply,
                 //   uiScaleRow, uiScaleToggle,
+                //   macModeToggle,
                 //   gamepadList }
   #cursor;      // CursorManager
   #input;       // InputHandler
@@ -69,7 +70,7 @@ export class LumenUI {
    *           debugLevel: HTMLSelectElement,
    *           debugLevelRow: HTMLElement,
    *           btnConnect: HTMLButtonElement,
-   *           btnDisconnect: HTMLButtonElement,
+   *           macModeToggle: HTMLInputElement,
    *           btnFullscreen: HTMLButtonElement,
    *           statusEl: HTMLElement,
    *           fullscreenHint: HTMLElement,
@@ -89,10 +90,18 @@ export class LumenUI {
     this.#client = client;
     this.#els    = elements;
 
+    // Restore Mac Mode preference before constructing InputHandler.
+    if (elements.macModeToggle) {
+      elements.macModeToggle.checked = localStorage.getItem('lumen.macMode') === 'true';
+      elements.macModeToggle.addEventListener('change', () => {
+        localStorage.setItem('lumen.macMode', elements.macModeToggle.checked);
+      });
+    }
+
     const { video, videoContainer, cursorCanvas, perfCanvas } = elements;
 
     this.#cursor  = new CursorManager(cursorCanvas, video);
-    this.#input   = new InputHandler(video, client, this.#cursor, () => this.#tryUnlockAudio());
+    this.#input   = new InputHandler(video, client, this.#cursor, () => this.#tryUnlockAudio(), elements.macModeToggle);
     this.#gamepad = new GamepadController(client, {
       onConnect:    (index, name) => this.#onGamepadConnect(index, name),
       onDisconnect: (index)       => this.#onGamepadDisconnect(index),
@@ -148,7 +157,7 @@ export class LumenUI {
   }
 
   #bindClientEvents() {
-    const { video, statusEl, btnConnect, btnDisconnect } = this.#els;
+    const { video, statusEl, btnConnect } = this.#els;
 
     this.#client.addEventListener('statuschange', (e) => {
       statusEl.textContent = e.detail;
@@ -157,8 +166,16 @@ export class LumenUI {
 
     this.#client.addEventListener('statechange', (e) => {
       const state = e.detail;
-      btnConnect.disabled              = state !== 'idle';
-      btnDisconnect.disabled           = state === 'idle';
+      if (state === 'idle') {
+        btnConnect.textContent = 'Connect';
+        btnConnect.disabled    = false;
+      } else if (state === 'connecting') {
+        btnConnect.textContent = 'Connecting\u2026';
+        btnConnect.disabled    = true;
+      } else if (state === 'connected') {
+        btnConnect.textContent = 'Disconnect';
+        btnConnect.disabled    = false;
+      }
       this.#els.btnFullscreen.disabled = state !== 'connected';
 
       if (state === 'connected') {
@@ -226,16 +243,17 @@ export class LumenUI {
   // ── control button bindings ──────────────────────────────────────────────────
 
   #bindControlEvents() {
-    const { btnConnect, btnDisconnect } = this.#els;
+    const { btnConnect } = this.#els;
     btnConnect.addEventListener('click', () => {
-      this.#cancelReconnect();
-      this.#reconnectAttempt = 0;
-      this.#client.connect();
-    });
-    btnDisconnect.addEventListener('click', () => {
-      this.#intentionalDisconnect = true;
-      this.#cancelReconnect();
-      this.#client.disconnect();
+      if (this.#client.state === 'connected') {
+        this.#intentionalDisconnect = true;
+        this.#cancelReconnect();
+        this.#client.disconnect();
+      } else {
+        this.#cancelReconnect();
+        this.#reconnectAttempt = 0;
+        this.#client.connect();
+      }
     });
   }
 

@@ -1,6 +1,15 @@
-![Lumen](web/images/lumen-text.png)
+<p align="center">
+    <img src="web/images/lumen-text.png" alt="Lumen">
+<p>
 
 **Lumen** is a Wayland compositor that streams your Linux desktop to a web browser over WebRTC — no client software required.
+
+> [!WARNING]
+> This project is currently experimental and not yet stable. Use at your own risk! Please report any problems you encounter.
+
+<p align="center">
+    <img src="screenshot.png" alt="Screenshot">
+<p>
 
 ## Purpose & Goals
 
@@ -13,9 +22,9 @@ Lumen exists to replace legacy Linux remote desktop solutions (VNC, RDP, NX, and
 - XWayland support for running legacy X11 applications inside the session
 
 **Out of scope:**
-- Being a full desktop environment — Lumen is a transport layer; bring your own DE or compositor (e.g., `labwc`, `sway`)
-- Container-specific designs or hardened multi-tenant isolation
-- Native X11/Xorg support (XWayland only)
+- Being a full desktop environment — Lumen is a transport layer; bring your own DE or compositor (e.g., `labwc`, `sway`).
+- Container-specific designs or hardened multi-tenant isolation -- this could certainly be built, but Lumen focuses on the single user use-case.
+- Native X11/Xorg support (XWayland only).
 
 ## Key Features
 
@@ -168,3 +177,6 @@ Lumen includes an embedded TURN server to relay WebRTC traffic across NAT. It is
 4.  **Signaling**: The browser connects to the Web Server via WebSocket to exchange SDP offers/answers and ICE candidates.
 5.  **WebRTC**: Once the connection is established, H.264 and Opus packets are sent over SRTP. Input events are sent back from the browser via WebRTC Data Channels.
 6.  **Input**: The Compositor receives input events and injects them into the virtual keyboard/pointer devices.
+
+The architecture for this application was heavily inspired by the excellent 
+[Selkies](https://github.com/selkies-project/selkies) and [Pixelflux](https://github.com/linuxserver/pixelflux) projects.

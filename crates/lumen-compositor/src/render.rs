@@ -82,13 +82,24 @@ fn render_gles(
         None => { state.gles_renderer = Some(renderer); return; }
     };
 
-    let (_, ref mut dmabuf) = match state.offscreen_buffer.as_mut() {
-        Some(b) => b,
-        None => { state.gles_renderer = Some(renderer); return; }
-    };
+    if state.offscreen_buffers.is_empty() {
+        state.gles_renderer = Some(renderer);
+        return;
+    }
+
+    // Advance to the next slot in the ring before binding.
+    // This means we never render into the buffer the encoder most recently
+    // received, eliminating the GPU fence stall on discrete GPUs.
+    state.offscreen_index = (state.offscreen_index + 1) % state.offscreen_buffers.len();
+    let (_, ref mut dmabuf, drm_modifier) = state.offscreen_buffers[state.offscreen_index];
 
     let dmabuf_clone = dmabuf.clone();
 
+    // Instrument bind time: on a discrete GPU, DRM implicit fences may delay
+    // this call if the encoder still holds the buffer.  With the ring, this
+    // should be extremely rare (buffer is only reused after OFFSCREEN_RING_SIZE
+    // frames), but the warning helps confirm if it does occur.
+    let bind_t0 = Instant::now();
     let mut target = match renderer.bind(dmabuf) {
         Ok(t) => t,
         Err(e) => {
@@ -97,15 +108,27 @@ fn render_gles(
             return;
         }
     };
+    let bind_elapsed = bind_t0.elapsed();
+    if bind_elapsed > Duration::from_millis(5) {
+        tracing::warn!(
+            ms = bind_elapsed.as_millis(),
+            slot = state.offscreen_index,
+            "GlesRenderer bind stalled waiting for GPU fence — possible encoder backpressure"
+        );
+    }
 
     match damage_tracker.render_output(&mut renderer, &mut target, 1, &elements, [0.05, 0.05, 0.05, 1.0]) {
         Ok(_) => {
+            // Flush pending GL commands so the compositor's write fence is submitted
+            // promptly before the render target is unbound.  glFlush (non-blocking)
+            // is sufficient — glFinish would stall the compositor thread unnecessarily.
+            let _ = renderer.with_context(|gl| unsafe { gl.Flush() });
             drop(target);
             state.gles_renderer = Some(renderer);
             let _ = state.frame_tx.send(CapturedFrame {
                 rgba_buffer: None,
                 dmabuf: Some(dmabuf_clone),
-                drm_modifier: state.offscreen_modifier,
+                drm_modifier,
                 width,
                 height,
                 pts_ms: now_ms,

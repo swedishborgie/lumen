@@ -93,8 +93,21 @@ pub struct AppState {
     pub gles_renderer: Option<GlesRenderer>,
     pub pixman_renderer: Option<PixmanRenderer>,
     pub gbm_device: Option<RawGbmDevice<File>>,
-    pub offscreen_buffer: Option<(BufferObject<()>, Dmabuf)>,
-    pub offscreen_modifier: u64,
+    /// Ring of offscreen GBM buffers used for GPU rendering.
+    ///
+    /// Using multiple buffers (triple-buffering) prevents the compositor from
+    /// stalling on `GlesRenderer::bind()` while waiting for a DRM implicit
+    /// fence to be released by the VA-API encoder.  On a discrete GPU (e.g.
+    /// RX 5700 XT via PCIe), `amdgpu` idle power-state transitions can delay
+    /// fence signals by 1-2 seconds, causing dropped frames.  With a ring of
+    /// N buffers the compositor always renders into a buffer that was last used
+    /// ≥ N-1 frames ago, giving the encoder ample time to finish.
+    ///
+    /// Each entry is `(GBM buffer object, Smithay Dmabuf handle, DRM modifier)`.
+    pub offscreen_buffers: Vec<(BufferObject<()>, Dmabuf, u64)>,
+    /// Index into `offscreen_buffers` pointing at the slot used for the
+    /// most-recently rendered frame.  Incremented (mod ring size) every frame.
+    pub offscreen_index: usize,
     pub use_gpu: bool,
     pub frame_buffer: Vec<u8>,
 

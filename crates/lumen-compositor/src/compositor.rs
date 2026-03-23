@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use gbm::{BufferObjectFlags, Device as RawGbmDevice, Format as GbmFormat};
+use gbm::{BufferObject, BufferObjectFlags, Device as RawGbmDevice, Format as GbmFormat};
 use smithay::{
     backend::{
         allocator::{dmabuf::Dmabuf, gbm::GbmDevice},
@@ -142,8 +142,7 @@ impl Compositor {
         let use_gpu = dri_node_path.is_some();
         let mut gles_renderer: Option<GlesRenderer> = None;
         let mut pixman_renderer: Option<PixmanRenderer> = None;
-        let mut offscreen_buffer = None;
-        let mut offscreen_modifier: u64 = 0;
+        let mut offscreen_buffers: Vec<(BufferObject<()>, Dmabuf, u64)> = Vec::new();
         let mut gbm_device_raw = None;
         let mut dmabuf_state = DmabufState::new();
         let mut dmabuf_global = None;
@@ -169,12 +168,9 @@ impl Compositor {
             } else {
                 dmabuf_global = Some(dmabuf_state.create_global::<AppState>(&dh, formats));
             }
-            let bo = gbm_alloc
-                .create_buffer_object(width.cast_unsigned(), height.cast_unsigned(), GbmFormat::Argb8888, BufferObjectFlags::RENDERING)
-                .context("Failed to create GBM BO")?;
-            offscreen_modifier = u64::from(bo.modifier());
-            let dmabuf = crate::state::create_dmabuf_from_bo(&bo);
-            offscreen_buffer = Some((bo, dmabuf));
+            offscreen_buffers = allocate_offscreen_ring(
+                &gbm_alloc, width.cast_unsigned(), height.cast_unsigned(),
+            ).context("Failed to allocate offscreen ring buffers")?;
             gbm_device_raw = Some(gbm_alloc);
             gles_renderer = Some(renderer);
         } else {
@@ -223,8 +219,8 @@ impl Compositor {
             outputs: Vec::new(), pending_windows: Vec::new(), foreign_toplevel_list,
             xdg_decoration_state, xdg_activation_state, primary_selection_state, popups,
             frame_buffer: vec![0u8; usize::try_from(width * height * 4).expect("frame buffer size fits usize")],
-            gles_renderer, pixman_renderer, gbm_device: gbm_device_raw, offscreen_buffer,
-            offscreen_modifier,
+            gles_renderer, pixman_renderer, gbm_device: gbm_device_raw, offscreen_buffers,
+            offscreen_index: 0,
             damage_tracker: None,
             is_capturing: true, width, height, target_fps, frame_tx, cursor_tx, clipboard_tx,
             frame_counter: 0, clock: Clock::new(), current_cursor_icon: None,
@@ -448,15 +444,13 @@ pub(crate) fn apply_resize(state: &mut AppState, w: u32, h: u32) {
     // Rebuild the GPU offscreen buffer at the new size.
     if state.use_gpu {
         if let Some(ref gbm) = state.gbm_device {
-            match gbm.create_buffer_object(w, h, GbmFormat::Argb8888, BufferObjectFlags::RENDERING) {
-                Ok(bo) => {
-                    let modifier = u64::from(bo.modifier());
-                    let dmabuf = crate::state::create_dmabuf_from_bo(&bo);
-                    state.offscreen_modifier = modifier;
-                    state.offscreen_buffer = Some((bo, dmabuf));
+            match allocate_offscreen_ring(gbm, w, h) {
+                Ok(ring) => {
+                    state.offscreen_buffers = ring;
+                    state.offscreen_index = 0;
                 }
                 Err(e) => {
-                    tracing::error!("Failed to create GBM BO for resize: {e}");
+                    tracing::error!("Failed to allocate offscreen ring buffers for resize: {e}");
                     return;
                 }
             }
@@ -577,4 +571,33 @@ pub(crate) fn check_pending_clipboard_read(state: &mut AppState) {
             tracing::debug!("Clipboard read skipped: {e}");
         }
     }
+}
+
+/// Number of DMA-BUF offscreen buffers to allocate for the render ring.
+///
+/// Three buffers give the VA-API encoder up to 3 frame-intervals (~100 ms at
+/// 30 fps) to finish with a buffer before the compositor reuses it, preventing
+/// GPU fence stalls on discrete GPUs where VA-API scheduling latency can spike
+/// during idle power-state transitions.
+const OFFSCREEN_RING_SIZE: usize = 3;
+
+/// Allocate `OFFSCREEN_RING_SIZE` GBM offscreen buffers for GPU rendering.
+///
+/// Returns a `Vec` of `(BufferObject, Dmabuf handle, DRM modifier)` tuples.
+fn allocate_offscreen_ring(
+    gbm: &RawGbmDevice<std::fs::File>,
+    width: u32,
+    height: u32,
+) -> anyhow::Result<Vec<(gbm::BufferObject<()>, smithay::backend::allocator::dmabuf::Dmabuf, u64)>> {
+    let mut ring = Vec::with_capacity(OFFSCREEN_RING_SIZE);
+    for i in 0..OFFSCREEN_RING_SIZE {
+        let bo = gbm
+            .create_buffer_object(width, height, GbmFormat::Argb8888, BufferObjectFlags::RENDERING)
+            .with_context(|| format!("Failed to create GBM BO #{i} for offscreen ring"))?;
+        let modifier = u64::from(bo.modifier());
+        let dmabuf = crate::state::create_dmabuf_from_bo(&bo);
+        ring.push((bo, dmabuf, modifier));
+    }
+    tracing::debug!("Allocated {} offscreen ring buffers ({}x{})", OFFSCREEN_RING_SIZE, width, height);
+    Ok(ring)
 }

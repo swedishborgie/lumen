@@ -79,6 +79,7 @@ pub fn spawn_encoder(
         let mut encoded_count: u64 = 0;
         let mut encoder_width = encoder_config.width;
         let mut encoder_height = encoder_config.height;
+        let frame_interval = std::time::Duration::from_secs_f64(1.0 / encoder_config.fps);
         loop {
             // Check for a pending resize before blocking on the next frame.
             match enc_resize_rx.try_recv() {
@@ -101,6 +102,16 @@ pub fn spawn_encoder(
                 }
                 Err(_) => break,
             };
+            // Warn when a frame arrives with abnormally high capture-to-encode latency.
+            // This indicates the compositor or encoder pipeline is stalling — on a
+            // discrete GPU this is often caused by GPU fence contention on the DMA-BUF.
+            let capture_latency = frame.captured_at.elapsed();
+            if capture_latency > frame_interval * 2 {
+                tracing::warn!(
+                    ms = capture_latency.as_millis(),
+                    "Frame arrived at encoder with high latency — possible GPU fence stall or compositor backpressure"
+                );
+            }
             // Skip encoding when nobody is watching.
             if peer_count.load(Ordering::Relaxed) == 0 {
                 continue;

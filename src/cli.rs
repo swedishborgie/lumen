@@ -129,8 +129,6 @@ pub struct Args {
     pub max_bitrate_kbps: Option<u32>,
     #[arg(long, env = "LUMEN_AUDIO_BITRATE_BPS", default_value_t = 128_000)]
     pub audio_bitrate_bps: i32,
-    #[arg(long, env = "LUMEN_AUDIO_DEVICE")]
-    pub audio_device: Option<String>,
     #[arg(long, env = "LUMEN_DRI_NODE")]
     pub dri_node: Option<PathBuf>,
     /// CUDA device index for NVENC hardware encoding. Only used when lumen is

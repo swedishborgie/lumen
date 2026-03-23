@@ -1,11 +1,12 @@
-//! lumen-audio — PulseAudio capture and Opus encoding.
+//! lumen-audio — PipeWire audio capture and Opus encoding.
 //!
-//! Rewrite of the pcmflux C++ core in pure Rust.
-//! Captures system audio from a PulseAudio monitor source,
-//! encodes it to Opus packets, and delivers them via a Tokio channel.
+//! Creates a native PipeWire virtual sink that appears as an audio output
+//! device in the system.  Audio routed to this sink is captured directly
+//! (no monitor), encoded to Opus packets, and delivered via a Tokio channel.
 
 pub mod capture;
 pub mod types;
+mod pw_sink;
 
 pub use capture::{AudioCapture, BitrateHandle};
 pub use types::{AudioConfig, OpusPacket};

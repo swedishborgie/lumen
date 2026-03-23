@@ -1,14 +1,9 @@
 use std::sync::{atomic::AtomicUsize, Arc};
 use bytes::Bytes;
 
-/// Configuration for the PulseAudio capture and Opus encoder.
+/// Configuration for the PipeWire audio capture and Opus encoder.
 #[derive(Debug, Clone)]
 pub struct AudioConfig {
-    /// PulseAudio source name. `None` auto-detects the monitor of the default
-    /// output sink (i.e. captures desktop application audio). Override with an
-    /// explicit source such as `"alsa_output.pci-0000_1f_04.analog-stereo.monitor"`
-    /// or `"alsa_input.pci-0000_1f_04.analog-stereo"` for microphone capture.
-    pub device_name: Option<String>,
     /// Sample rate in Hz (default: 48000).
     pub sample_rate: u32,
     /// Number of channels (1 = mono, 2 = stereo).
@@ -22,7 +17,7 @@ pub struct AudioConfig {
     /// Skip encoding silent frames (all-zero PCM detection).
     pub use_silence_gate: bool,
     /// Active peer count. When `Some` and the count is zero, Opus encoding is
-    /// skipped (PCM is still drained from PulseAudio to keep the buffer current).
+    /// skipped (PCM is still consumed from PipeWire to keep the stream current).
     /// `None` means always encode (default, backward-compatible).
     pub peer_count: Option<Arc<AtomicUsize>>,
 }
@@ -30,7 +25,6 @@ pub struct AudioConfig {
 impl Default for AudioConfig {
     fn default() -> Self {
         Self {
-            device_name: None,
             sample_rate: 48_000,
             channels: 2,
             bitrate_bps: 128_000,

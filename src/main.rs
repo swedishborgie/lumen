@@ -70,7 +70,6 @@ async fn main() -> Result<()> {
 
     // ── Audio ─────────────────────────────────────────────────────────────────
     let (audio_capture, audio_rx) = lumen_audio::AudioCapture::new(lumen_audio::AudioConfig {
-        device_name: args.audio_device.clone(),
         bitrate_bps: args.audio_bitrate_bps,
         peer_count: Some(peer_count.clone()),
         ..Default::default()

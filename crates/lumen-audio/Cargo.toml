@@ -4,9 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# PulseAudio
-libpulse-binding        = "2.30"
-libpulse-simple-binding = "2.29"
+# PipeWire
+pipewire = "0.9"
 
 # Opus codec
 opus = "0.3"

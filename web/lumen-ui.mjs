@@ -64,6 +64,7 @@ export class LumenUI {
    *           cursorCanvas: HTMLCanvasElement,
    *           perfCanvas: HTMLCanvasElement,
    *           perfToggle: HTMLInputElement,
+   *           btnCopyMetrics: HTMLButtonElement,
    *           debugToggle: HTMLInputElement,
    *           debugLevel: HTMLSelectElement,
    *           debugLevelRow: HTMLElement,
@@ -164,7 +165,10 @@ export class LumenUI {
         this.#cancelReconnect();
         this.#reconnectAttempt = 0;
         video.focus();
-        if (this.#els.perfToggle?.checked) this.#perf.start();
+        if (this.#els.perfToggle?.checked) {
+          this.#perf.start();
+          this.#client.sendMetricsSubscription(true);
+        }
         // Send the current size immediately so the compositor matches the viewport.
         this.#resize.sendCurrentSize();
         // Re-sync any gamepads that connected before the data channel was open,
@@ -584,24 +588,35 @@ export class LumenUI {
   // ── perf toggle ──────────────────────────────────────────────────────────────
 
   #bindPerfToggle() {
-    const { perfToggle, perfCanvas } = this.#els;
+    const { perfToggle, perfCanvas, btnCopyMetrics } = this.#els;
     if (!perfToggle || !perfCanvas) return;
     perfToggle.addEventListener('change', () => {
       const on = perfToggle.checked;
       perfCanvas.classList.toggle('visible', on);
+      if (btnCopyMetrics) btnCopyMetrics.style.display = on ? '' : 'none';
       localStorage.setItem('lumen.perfOverlay', on ? '1' : '0');
       const connected = this.#client.state === 'connected';
       if (on && connected) {
         this.#perf.start();
+        this.#client.sendMetricsSubscription(true);
       } else {
         this.#perf.stop();
+        if (connected) this.#client.sendMetricsSubscription(false);
       }
     });
+
+    if (btnCopyMetrics) {
+      btnCopyMetrics.addEventListener('click', () => this.#perf.copyMetrics());
+    }
+
+    // Wire server metrics into the perf monitor.
+    this.#client.onmetrics = (msg) => this.#perf.pushServerMetrics(msg);
 
     // Restore saved state.
     if (localStorage.getItem('lumen.perfOverlay') === '1') {
       perfToggle.checked = true;
       perfCanvas.classList.add('visible');
+      if (btnCopyMetrics) btnCopyMetrics.style.display = '';
       // The monitor itself starts on connect (see #bindClientEvents).
     }
   }

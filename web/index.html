@@ -69,10 +69,13 @@
     <div id="stats-section">
       <div class="tray-row">
         <span class="tray-label">Performance overlay</span>
-        <label class="toggle-switch">
-          <input type="checkbox" id="perf-toggle">
-          <span class="toggle-track"></span>
-        </label>
+        <div class="tray-row-actions">
+          <button id="btn-copy-metrics" class="tray-action-btn" title="Copy metrics to clipboard" style="display:none">Copy</button>
+          <label class="toggle-switch">
+            <input type="checkbox" id="perf-toggle">
+            <span class="toggle-track"></span>
+          </label>
+        </div>
       </div>
       <div class="tray-row">
         <span class="tray-label">Debug logging</span>
@@ -105,6 +108,7 @@
       cursorCanvas:   document.getElementById('cursor-canvas'),
       perfCanvas:     document.getElementById('perf-canvas'),
       perfToggle:     document.getElementById('perf-toggle'),
+      btnCopyMetrics: document.getElementById('btn-copy-metrics'),
       debugToggle:    document.getElementById('debug-toggle'),
       debugLevel:     document.getElementById('debug-level'),
       debugLevelRow:  document.getElementById('debug-level-row'),

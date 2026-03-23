@@ -69,6 +69,7 @@ pub fn spawn_encoder(
     keyframe_flag: Arc<AtomicBool>,
     enc_resize_rx: std::sync::mpsc::Receiver<(u32, u32)>,
     peer_count: Arc<AtomicUsize>,
+    metrics_tx: Option<tokio::sync::watch::Sender<lumen_web::metrics::EncoderMetrics>>,
 ) {
     tokio::task::spawn_blocking(move || {
         let mut encoder = match lumen_encode::create_encoder(&encoder_config) {
@@ -77,6 +78,7 @@ pub fn spawn_encoder(
         };
         let mut frame_rx = frame_rx;
         let mut encoded_count: u64 = 0;
+        let mut dropped_count: u64 = 0;
         let mut encoder_width = encoder_config.width;
         let mut encoder_height = encoder_config.height;
         let frame_interval = std::time::Duration::from_secs_f64(1.0 / encoder_config.fps);
@@ -97,7 +99,7 @@ pub fn spawn_encoder(
             let frame = match frame_rx.blocking_recv() {
                 Ok(f) => f,
                 Err(broadcast::error::RecvError::Lagged(n)) => {
-                    tracing::debug!("Encoder dropped {n} frames (channel full)");
+                    dropped_count += n;
                     continue;
                 }
                 Err(_) => break,
@@ -124,20 +126,31 @@ pub fn spawn_encoder(
             if keyframe_flag.swap(false, Ordering::Relaxed) {
                 encoder.request_keyframe();
             }
+            let encode_start = std::time::Instant::now();
             match encoder.encode(frame) {
                 Ok(Some(ef)) => {
+                    let encode_time_us = encode_start.elapsed().as_micros() as u64;
                     encoded_count += 1;
-                    if encoded_count == 1 || encoded_count % 150 == 0 {
-                        tracing::debug!(encoded_count, keyframe = ef.is_keyframe,
-                            bytes = ef.data.len(), "Encoded frame");
+                    if let Some(ref tx) = metrics_tx {
+                        let now_ms = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as u64;
+                        let _ = tx.send(lumen_web::metrics::EncoderMetrics {
+                            timestamp_ms: now_ms,
+                            frames_encoded: encoded_count,
+                            encode_time_us,
+                            capture_latency_us: capture_latency.as_micros() as u64,
+                            frame_size_bytes: ef.data.len(),
+                            keyframe: ef.is_keyframe,
+                            dropped_frames: dropped_count,
+                            width: encoder_width,
+                            height: encoder_height,
+                        });
                     }
                     let _ = encoded_tx.send(Arc::new(ef));
                 }
-                Ok(None) => {
-                    if encoded_count == 0 {
-                        tracing::debug!("Encoder returned None (buffering)");
-                    }
-                }
+                Ok(None) => {}
                 Err(e) => tracing::warn!("Encode error: {e:#}"),
             }
         }
@@ -457,4 +470,108 @@ pub fn spawn_clipboard_fanout(
         }
     });
     last_clipboard_json
+}
+
+/// Spawn the system monitor task.
+///
+/// Samples `/proc/stat` and `/proc/meminfo` every second and publishes the
+/// results into a `watch` channel.  The signaling layer reads from the
+/// corresponding receiver when a browser has the performance overlay open.
+///
+/// Returns a `watch::Receiver` for the latest `SystemMetrics` snapshot, or
+/// `None` if `/proc/stat` is not available (non-Linux platforms).
+pub fn spawn_system_monitor() -> Option<tokio::sync::watch::Receiver<lumen_web::metrics::SystemMetrics>> {
+    // Pre-check: if /proc/stat doesn't exist (non-Linux), skip.
+    if !std::path::Path::new("/proc/stat").exists() {
+        return None;
+    }
+
+    let (tx, rx) = tokio::sync::watch::channel(lumen_web::metrics::SystemMetrics::default());
+
+    tokio::spawn(async move {
+        // Previous /proc/stat CPU totals for delta calculation.
+        let mut prev_idle: u64 = 0;
+        let mut prev_total: u64 = 0;
+        let mut first = true;
+
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        loop {
+            interval.tick().await;
+
+            let cpu_pct = read_cpu_usage(&mut prev_idle, &mut prev_total, first);
+            first = false;
+
+            let (mem_used, mem_total) = read_mem_info();
+
+            let _ = tx.send(lumen_web::metrics::SystemMetrics {
+                cpu_usage_pct: cpu_pct,
+                mem_used_mb: mem_used,
+                mem_total_mb: mem_total,
+            });
+        }
+    });
+
+    Some(rx)
+}
+
+/// Parse `/proc/stat` and return the all-core CPU utilization percentage since
+/// the previous call.  Returns `None` on the first call (no delta yet) or on
+/// parse error.
+fn read_cpu_usage(prev_idle: &mut u64, prev_total: &mut u64, first: bool) -> Option<f32> {
+    let stat = std::fs::read_to_string("/proc/stat").ok()?;
+    let line = stat.lines().find(|l| l.starts_with("cpu "))?;
+    let nums: Vec<u64> = line
+        .split_whitespace()
+        .skip(1)
+        .filter_map(|s| s.parse().ok())
+        .collect();
+    if nums.len() < 4 {
+        return None;
+    }
+    // Fields: user, nice, system, idle, iowait, irq, softirq, steal, ...
+    let idle = nums[3] + nums.get(4).copied().unwrap_or(0);
+    let total: u64 = nums.iter().sum();
+
+    let d_total = total.saturating_sub(*prev_total);
+    let d_idle  = idle.saturating_sub(*prev_idle);
+
+    *prev_total = total;
+    *prev_idle  = idle;
+
+    if first || d_total == 0 {
+        return None;
+    }
+
+    let busy = d_total.saturating_sub(d_idle);
+    Some((busy as f32 / d_total as f32) * 100.0)
+}
+
+/// Parse `/proc/meminfo` and return `(used_mb, total_mb)`, both `None` on
+/// parse error.  "Used" is defined as `MemTotal - MemAvailable`.
+fn read_mem_info() -> (Option<u32>, Option<u32>) {
+    let info = match std::fs::read_to_string("/proc/meminfo") {
+        Ok(s) => s,
+        Err(_) => return (None, None),
+    };
+    let mut total_kb: Option<u64> = None;
+    let mut avail_kb: Option<u64> = None;
+    for line in info.lines() {
+        if line.starts_with("MemTotal:") {
+            total_kb = line.split_whitespace().nth(1).and_then(|v| v.parse().ok());
+        } else if line.starts_with("MemAvailable:") {
+            avail_kb = line.split_whitespace().nth(1).and_then(|v| v.parse().ok());
+        }
+        if total_kb.is_some() && avail_kb.is_some() {
+            break;
+        }
+    }
+    match (total_kb, avail_kb) {
+        (Some(t), Some(a)) => {
+            let used = t.saturating_sub(a);
+            (Some((used / 1024) as u32), Some((t / 1024) as u32))
+        }
+        _ => (None, None),
+    }
 }

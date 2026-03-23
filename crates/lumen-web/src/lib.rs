@@ -6,6 +6,7 @@
 
 pub mod assets;
 pub mod auth;
+pub mod metrics;
 pub mod server;
 pub mod signaling;
 pub mod types;

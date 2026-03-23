@@ -106,6 +106,9 @@ async fn main() -> Result<()> {
     let (gamepad_tx, gamepad_rx) = tokio::sync::mpsc::channel::<lumen_gamepad::GamepadEvent>(64);
     // Haptic commands from the gamepad manager are broadcast back to browsers.
     let (haptic_tx, haptic_rx) = tokio::sync::mpsc::channel::<(u8, lumen_gamepad::HapticCommand)>(64);
+    // Encoder metrics watch channel: encoder writes latest metrics, signaling layer reads.
+    let (encoder_metrics_tx, encoder_metrics_rx) =
+        tokio::sync::watch::channel(lumen_web::metrics::EncoderMetrics::default());
 
     // ── Shutdown signal ───────────────────────────────────────────────────────
     // When --launch is used, the child exiting triggers a graceful shutdown of
@@ -122,6 +125,7 @@ async fn main() -> Result<()> {
         keyframe_flag.clone(),
         enc_resize_rx,
         peer_count,
+        Some(encoder_metrics_tx),
     );
     tasks::spawn_gamepad_manager(gamepad_rx, haptic_tx);
     let _shutdown_keep_alive = tasks::spawn_launch_task(
@@ -141,6 +145,7 @@ async fn main() -> Result<()> {
     tasks::spawn_video_fanout(encoded_tx, session_manager.clone());
     let last_cursor_json = tasks::spawn_cursor_fanout(cursor_rx, session_manager.clone());
     let last_clipboard_json = tasks::spawn_clipboard_fanout(clipboard_rx, session_manager.clone());
+    let system_metrics_rx = tasks::spawn_system_monitor();
 
     // ── Web server ────────────────────────────────────────────────────────────
     anyhow::ensure!(
@@ -160,6 +165,8 @@ async fn main() -> Result<()> {
         ice_servers: turn_setup.ice_servers,
         hostname: args.hostname,
         shutdown_signal: Some(shutdown_rx),
+        encoder_metrics_rx: Some(encoder_metrics_rx),
+        system_metrics_rx,
         tls_cert: args.tls_cert,
         tls_key: args.tls_key,
     })

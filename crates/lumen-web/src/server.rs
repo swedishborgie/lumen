@@ -30,6 +30,8 @@ impl WebServer {
             resize_tx: self.config.resize_tx.clone(),
             ice_servers: self.config.ice_servers.clone(),
             hostname: self.config.hostname.clone(),
+            encoder_metrics_rx: self.config.encoder_metrics_rx.clone(),
+            system_metrics_rx: self.config.system_metrics_rx.clone(),
         };
 
         let signaling_router = Router::new()

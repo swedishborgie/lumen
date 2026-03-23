@@ -20,7 +20,7 @@ const HISTORY = 120;
 const OVERLAY_W = 220;
 
 /** Height of the text-header panel in CSS pixels. */
-const HEADER_H = 56;
+const HEADER_H = 70;
 
 /** Height of each graph panel in CSS pixels. */
 const GRAPH_H = 50;
@@ -40,21 +40,24 @@ const LABEL_H = 14;
 // ── Color palette ─────────────────────────────────────────────────────────────
 
 const C = {
-  bg:        '#0a0a0a',
-  panelBg:   '#111',
-  grid:      'rgba(255,255,255,0.06)',
-  label:     '#888',
-  value:     '#ccc',
-  bitrate:   '#22c55e',   // green
-  fps:       '#22d3ee',   // cyan
-  fpsGhost:  'rgba(34,211,238,0.35)',
-  dropped:   '#ef4444',   // red
-  rtt:       '#fbbf24',   // amber
-  jitter:    '#fb923c',   // orange
-  loss:      '#f87171',   // light red
-  decode:    '#a78bfa',   // violet
-  zero:      'rgba(255,255,255,0.15)',
-  noData:    '#444',
+  bg:          '#0a0a0a',
+  panelBg:     '#111',
+  grid:        'rgba(255,255,255,0.06)',
+  label:       '#888',
+  value:       '#ccc',
+  bitrate:     '#22c55e',   // green
+  fps:         '#22d3ee',   // cyan
+  fpsGhost:    'rgba(34,211,238,0.35)',
+  dropped:     '#ef4444',   // red
+  rtt:         '#fbbf24',   // amber
+  jitter:      '#fb923c',   // orange
+  loss:        '#f87171',   // light red
+  decode:      '#a78bfa',   // violet
+  encodeTime:  '#e879f9',   // fuchsia — server-side encode latency
+  captureLatency: '#38bdf8', // sky blue — compositor-to-encoder pipeline
+  cpu:         '#facc15',   // yellow — system CPU usage
+  zero:        'rgba(255,255,255,0.15)',
+  noData:      '#444',
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -97,10 +100,19 @@ export class PerformanceMonitor {
   #pktLoss    = [];  // packets lost/s
   #decodeMs   = [];  // avg ms per decoded frame
 
+  // Server-side metrics history (populated via pushServerMetrics)
+  #srvEncodeUs  = [];  // µs per frame
+  #srvLatencyUs = [];  // capture-to-encoder latency µs
+  #srvFps       = [];  // server frames/s (derived from frames_encoded delta)
+  #srvDrops     = [];  // dropped frames/s
+  #srvCpuPct    = [];  // CPU usage 0–100 (nullable)
+  #srvPrevFrames = null;  // previous frames_encoded for delta
+
   // Latest snapshot for text header
-  #latestSnap = null;
-  #prevSnap   = null;
-  #videoEl    = null;
+  #latestSnap      = null;
+  #prevSnap        = null;
+  #latestSrvMetrics = null;  // latest raw server metrics object
+  #videoEl         = null;
 
   #sampleInterval = null;
   #rafId          = null;
@@ -146,6 +158,100 @@ export class PerformanceMonitor {
     this.#drawNoData();
   }
 
+  /**
+   * Ingest a server metrics snapshot pushed by the WebSocket handler.
+   * Called by LumenUI whenever a `{"type":"metrics"}` message arrives.
+   * @param {object} msg  Raw server metrics object from the WebSocket.
+   */
+  pushServerMetrics(msg) {
+    this.#latestSrvMetrics = msg;
+    const enc = msg.encoder ?? {};
+    const sys = msg.system  ?? {};
+
+    push(this.#srvEncodeUs,  enc.encode_time_us    ?? null);
+    push(this.#srvLatencyUs, enc.capture_latency_us ?? null);
+    push(this.#srvCpuPct,    sys.cpu_usage_pct      ?? null);
+
+    // Server FPS: delta of cumulative frames_encoded between pushes.
+    const frames = enc.frames_encoded ?? null;
+    if (frames != null && this.#srvPrevFrames != null) {
+      push(this.#srvFps, Math.max(0, frames - this.#srvPrevFrames));
+    } else {
+      push(this.#srvFps, null);
+    }
+    this.#srvPrevFrames = frames;
+
+    // Server-side dropped frames delta (cumulative counter).
+    push(this.#srvDrops, enc.dropped_frames ?? null);
+  }
+
+  /**
+   * Format all current metrics as a plain-text report and copy to clipboard.
+   * Useful for pasting into bug reports or support requests.
+   */
+  async copyMetrics() {
+    const snap = this.#latestSnap;
+    const srv  = this.#latestSrvMetrics;
+    const enc  = srv?.encoder ?? {};
+    const sys  = srv?.system  ?? {};
+
+    const last = (buf) => [...buf].reverse().find(v => v != null) ?? null;
+    const f    = (v, unit, d = 1) => v != null && isFinite(v) ? v.toFixed(d) + unit : '—';
+
+    const vw = this.#videoEl?.videoWidth;
+    const vh = this.#videoEl?.videoHeight;
+    const res = (vw && vh) ? `${vw}×${vh}` : '—';
+
+    const lines = [
+      `Lumen Metrics — ${new Date().toISOString()}`,
+      `Resolution: ${res}  Decoder: ${snap?.decoderImpl ?? '—'}`,
+      ``,
+      `--- WebRTC (client-side) ---`,
+      `Bitrate:          ${f(last(this.#bitrate), ' KB/s')}`,
+      `FPS decoded:      ${f(last(this.#fpsDecoded), ' fps', 0)}`,
+      `Dropped frames:   ${f(last(this.#dropped), '/s', 0)}`,
+      `RTT:              ${f(last(this.#rtt), ' ms')}`,
+      `Jitter:           ${f(last(this.#jitter), ' ms', 2)}`,
+      `Packet loss:      ${f(last(this.#pktLoss), ' pkts/s', 0)}`,
+      `Decode time:      ${f(last(this.#decodeMs), ' ms/frame', 2)}`,
+      `Pkts total:       ${snap?.videoPackets?.toLocaleString() ?? '—'}`,
+    ];
+
+    if (srv) {
+      const memUsed  = sys.mem_used_mb  ?? null;
+      const memTotal = sys.mem_total_mb ?? null;
+      const memStr   = (memUsed != null && memTotal != null)
+        ? `${memUsed} / ${memTotal} MB`
+        : '—';
+      lines.push(
+        ``,
+        `--- Server-side ---`,
+        `Encode time:      ${f(last(this.#srvEncodeUs), ' µs', 0)}`,
+        `Capture latency:  ${f(last(this.#srvLatencyUs) != null ? last(this.#srvLatencyUs) / 1000 : null, ' ms', 2)}`,
+        `Server FPS:       ${f(last(this.#srvFps), ' fps', 0)}`,
+        `Server drops:     ${enc.dropped_frames ?? '—'} cumulative`,
+        `Resolution:       ${enc.width ?? '—'}×${enc.height ?? '—'}`,
+        `CPU:              ${f(last(this.#srvCpuPct), '%')}`,
+        `RAM:              ${memStr}`,
+      );
+    }
+
+    const text = lines.join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Fallback: create a temporary textarea (works without clipboard permissions)
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity  = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+  }
+
   // ── Private ────────────────────────────────────────────────────────────────
 
   #clearBuffers() {
@@ -157,6 +263,13 @@ export class PerformanceMonitor {
     this.#jitter     = [];
     this.#pktLoss    = [];
     this.#decodeMs   = [];
+    this.#srvEncodeUs  = [];
+    this.#srvLatencyUs = [];
+    this.#srvFps       = [];
+    this.#srvDrops     = [];
+    this.#srvCpuPct    = [];
+    this.#srvPrevFrames = null;
+    this.#latestSrvMetrics = null;
   }
 
   async #sample() {
@@ -205,7 +318,7 @@ export class PerformanceMonitor {
   #resize() {
     this.#dpr = window.devicePixelRatio || 1;
     const cssW = OVERLAY_W;
-    const cssH = HEADER_H + GAP + (GRAPH_H + GAP) * 7;
+    const cssH = HEADER_H + GAP + (GRAPH_H + GAP) * 10;
 
     this.#canvas.width  = Math.round(cssW * this.#dpr);
     this.#canvas.height = Math.round(cssH * this.#dpr);
@@ -309,6 +422,36 @@ export class PerformanceMonitor {
       floor:    5,
       decimals: 2,
     });
+    y += GRAPH_H + GAP;
+
+    this.#drawGraph(ctx, cssW, y, {
+      label:    'Encode Time',
+      data:     this.#srvEncodeUs,
+      color:    C.encodeTime,
+      unit:     ' µs',
+      floor:    1000,
+      decimals: 0,
+    });
+    y += GRAPH_H + GAP;
+
+    this.#drawGraph(ctx, cssW, y, {
+      label:    'Capture Latency',
+      data:     this.#srvLatencyUs,
+      color:    C.captureLatency,
+      unit:     ' µs',
+      floor:    2000,
+      decimals: 0,
+    });
+    y += GRAPH_H + GAP;
+
+    this.#drawGraph(ctx, cssW, y, {
+      label:    'CPU Usage',
+      data:     this.#srvCpuPct,
+      color:    C.cpu,
+      unit:     '%',
+      floor:    10,
+      decimals: 1,
+    });
 
     ctx.restore();
   }
@@ -333,6 +476,7 @@ export class PerformanceMonitor {
     ctx.fillText('decoder', cx, y + 14);
     ctx.fillText('resolution', cx, y + 30);
     ctx.fillText('pkts total', cx, y + 46);
+    ctx.fillText('ram', cx, y + 62);
 
     ctx.font      = '11px monospace';
     ctx.fillStyle = C.value;
@@ -351,6 +495,16 @@ export class PerformanceMonitor {
     // Show total cumulative packets received — direct from snapshot, no delta needed.
     const pktsTotal = snap?.videoPackets != null ? snap.videoPackets.toLocaleString() : '—';
     ctx.fillText(pktsTotal, rx, y + 46);
+
+    // RAM from server metrics.
+    const srvSys   = this.#latestSrvMetrics?.system ?? {};
+    const memUsed  = srvSys.mem_used_mb  ?? null;
+    const memTotal = srvSys.mem_total_mb ?? null;
+    const ramStr   = (memUsed != null && memTotal != null)
+      ? `${memUsed}/${memTotal} MB`
+      : '—';
+    ctx.fillStyle = C.cpu;
+    ctx.fillText(ramStr, rx, y + 62);
 
     ctx.textAlign = 'left';
   }

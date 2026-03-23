@@ -12,6 +12,9 @@ use lumen_compositor::InputEvent;
 use lumen_webrtc::{SessionId, SessionManager};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
+use tokio::time::MissedTickBehavior;
+
+use crate::metrics::{EncoderMetrics, ServerMetrics, SystemMetrics};
 
 /// Shared state passed to every signaling handler.
 #[derive(Clone)]
@@ -31,6 +34,11 @@ pub struct SignalingState {
     pub ice_servers: Vec<crate::types::IceServerConfig>,
     /// Hostname served to the browser via `/api/config` and the PWA manifest.
     pub hostname: String,
+    /// Latest encoder metrics. `None` if the encoder has not started yet or
+    /// metrics collection is disabled.
+    pub encoder_metrics_rx: Option<tokio::sync::watch::Receiver<EncoderMetrics>>,
+    /// Latest system metrics (CPU, RAM).
+    pub system_metrics_rx: Option<tokio::sync::watch::Receiver<SystemMetrics>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -40,6 +48,8 @@ enum ClientMessage {
     #[allow(dead_code)] // fields populated by serde from browser ICE candidates
     Candidate { candidate: String, sdp_mid: Option<String>, sdp_m_line_index: Option<u32> },
     Resize { width: u32, height: u32 },
+    /// Subscribe or unsubscribe from server-side metrics streaming.
+    MetricsSubscription { enabled: bool },
 }
 
 #[derive(Debug, Serialize)]
@@ -47,6 +57,8 @@ enum ClientMessage {
 enum ServerMessage {
     Answer { sdp: String, session_id: String },
     Error { message: String },
+    /// Server-side metrics snapshot, pushed ~1 Hz to subscribed clients.
+    Metrics(ServerMetrics),
 }
 
 pub async fn ws_handler(
@@ -102,64 +114,97 @@ pub async fn manifest_handler(
 async fn handle_socket(mut socket: WebSocket, state: SignalingState) {
     tracing::info!("New signaling connection");
     let mut session_id: Option<SessionId> = None;
+    let mut metrics_subscribed = false;
 
-    while let Some(Ok(msg)) = socket.recv().await {
-        let text = match msg {
-            Message::Text(t) => t,
-            Message::Close(_) => break,
-            _ => continue,
-        };
+    // Metrics ticker fires at ~1 Hz when the browser has the overlay open.
+    // MissedTickBehavior::Skip prevents burst catch-up if the handler is busy.
+    let mut metrics_ticker = tokio::time::interval(std::time::Duration::from_secs(1));
+    metrics_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    // Consume the immediate first tick so we don't push metrics before any
+    // subscription request arrives.
+    metrics_ticker.tick().await;
 
-        let client_msg: ClientMessage = match serde_json::from_str(&text) {
-            Ok(m) => m,
-            Err(e) => {
-                send_error(&mut socket, &e.to_string()).await;
-                continue;
-            }
-        };
+    loop {
+        tokio::select! {
+            msg = socket.recv() => {
+                let text = match msg {
+                    Some(Ok(Message::Text(t))) => t,
+                    Some(Ok(Message::Close(_))) | None => break,
+                    _ => continue,
+                };
 
-        match client_msg {
-            ClientMessage::Offer { sdp } => {
-                tracing::debug!("SDP offer:\n{}", sdp);
-                match state.sessions.create_session(&sdp).await {
-                    Ok((id, answer_sdp)) => {
-                        session_id = Some(id.clone());
-                        tracing::debug!("Answer SDP:\n{}", answer_sdp);
-                        // Spawn the drive task, forwarding input and keyframe signals.
-                        spawn_drive_task(
-                            state.sessions.clone(),
-                            id.clone(),
-                            state.input_tx.clone(),
-                            state.keyframe_flag.clone(),
-                            state.last_cursor_json.clone(),
-                            state.last_clipboard_json.clone(),
-                        );
-                        let resp = ServerMessage::Answer { sdp: answer_sdp, session_id: id.0 };
-                        let _ = socket
-                            .send(Message::Text(serde_json::to_string(&resp).unwrap().into()))
-                            .await;
+                let client_msg: ClientMessage = match serde_json::from_str(&text) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        send_error(&mut socket, &e.to_string()).await;
+                        continue;
                     }
-                    Err(e) => send_error(&mut socket, &e.to_string()).await,
-                }
-            }
-            ClientMessage::Candidate { candidate, .. } => {
-                if let Some(ref id) = session_id {
-                    if let Some(session) = state.sessions.get_session(id).await {
-                        let mut s = session.lock().await;
-                        if let Err(e) = s.add_remote_candidate(&candidate) {
-                            tracing::debug!("Candidate error: {e:#}");
+                };
+
+                match client_msg {
+                    ClientMessage::Offer { sdp } => {
+                        tracing::debug!("SDP offer:\n{}", sdp);
+                        match state.sessions.create_session(&sdp).await {
+                            Ok((id, answer_sdp)) => {
+                                session_id = Some(id.clone());
+                                tracing::debug!("Answer SDP:\n{}", answer_sdp);
+                                spawn_drive_task(
+                                    state.sessions.clone(),
+                                    id.clone(),
+                                    state.input_tx.clone(),
+                                    state.keyframe_flag.clone(),
+                                    state.last_cursor_json.clone(),
+                                    state.last_clipboard_json.clone(),
+                                );
+                                let resp = ServerMessage::Answer { sdp: answer_sdp, session_id: id.0 };
+                                let _ = socket
+                                    .send(Message::Text(serde_json::to_string(&resp).unwrap().into()))
+                                    .await;
+                            }
+                            Err(e) => send_error(&mut socket, &e.to_string()).await,
                         }
                     }
+                    ClientMessage::Candidate { candidate, .. } => {
+                        if let Some(ref id) = session_id {
+                            if let Some(session) = state.sessions.get_session(id).await {
+                                let mut s = session.lock().await;
+                                if let Err(e) = s.add_remote_candidate(&candidate) {
+                                    tracing::debug!("Candidate error: {e:#}");
+                                }
+                            }
+                        }
+                    }
+                    ClientMessage::Resize { width, height } => {
+                        if width == 0 || height == 0 || width % 2 != 0 || height % 2 != 0
+                            || width > 4096 || height > 4096
+                        {
+                            tracing::warn!("Rejected invalid resize {}x{}", width, height);
+                        } else {
+                            let _ = state.resize_tx.try_send((width, height));
+                        }
+                    }
+                    ClientMessage::MetricsSubscription { enabled } => {
+                        metrics_subscribed = enabled
+                            && (state.encoder_metrics_rx.is_some()
+                                || state.system_metrics_rx.is_some());
+                        tracing::debug!(metrics_subscribed, "Metrics subscription changed");
+                    }
                 }
             }
-            ClientMessage::Resize { width, height } => {
-                // Validate: must be positive, even, and within a sane limit.
-                if width == 0 || height == 0 || width % 2 != 0 || height % 2 != 0
-                    || width > 4096 || height > 4096
-                {
-                    tracing::warn!("Rejected invalid resize {}x{}", width, height);
-                } else {
-                    let _ = state.resize_tx.try_send((width, height));
+
+            // Push metrics to the browser at ~1 Hz, but only when subscribed.
+            _ = metrics_ticker.tick(), if metrics_subscribed => {
+                let encoder = state.encoder_metrics_rx
+                    .as_ref()
+                    .map(|rx| rx.borrow().clone())
+                    .unwrap_or_default();
+                let system = state.system_metrics_rx
+                    .as_ref()
+                    .map(|rx| rx.borrow().clone())
+                    .unwrap_or_default();
+                let snapshot = ServerMetrics { encoder, system };
+                if let Ok(json) = serde_json::to_string(&ServerMessage::Metrics(snapshot)) {
+                    let _ = socket.send(Message::Text(json.into())).await;
                 }
             }
         }

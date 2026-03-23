@@ -78,6 +78,11 @@ pub struct WebServerConfig {
     /// Optional graceful-shutdown signal. When the sender is dropped or sends,
     /// the web server stops accepting new connections and drains existing ones.
     pub shutdown_signal: Option<tokio::sync::oneshot::Receiver<()>>,
+    /// Receiver for encoder metrics. When `Some`, subscribed browser clients
+    /// receive a `metrics` WebSocket message at ~1 Hz while the overlay is open.
+    pub encoder_metrics_rx: Option<tokio::sync::watch::Receiver<crate::metrics::EncoderMetrics>>,
+    /// Receiver for system metrics (CPU, RAM). Merged with encoder metrics before sending.
+    pub system_metrics_rx: Option<tokio::sync::watch::Receiver<crate::metrics::SystemMetrics>>,
     /// Path to the PEM-encoded TLS certificate chain. When both `tls_cert` and
     /// `tls_key` are set the server binds an HTTPS endpoint; otherwise plain HTTP.
     pub tls_cert: Option<PathBuf>,

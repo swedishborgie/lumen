@@ -82,6 +82,7 @@ export class LumenClient extends EventTarget {
   #stream      = null;
   #sessionId   = null;
   #state       = 'idle';
+  #onmetrics   = null;  // callback(metricsPayload) invoked when server pushes metrics
 
   get stream()       { return this.#stream; }
   get state()        { return this.#state; }
@@ -258,6 +259,8 @@ export class LumenClient extends EventTarget {
       } else if (msg.type === 'error') {
         log.error('websocket', `Server error: ${msg.message}`);
         this.#setStatus(`Server error: ${msg.message}`);
+      } else if (msg.type === 'metrics') {
+        this.#onmetrics?.(msg);
       }
     };
 
@@ -310,6 +313,25 @@ export class LumenClient extends EventTarget {
       this.#ws.send(JSON.stringify({ type: 'resize', width, height }));
     }
   }
+
+  /**
+   * Subscribe or unsubscribe from server-side metrics streaming.
+   * When enabled, the server pushes a `metrics` message ~1 Hz via WebSocket.
+   * @param {boolean} enabled
+   */
+  sendMetricsSubscription(enabled) {
+    if (this.#ws?.readyState === WebSocket.OPEN) {
+      this.#ws.send(JSON.stringify({ type: 'metrics_subscription', enabled }));
+    }
+  }
+
+  /**
+   * Callback invoked each time the server pushes a metrics snapshot.
+   * Set to a function to receive updates, or null to stop receiving them.
+   * @type {((metrics: object) => void) | null}
+   */
+  get onmetrics() { return this.#onmetrics; }
+  set onmetrics(fn) { this.#onmetrics = fn; }
 
   /**
    * Collect WebRTC stats and return a structured snapshot.

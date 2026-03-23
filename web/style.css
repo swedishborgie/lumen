@@ -136,6 +136,7 @@ video {
 }
 #stats-section { display: flex; flex-direction: column; gap: 6px; }
 .tray-row { display: flex; align-items: center; justify-content: space-between; }
+.tray-row-actions { display: flex; align-items: center; gap: 6px; }
 
 /* Toggle switch */
 .toggle-switch { position: relative; display: inline-block; width: 36px; height: 20px; flex-shrink: 0; }
@@ -166,6 +167,12 @@ video {
   opacity: 0.92;
 }
 #perf-canvas.visible { display: block; }
+.tray-action-btn {
+  font-size: 10px; padding: 2px 7px; border-radius: 4px;
+  background: #1e293b; color: #94a3b8; border: 1px solid #334155;
+  cursor: pointer; white-space: nowrap;
+}
+.tray-action-btn:hover { background: #334155; color: #e2e8f0; }
 #clipboard-section { display: flex; flex-direction: column; gap: 8px; }
 .tray-label { font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: 0.05em; }
 #clipboard-input {

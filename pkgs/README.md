@@ -55,7 +55,8 @@ sudo apt install ./dist/lumen_*.deb
 
 1. Create `/etc/lumen/` (mode `750`)
 2. Copy `example.env` to `/etc/lumen/example.env`
-3. Print a getting-started message
+3. Install the udev rule for controller support and reload udev
+4. Print a getting-started message
 
 ### Fedora / RHEL / CentOS (.rpm)
 
@@ -175,6 +176,22 @@ The template service (`lumen@.service`) runs under `User=<username>` with a full
 - GPU and audio devices are accessible via the user's group memberships
 
 If `LUMEN_LAUNCH` is set, Lumen starts the specified Wayland client (e.g. `labwc`) and shuts down gracefully when that client exits. If `LUMEN_LAUNCH` is not set, Lumen runs until stopped manually or by the service manager.
+
+---
+
+## Controller support
+
+The package installs `/usr/lib/udev/rules.d/70-lumen-uinput.rules`, which grants access to `/dev/uinput` for controller (gamepad) pass-through:
+
+```
+KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput", MODE="0666"
+```
+
+- `TAG+="uaccess"` — grants access to the physically logged-in user via systemd-logind
+- `OPTIONS+="static_node=uinput"` — creates the node at boot before any device event
+- `MODE="0666"` — ensures the device is readable/writable without group membership
+
+The post-install script runs `udevadm control --reload-rules && udevadm trigger` so the rule takes effect immediately on install without a reboot.
 
 ---
 

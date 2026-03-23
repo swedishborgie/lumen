@@ -1,0 +1,4 @@
+# Allow access to /dev/uinput for controller (gamepad) support.
+# TAG+="uaccess" grants access to the physically logged-in user via systemd-logind.
+# OPTIONS+="static_node=uinput" creates the node at boot before any device event.
+KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput", MODE="0666"

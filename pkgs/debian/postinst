@@ -39,6 +39,11 @@ case "$1" in
         echo "║     journalctl -u lumen@<username> -f                    ║"
         echo "╚══════════════════════════════════════════════════════════╝"
         echo ""
+
+        # Reload udev rules so the uinput controller rule takes effect immediately
+        if command -v udevadm > /dev/null 2>&1; then
+            udevadm control --reload-rules && udevadm trigger || true
+        fi
         ;;
 esac
 

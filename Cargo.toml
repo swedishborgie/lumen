@@ -102,6 +102,7 @@ assets = [
     { source = "target/release/lumen", dest = "/usr/bin/lumen", mode = "755" },
     { source = "pkgs/lumen@.service", dest = "/lib/systemd/system/lumen@.service", mode = "644" },
     { source = "pkgs/example.env", dest = "/usr/share/lumen/example.env", mode = "644" },
+    { source = "pkgs/70-lumen-uinput.rules", dest = "/usr/lib/udev/rules.d/70-lumen-uinput.rules", mode = "644" },
 ]
 
 [package.metadata.generate-rpm]
@@ -131,11 +132,16 @@ echo "  Start the service:"
 echo "    systemctl start lumen@<username>"
 echo "    systemctl enable lumen@<username>  # optional: autostart on boot"
 echo ""
+# Reload udev rules so the uinput controller rule takes effect immediately
+if command -v udevadm > /dev/null 2>&1; then
+    udevadm control --reload-rules && udevadm trigger || true
+fi
 """
 assets = [
     { source = "target/release/lumen", dest = "/usr/bin/lumen", mode = "755" },
     { source = "pkgs/lumen@.service", dest = "/lib/systemd/system/lumen@.service", mode = "644" },
     { source = "pkgs/example.env", dest = "/usr/share/lumen/example.env", mode = "644" },
+    { source = "pkgs/70-lumen-uinput.rules", dest = "/usr/lib/udev/rules.d/70-lumen-uinput.rules", mode = "644" },
 ]
 
 [package.metadata.generate-rpm.requires]

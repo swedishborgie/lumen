@@ -15,26 +15,29 @@
 
 Lumen exists to replace legacy Linux remote desktop solutions (VNC, RDP, NX, and similar) for the Wayland era. The goal is to provide a high-performance, low-latency desktop streaming experience accessible from any modern browser, with no plugins or native clients needed on the viewer side.
 
-**In scope:**
-- High-performance desktop streaming over WebRTC with hardware acceleration as the primary path
-- Low-latency interactive control (keyboard, mouse, clipboard) from the browser
-- Running as a Wayland compositor that any Wayland-native application or desktop shell can connect to
-- XWayland support for running legacy X11 applications inside the session
+Supports desktop and mobile browsers, including ChromeOS, Android and iOS. Connect
+from wherever you are.
 
-**Out of scope:**
-- Being a full desktop environment — Lumen is a transport layer; bring your own DE or compositor (e.g., `labwc`, `sway`).
-- Container-specific designs or hardened multi-tenant isolation -- this could certainly be built, but Lumen focuses on the single user use-case.
-- Native X11/Xorg support (XWayland only).
+## Why another Remote Desktop Solution?
+
+There are countless other solutions to this problem, so why another?
+ * Many applications don't work (well) with Wayland making them difficult to configure
+   and use on bleeding edge Linux distributions.
+ * Most require client side software making it difficult or inconsistent to use
+   if you use multiple types of devices or operating systems.
+ * Hardware acceleration support is inconsistent, they either rely entirely on
+   software rendering or specific encoding hardware making them difficult to use
+   or slow for realtime applications.
 
 ## Key Features
 
 - **Wayland-Native**: Built on [Smithay](https://github.com/Smithay/smithay) — modern, secure window management and frame capture.
 - **WebRTC Streaming**: Low-latency H.264 video and Opus audio delivered directly to any modern browser via the [str0m](https://github.com/algesten/str0m) WebRTC stack.
-- **Hardware Acceleration**: VA-API (Intel/AMD) zero-copy H.264 encoding with automatic x264 software fallback.
-- **System Audio**: PulseAudio monitor capture encoded to Opus.
+- **Hardware Acceleration**: VA-API (Intel/AMD) zero-copy H.264 encoding with automatic x264 software fallback (experimental NVENC support exists).
+- **System Audio**: PipeWire capture encoded to Opus.
 - **Interactive Input**: Keyboard, mouse, and clipboard forwarded from the browser back into the Wayland session.
 - **Embedded TURN Server**: Built-in TURN relay so the stream works across NAT without an external relay.
-- **Authentication**: Optional auth modes — none, HTTP Basic (PAM), bearer token, or OAuth2/OIDC.
+- **Authentication**: Optional auth modes — HTTP Basic (PAM), bearer token, or OAuth2/OIDC.
 - **TLS**: Native HTTPS/WSS support via PEM certificate and key.
 - **Single Binary**: Built-in web server and signaling — just run `lumen` and open a browser.
 

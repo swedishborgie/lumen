@@ -57,9 +57,11 @@ impl AudioCapture {
 
     /// Blocking capture + encode loop.
     ///
-    /// Creates a PipeWire virtual sink stream, initialises an Opus encoder,
-    /// then loops reading PCM frames, optionally gating silence, and encoding
-    /// to Opus packets delivered over the channel.
+    /// The PipeWire virtual sink is created lazily when the first peer connects
+    /// and destroyed when the last peer disconnects.  This ensures the sink is
+    /// never registered in the PipeWire graph during system startup (before
+    /// WirePlumber and kwin_wayland have fully initialised), avoiding a race
+    /// condition that caused KDE to fail to start intermittently.
     pub fn run(&mut self) -> Result<()> {
         let sample_rate = self.config.sample_rate;
         let channels = self.config.channels;
@@ -70,12 +72,8 @@ impl AudioCapture {
             channels,
             bitrate_bps = self.config.bitrate_bps,
             frame_ms,
-            "AudioCapture starting (PipeWire virtual sink)"
+            "AudioCapture starting (PipeWire virtual sink, lazy)"
         );
-
-        // ── PipeWire virtual sink ─────────────────────────────────────────
-        let sink = PipeWireSink::create(sample_rate, channels)
-            .context("Failed to create PipeWire virtual sink")?;
 
         // ── Opus encoder ──────────────────────────────────────────────────
         let opus_channels = match channels {
@@ -105,6 +103,10 @@ impl AudioCapture {
         let mut audio_idle = false;
         let mut prev_peer_count: usize = 0;
 
+        // The PipeWire sink is created on demand (0→1 peer transition) and
+        // destroyed on last disconnect (1→0 transition).
+        let mut sink: Option<PipeWireSink> = None;
+
         tracing::info!(frame_size, "AudioCapture loop started");
 
         loop {
@@ -126,30 +128,55 @@ impl AudioCapture {
                 }
             }
 
-            // Receive the next batch of samples from PipeWire.
-            // Use a short timeout so the stop_flag is checked regularly.
-            let frame = match sink.pcm_rx.recv_timeout(std::time::Duration::from_millis(50)) {
-                Ok(f) => f,
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                    tracing::warn!("PipeWire PCM channel disconnected");
-                    break;
-                }
-            };
-
-            pcm_buf.extend_from_slice(&frame.samples);
-
-            // Peer-count transition: activate / deactivate the default sink override.
             let current_peers = self
                 .peer_count
                 .as_ref()
                 .map_or(1, |c| c.load(Ordering::Relaxed));
+
+            // ── Lazy sink lifecycle ───────────────────────────────────────
             if prev_peer_count == 0 && current_peers > 0 {
-                sink.activate();
+                // First peer connected: create the virtual sink now that the
+                // session (WirePlumber, kwin) is guaranteed to be running.
+                tracing::info!("First peer connected — creating PipeWire virtual sink");
+                match PipeWireSink::create(sample_rate, channels) {
+                    Ok(s) => {
+                        s.activate();
+                        sink = Some(s);
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to create PipeWire virtual sink: {e:#}");
+                    }
+                }
             } else if prev_peer_count > 0 && current_peers == 0 {
-                sink.deactivate();
+                // Last peer disconnected: tear down the sink so it is not
+                // visible in the PipeWire graph when idle.
+                tracing::info!("Last peer disconnected — destroying PipeWire virtual sink");
+                drop(sink.take()); // PipeWireSink::drop() restores default sink
+                pcm_buf.clear();
             }
             prev_peer_count = current_peers;
+
+            // ── Receive PCM from PipeWire ─────────────────────────────────
+            // When no sink exists (no peers), sleep briefly and poll again.
+            let frame = match sink.as_ref() {
+                None => {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    continue;
+                }
+                Some(s) => {
+                    match s.pcm_rx.recv_timeout(std::time::Duration::from_millis(50)) {
+                        Ok(f) => f,
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                            tracing::warn!("PipeWire PCM channel disconnected");
+                            sink = None;
+                            continue;
+                        }
+                    }
+                }
+            };
+
+            pcm_buf.extend_from_slice(&frame.samples);
 
             // Encode all complete Opus frames available in the accumulation buffer.
             while pcm_buf.len() >= frame_samples {
@@ -161,8 +188,6 @@ impl AudioCapture {
                     continue;
                 }
 
-                // Skip Opus encoding when no peers are connected; keep consuming
-                // PCM to stay current so the first frame after reconnect isn't stale.
                 if current_peers == 0 {
                     if !audio_idle {
                         tracing::debug!("AudioCapture idle: no peers, skipping Opus encode");
@@ -193,8 +218,6 @@ impl AudioCapture {
             }
         }
 
-        // `sink` is dropped here → PipeWireSink::drop() restores default sink
-        // and stops the PipeWire thread.
         tracing::info!("AudioCapture stopped");
         Ok(())
     }

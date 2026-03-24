@@ -206,7 +206,7 @@ fn run_pw_thread(
         *pw::keys::NODE_NAME        => "lumen_capture",
         *pw::keys::NODE_DESCRIPTION => "Lumen Audio Capture",
         *pw::keys::MEDIA_TYPE       => "Audio",
-        *pw::keys::MEDIA_CATEGORY   => "Capture",
+        *pw::keys::MEDIA_CATEGORY   => "Playback",
     };
 
     let stream = pw::stream::StreamRc::new(core, "lumen-capture", stream_props)

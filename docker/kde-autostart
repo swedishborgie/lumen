@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# KDE autostart — run by plasmashell after the desktop is initialised.
+# Firefox is started with --no-sandbox because the container already provides
+# isolation, and the kernel security modules that Firefox relies on for its own
+# sandbox are typically not available inside a container.
+firefox --no-sandbox &

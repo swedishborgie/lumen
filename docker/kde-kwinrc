@@ -1,0 +1,20 @@
+# kwinrc — KDE window manager configuration for containerized / nested use.
+#
+# Applied to /root/.config/kwinrc in the lumen Docker image (KDE variant).
+# All settings are chosen for a headless, systemd-free container environment
+# where kwin_wayland runs nested inside the lumen compositor.
+
+[Daemon]
+# Disable the screen locker — there is no interactive session to lock and the
+# PAM / logind stack required by the locker is not present in the container.
+Autolock=false
+LockOnSuspend=false
+
+[Compositing]
+# Allow compositing even when kwin has flagged OpenGL as potentially unsafe
+# (common in containers / virtual GPU environments).
+OpenGLIsUnsafe=false
+
+[Wayland]
+# Enable primary-selection protocol so clipboard paste works with middle-click.
+EnablePrimarySelection=true

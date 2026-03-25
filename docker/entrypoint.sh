@@ -47,11 +47,24 @@ else
 fi
 
 # ── Start lumen ────────────────────────────────────────────────────────────────
-# DRI node detection, TURN IP detection, clipboard bridge setup, and labwc
+# DRI node detection, TURN IP detection, clipboard bridge setup, and desktop
 # launch are all handled internally by lumen.
-echo "==> Starting lumen  (Web UI: http://localhost:8080)"
-echo "    Args: --launch labwc $*"
-exec "$LUMEN_BIN" \
-    --launch labwc \
-    "$@"
+# DESKTOP is set at image build time via ARG/ENV; it can be overridden at
+# container run time with -e DESKTOP=kde|labwc.
+DESKTOP="${DESKTOP:-labwc}"
+echo "==> Starting lumen  (Web UI: http://localhost:8080, desktop: $DESKTOP)"
+
+if [ "$DESKTOP" = "kde" ]; then
+    echo "    Args: --auth none --desktop kde $*"
+    exec "$LUMEN_BIN" \
+        --auth none \
+        --desktop kde \
+        "$@"
+else
+    echo "    Args: --auth none --launch labwc $*"
+    exec "$LUMEN_BIN" \
+        --auth none \
+        --launch labwc \
+        "$@"
+fi
 

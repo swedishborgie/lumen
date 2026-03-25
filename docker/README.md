@@ -1,22 +1,34 @@
 # Lumen — Docker / Podman Container
 
-A multi-stage container image that builds Lumen from source and runs it inside a minimal Ubuntu 24.04 desktop (labwc + XWayland + Firefox). The Lumen WebRTC stream is accessible at **http://localhost:8080** from the host.
+A multi-stage container image that builds Lumen from source and runs it inside a minimal Ubuntu 24.04 desktop (XWayland + Firefox). The desktop environment is selected at build time. The Lumen WebRTC stream is accessible at **http://localhost:8080** from the host.
 
 ---
 
 ## Build
 
 ```bash
-# From the repo root
+# Default — labwc (lightweight Wayland compositor)
 podman build -f docker/Dockerfile -t lumen:latest .
+
+# KDE Plasma (kwin_wayland + plasmashell)
+podman build --build-arg DESKTOP=kde -f docker/Dockerfile -t lumen:kde .
 ```
+
+The `DESKTOP` build argument selects the desktop environment:
+
+| Value | Desktop | Terminal |
+|-------|---------|----------|
+| `labwc` *(default)* | labwc — lightweight wlroots compositor | foot |
+| `kde` | KDE Plasma 6 (kwin_wayland + plasmashell) | Konsole |
 
 The build has three stages:
 1. **planner** — lightweight stage that runs `cargo chef prepare` to compute a dependency recipe from the workspace manifests
 2. **builder** — installs the full Rust toolchain and all native C/C++ dependencies; uses the recipe to compile all third-party crates into a dedicated cached layer, then compiles only the application code on top
-3. **runtime** — minimal Ubuntu image with labwc, XWayland, Firefox, xclock/xeyes, PulseAudio, and the compiled `lumen` binary
+3. **runtime** — minimal Ubuntu image with the selected desktop, XWayland, Firefox, PulseAudio, and the compiled `lumen` binary
 
-> **Tip:** The first build will take a while (Rust + Smithay + FFmpeg bindings compile time). Subsequent builds that only change application source skip the dependency compilation step entirely — Podman reuses the cached layer. The dependency layer is only invalidated when `Cargo.toml` or `Cargo.lock` changes (e.g., adding or upgrading a crate).
+> **Tip:** The first build will take a while (Rust + Smithay + FFmpeg bindings compile time). Subsequent builds that only change application source skip the dependency compilation step entirely — Podman reuses the cached layer. The large shared runtime layer (GPU drivers, codecs, Wayland libs) is also shared between labwc and KDE builds; only the small DE-specific package step differs.
+
+> **KDE and systemd:** KDE Plasma 6's `startplasma-wayland` automatically detects whether systemd is available and falls back to direct launch mode when it is not (the normal case inside a container). No special configuration is required.
 
 ---
 
@@ -115,6 +127,8 @@ podman run ... -e LUMEN_TURN_PORT=0 lumen:latest
 
 ## What's inside
 
+### labwc image (`DESKTOP=labwc`, default)
+
 | Component | Purpose |
 |-----------|---------|
 | `lumen` | The compositor/streamer binary |
@@ -122,6 +136,19 @@ podman run ... -e LUMEN_TURN_PORT=0 lumen:latest
 | `xwayland` | XWayland bridge for X11 apps inside labwc |
 | `firefox` | Browser — auto-started by labwc on launch |
 | `foot` | Terminal emulator — available in the labwc right-click menu |
+| `xclock` / `xeyes` | X11 test utilities (`x11-apps` package) |
+| `pulseaudio` | Audio server for audio capture |
+
+### KDE image (`DESKTOP=kde`)
+
+| Component | Purpose |
+|-----------|---------|
+| `lumen` | The compositor/streamer binary |
+| `kwin_wayland` | KDE window manager / inner Wayland compositor |
+| `plasmashell` | KDE Plasma desktop shell |
+| `xwayland` | XWayland bridge for X11 apps |
+| `firefox` | Browser — auto-started on launch |
+| `konsole` | KDE terminal emulator |
 | `xclock` / `xeyes` | X11 test utilities (`x11-apps` package) |
 | `pulseaudio` | Audio server for audio capture |
 
@@ -137,13 +164,13 @@ Once the container is running, open a browser on the host and navigate to:
 http://localhost:8080
 ```
 
-You will see the Lumen web UI. Click **Connect** to start receiving the WebRTC video stream of the labwc desktop.
+You will see the Lumen web UI. Click **Connect** to start receiving the WebRTC video stream of the desktop.
 
 ---
 
 ## Testing X11 apps
 
-Open a terminal inside labwc (right-click the desktop → Terminal, if configured) and run:
+Open a terminal (foot in labwc, Konsole in KDE) and run:
 
 ```bash
 xclock &
@@ -158,6 +185,7 @@ Both apps should appear as X11 windows rendered via XWayland inside the labwc se
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `DESKTOP` | `labwc` | Desktop environment — `labwc` or `kde`. Set at image build time; can be overridden at runtime with `-e DESKTOP=kde` when using an image built with the matching packages. |
 | `LUMEN_BIND` | `0.0.0.0:8080` | HTTP server bind address |
 | `LUMEN_DRI_NODE` | *(auto-detected)* | Override the DRI render node (e.g. `/dev/dri/renderD128`) |
 | `LUMEN_TURN_PORT` | `3478` | TURN server UDP port. Set to `0` to disable. |

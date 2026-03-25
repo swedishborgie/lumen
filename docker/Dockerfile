@@ -4,7 +4,7 @@
 #   This stage is intentionally minimal — it only needs Rust + cargo-chef,
 #   not the full C/C++ library stack.
 # =============================================================================
-FROM ubuntu:24.04 AS planner
+FROM docker.io/ubuntu:25.10 AS planner
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -42,7 +42,7 @@ RUN cargo chef prepare --recipe-path recipe.json
 #      This layer is only invalidated when Cargo.toml / Cargo.lock changes.
 #   2. Compiles the application code on top (fast; re-runs on source changes).
 # =============================================================================
-FROM ubuntu:24.04 AS builder
+FROM docker.io/ubuntu:25.10 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -75,6 +75,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libudev-dev \
     # PulseAudio (lumen-audio)
     libpulse-dev \
+    # PipeWire (lumen-audio)
+    libpipewire-0.3-dev \
+    libspa-0.2-dev \
     # Opus codec
     libopus-dev \
     # Software H.264 encoder
@@ -123,14 +126,17 @@ COPY web/         web/
 # Inject the release version so CARGO_PKG_VERSION is not the only source.
 # In CI this is set to the stripped git tag (e.g. "0.2.0"); locally it is unset
 # and build.rs falls back to the version in Cargo.toml.
-ARG LUMEN_VERSION
+ARG LUMEN_VERSION=
 ENV LUMEN_VERSION=$LUMEN_VERSION
 
 RUN cargo build --release --bin lumen
 # Stage 2 — Runtime
-#   Minimal Ubuntu desktop: labwc + XWayland + Firefox + test apps + lumen.
+#   Minimal Ubuntu desktop + XWayland + Firefox + lumen.
+#   Select desktop environment at build time:
+#     --build-arg DESKTOP=labwc   (default) — labwc lightweight compositor
+#     --build-arg DESKTOP=kde     — KDE Plasma (kwin_wayland + plasmashell)
 # =============================================================================
-FROM ubuntu:24.04 AS runtime
+FROM docker.io/ubuntu:25.10 AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -138,7 +144,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN sed -i 's/^Components: main restricted$/Components: main restricted universe multiverse/' \
         /etc/apt/sources.list.d/ubuntu.sources
 
-# ── Mozilla APT repo (Ubuntu 24.04's 'firefox' package is a snap stub) ────────
+# ── Mozilla APT repo (Ubuntu 25.10's 'firefox' package is a snap stub) ────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl gnupg \
     && install -d -m 0755 /etc/apt/keyrings \
@@ -150,18 +156,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         > /etc/apt/preferences.d/mozilla \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Runtime packages ──────────────────────────────────────────────────────────
+# ── Runtime packages (shared by all desktop variants) ────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # ── Wayland compositor (inner desktop) ────────────────────────────────────
-    labwc \
     # ── XWayland bridge ───────────────────────────────────────────────────────
     xwayland \
     # ── X11 test utilities ────────────────────────────────────────────────────
     x11-apps \
     # ── Browser ───────────────────────────────────────────────────────────────
     firefox \
-    # ── Terminal emulator ─────────────────────────────────────────────────────
-    foot \
     # ── Audio server ──────────────────────────────────────────────────────────
     pulseaudio \
     # ── GPU / Mesa runtime ────────────────────────────────────────────────────
@@ -180,13 +182,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # ── Video codec runtime ────────────────────────────────────────────────────
     libx264-164 \
     libopus0 \
-    libavcodec60 \
-    libavformat60 \
-    libavutil58 \
-    libavfilter9 \
-    libavdevice60 \
-    libswscale7 \
-    libswresample4 \
+    libavcodec61 \
+    libavformat61 \
+    libavutil59 \
+    libavfilter10 \
+    libavdevice61 \
+    libswscale8 \
+    libswresample5 \
     # ── Wayland / XKB ─────────────────────────────────────────────────────────
     libwayland-client0 \
     libwayland-server0 \
@@ -211,6 +213,33 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     iproute2 \
     && rm -rf /var/lib/apt/lists/*
 
+# ── Desktop-environment-specific packages ────────────────────────────────────
+# This ARG is declared AFTER the shared layer above so that changing DESKTOP
+# does not bust the cache for the large shared apt-get step.
+ARG DESKTOP=labwc
+
+# NOTE: no inline comments inside the apt-get lists — shell comments after a
+# backslash-continued line (without a trailing backslash) break line joining,
+# causing packages after the comment to be skipped.
+RUN apt-get update && \
+    if [ "$DESKTOP" = "kde" ]; then \
+        apt-get install -y --no-install-recommends \
+            kwin-wayland \
+            plasma-desktop \
+            plasma-workspace \
+            konsole \
+        ; \
+    else \
+        apt-get install -y --no-install-recommends \
+            labwc \
+            foot \
+        ; \
+    fi \
+    && rm -rf /var/lib/apt/lists/*
+
+# Expose the selected desktop to the entrypoint at runtime.
+ENV DESKTOP=$DESKTOP
+
 # ── Copy lumen binary from builder ────────────────────────────────────────────
 COPY --from=builder /build/target/release/lumen /usr/local/bin/lumen
 
@@ -218,11 +247,20 @@ COPY --from=builder /build/target/release/lumen /usr/local/bin/lumen
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-# ── labwc default config: autostart Firefox on launch ─────────────────────────
+# ── Desktop-environment configuration ─────────────────────────────────────────
+# labwc: autostart script (launches Firefox) + right-click menu definition.
+# KDE:   kwinrc (disable screen locker, allow compositing in containers) +
+#        autostart script (launches Firefox via plasma autostart mechanism).
 RUN mkdir -p /root/.config/labwc
 COPY docker/labwc-autostart /root/.config/labwc/autostart
 RUN chmod +x /root/.config/labwc/autostart
 COPY docker/labwc-menu.xml /root/.config/labwc/menu.xml
+
+RUN mkdir -p /root/.config \
+             /root/.config/autostart-scripts
+COPY docker/kde-kwinrc /root/.config/kwinrc
+COPY docker/kde-autostart /root/.config/autostart-scripts/lumen-kde-autostart.sh
+RUN chmod +x /root/.config/autostart-scripts/lumen-kde-autostart.sh
 
 # ── Expose ports ──────────────────────────────────────────────────────────────
 # 8080: lumen HTTP / WebRTC signaling

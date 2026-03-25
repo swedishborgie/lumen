@@ -277,18 +277,20 @@ COPY docker/kde-plasma-desktop-appletsrc /root/.config/plasma-org.kde.plasma.des
 # Pre-configure Konsole with a default Shell profile so it doesn't warn about
 # a missing profile on first launch.
 COPY docker/konsole-shell.profile /root/.local/share/konsole/Shell.profile
-RUN kwriteconfig6 --file konsolerc --group "Desktop Entry" --key DefaultProfile Shell.profile
-# Disable systemd-based Plasma session startup (default since Plasma 5.25).
-# Containers have no systemd user instance, so the default causes startplasma-wayland
-# to stall waiting for systemd unit activation. Per: https://wiki.archlinux.org/title/KDE#systemd_startup
-RUN kwriteconfig6 --file startkderc --group General --key systemdBoot false
-
-# kwin_wayland ships with cap_sys_nice=ep (effective+permitted) so it can set
-# real-time thread priorities.  Container runtimes without CAP_SYS_NICE in the
-# bounding set cause execve() to return EPERM, silently preventing kwin from
-# launching.  Strip the file capability so kwin starts normally; it falls back
-# to standard SCHED_OTHER scheduling.
-RUN setcap -r /usr/bin/kwin_wayland
+RUN if [ "$DESKTOP" = "kde" ]; then \
+        # Set default Konsole profile so it doesn't warn about a missing profile. \
+        kwriteconfig6 --file konsolerc --group "Desktop Entry" --key DefaultProfile Shell.profile && \
+        # Disable systemd-based Plasma session startup (default since Plasma 5.25). \
+        # Containers have no systemd user instance, so the default causes startplasma-wayland \
+        # to stall waiting for systemd unit activation. Per: https://wiki.archlinux.org/title/KDE#systemd_startup \
+        kwriteconfig6 --file startkderc --group General --key systemdBoot false && \
+        # kwin_wayland ships with cap_sys_nice=ep (effective+permitted) so it can set \
+        # real-time thread priorities.  Container runtimes without CAP_SYS_NICE in the \
+        # bounding set cause execve() to return EPERM, silently preventing kwin from \
+        # launching.  Strip the file capability so kwin starts normally; it falls back \
+        # to standard SCHED_OTHER scheduling. \
+        setcap -r /usr/bin/kwin_wayland; \
+    fi
 
 # ── Expose ports ──────────────────────────────────────────────────────────────
 # 8080: lumen HTTP / WebRTC signaling

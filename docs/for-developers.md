@@ -30,21 +30,30 @@ sudo dnf install \
     rust cargo \
     gcc gcc-c++ \
     cmake \
+    nasm \
     pkg-config \
-    x264-devel \
-    pam-devel \
-    pixman-devel \
-    libinput-devel \
-    mesa-libgbm-devel \
-    libva-devel \
-    libdrm-devel \
-    opus-devel \
-    pulseaudio-libs-devel \
+    clang \
+    clang-devel \
+    llvm \
     wayland-devel \
-    ffmpeg-devel \
-    xkeyboard-config \
     libxkbcommon-devel \
-    clang-devel
+    xkeyboard-config \
+    pixman-devel \
+    mesa-libEGL-devel \
+    mesa-libGLES-devel \
+    mesa-libgbm-devel \
+    libdrm-devel \
+    libinput-devel \
+    libevdev-devel \
+    systemd-devel \
+    pulseaudio-libs-devel \
+    pipewire-devel \
+    opus-devel \
+    x264-devel \
+    libva-devel \
+    ffmpeg-devel \
+    pam-devel \
+    openssl-devel
 ```
 
 You'll need the [RPM Fusion enabled](https://rpmfusion.org/Configuration).
@@ -57,19 +66,37 @@ sudo apt install \
     rustup \
     build-essential \
     cmake \
+    nasm \
     pkg-config \
+    git \
+    clang \
+    libclang-dev \
+    llvm \
+    libwayland-dev \
+    libxkbcommon-dev \
+    libpixman-1-dev \
+    libegl-dev \
+    libgles2-mesa-dev \
+    libgbm-dev \
+    libdrm-dev \
+    libinput-dev \
+    libevdev-dev \
+    libudev-dev \
+    libpulse-dev \
+    libpipewire-0.3-dev \
+    libspa-0.2-dev \
+    libopus-dev \
     libx264-dev \
     libva-dev \
-    libdrm-dev \
-    libopus-dev \
-    libpulse-dev \
-    libwayland-dev \
     libavcodec-dev \
-    libavfilter-dev \
+    libavformat-dev \
     libavutil-dev \
-    libxkbcommon-dev \
-    clang \
-    libclang-dev
+    libavfilter-dev \
+    libavdevice-dev \
+    libswscale-dev \
+    libswresample-dev \
+    libpam0g-dev \
+    libssl-dev
 ```
 
 Then install Rust via rustup if not already installed:

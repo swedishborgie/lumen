@@ -100,7 +100,9 @@ A Podman image is also available that bundles a full desktop environment (labwc 
 - Rust (latest stable)
 - PulseAudio / PipeWire (with PulseAudio compatibility)
 - VA-API compatible drivers (optional, for hardware acceleration)
-- `libx264`, `libva`, `libopus` development headers
+- Native library development headers: `libx264`, `libva`, `libopus`, `libpipewire`, `libwayland`, `libxkbcommon`, `libpixman`, `libinput`, `libpam`, `libssl`, and FFmpeg
+
+See [`docs/for-developers.md`](docs/for-developers.md) for the full per-distro package list.
 
 ### Build
 

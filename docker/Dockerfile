@@ -217,6 +217,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-dejavu-core \
     # ── Utilities ─────────────────────────────────────────────────────────────
     iproute2 \
+    sudo \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Desktop-environment-specific packages ────────────────────────────────────
@@ -249,6 +250,17 @@ RUN apt-get update && \
 # Expose the selected desktop to the entrypoint at runtime.
 ENV DESKTOP=$DESKTOP
 
+# ── Create non-root user ───────────────────────────────────────────────────────
+# Ubuntu 25.10 ships a default 'ubuntu' user at uid 1000; rename it to 'user'
+# and relocate its home directory rather than creating a duplicate uid.
+RUN usermod -l user -d /home/user -m -c "User" ubuntu \
+    && groupmod -n user ubuntu \
+    && echo "user ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/user \
+    && chmod 0440 /etc/sudoers.d/user \
+    && mkdir -p /run/user/1000 \
+    && chown user:user /run/user/1000 \
+    && chmod 0700 /run/user/1000
+
 # ── Copy lumen binary from builder ────────────────────────────────────────────
 COPY --from=builder /build/target/release/lumen /usr/local/bin/lumen
 
@@ -260,30 +272,30 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 # labwc: autostart script (launches Firefox) + right-click menu definition.
 # KDE:   kwinrc (disable screen locker, allow compositing in containers) +
 #        autostart script (launches Firefox via plasma autostart mechanism).
-RUN mkdir -p /root/.config/labwc
-COPY docker/labwc-autostart /root/.config/labwc/autostart
-RUN chmod +x /root/.config/labwc/autostart
-COPY docker/labwc-menu.xml /root/.config/labwc/menu.xml
+RUN mkdir -p /home/user/.config/labwc
+COPY docker/labwc-autostart /home/user/.config/labwc/autostart
+RUN chmod +x /home/user/.config/labwc/autostart
+COPY docker/labwc-menu.xml /home/user/.config/labwc/menu.xml
 
-RUN mkdir -p /root/.config \
-             /root/.config/autostart-scripts \
-             /root/.local/share/konsole
-COPY docker/kde-kwinrc /root/.config/kwinrc
-COPY docker/kde-autostart /root/.config/autostart-scripts/lumen-kde-autostart.sh
-RUN chmod +x /root/.config/autostart-scripts/lumen-kde-autostart.sh
+RUN mkdir -p /home/user/.config \
+             /home/user/.config/autostart-scripts \
+             /home/user/.local/share/konsole
+COPY docker/kde-kwinrc /home/user/.config/kwinrc
+COPY docker/kde-autostart /home/user/.config/autostart-scripts/lumen-kde-autostart.sh
+RUN chmod +x /home/user/.config/autostart-scripts/lumen-kde-autostart.sh
 # Pre-configure the Plasma taskbar (removes uninstalled systemsettings.desktop
 # and org.kde.discover.desktop from the launcher; keeps only preferred://browser).
-COPY docker/kde-plasma-desktop-appletsrc /root/.config/plasma-org.kde.plasma.desktop-appletsrc
+COPY docker/kde-plasma-desktop-appletsrc /home/user/.config/plasma-org.kde.plasma.desktop-appletsrc
 # Pre-configure Konsole with a default Shell profile so it doesn't warn about
 # a missing profile on first launch.
-COPY docker/konsole-shell.profile /root/.local/share/konsole/Shell.profile
+COPY docker/konsole-shell.profile /home/user/.local/share/konsole/Shell.profile
 RUN if [ "$DESKTOP" = "kde" ]; then \
         # Set default Konsole profile so it doesn't warn about a missing profile. \
-        kwriteconfig6 --file konsolerc --group "Desktop Entry" --key DefaultProfile Shell.profile && \
+        HOME=/home/user kwriteconfig6 --file konsolerc --group "Desktop Entry" --key DefaultProfile Shell.profile && \
         # Disable systemd-based Plasma session startup (default since Plasma 5.25). \
         # Containers have no systemd user instance, so the default causes startplasma-wayland \
         # to stall waiting for systemd unit activation. Per: https://wiki.archlinux.org/title/KDE#systemd_startup \
-        kwriteconfig6 --file startkderc --group General --key systemdBoot false && \
+        HOME=/home/user kwriteconfig6 --file startkderc --group General --key systemdBoot false && \
         # kwin_wayland ships with cap_sys_nice=ep (effective+permitted) so it can set \
         # real-time thread priorities.  Container runtimes without CAP_SYS_NICE in the \
         # bounding set cause execve() to return EPERM, silently preventing kwin from \
@@ -292,6 +304,9 @@ RUN if [ "$DESKTOP" = "kde" ]; then \
         setcap -r /usr/bin/kwin_wayland; \
     fi
 
+# Fix ownership of the user's home directory.
+RUN chown -R user:user /home/user
+
 # ── Expose ports ──────────────────────────────────────────────────────────────
 # 8080: lumen HTTP / WebRTC signaling
 # 3478/udp: embedded TURN server control
@@ -299,4 +314,5 @@ RUN if [ "$DESKTOP" = "kde" ]; then \
 EXPOSE 8080
 EXPOSE 3478/udp
 
+USER user
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

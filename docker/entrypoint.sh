@@ -10,16 +10,8 @@ set -euo pipefail
 LUMEN_BIN="${LUMEN_BIN:-/usr/local/bin/lumen}"
 
 # ── XDG_RUNTIME_DIR ────────────────────────────────────────────────────────────
-# Prefer /run/user/<uid>; fall back to /tmp/runtime for rootless containers
-# where /run/user may not be writable.
-UID_VAL="$(id -u)"
-if [[ -w "/run/user" ]] || mkdir -p "/run/user/$UID_VAL" 2>/dev/null; then
-    export XDG_RUNTIME_DIR="/run/user/$UID_VAL"
-else
-    export XDG_RUNTIME_DIR="/tmp/runtime-$UID_VAL"
-fi
-mkdir -p "$XDG_RUNTIME_DIR"
-chmod 0700 "$XDG_RUNTIME_DIR"
+# /run/user/<uid> is pre-created in the image (see Dockerfile).
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 
 echo "==> XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"
 
@@ -62,14 +54,11 @@ else
 fi
 
 # ── uinput (virtual gamepad devices) ─────────────────────────────────────────
-# Try to load the uinput kernel module.  This succeeds when the container has
-# CAP_SYS_MODULE (e.g. --privileged) or the module is already loaded on the host.
-modprobe uinput 2>/dev/null || true
 if [[ -c /dev/uinput ]]; then
     echo "==> /dev/uinput available — gamepad support enabled"
 else
     echo "==> WARN: /dev/uinput not found — gamepad support disabled"
-    echo "    Pass --device /dev/uinput to enable gamepad forwarding"
+    echo "    Pass --device /dev/uinput --group-add \$(stat -c '%g' /dev/uinput) to enable gamepad forwarding"
 fi
 
 # ── Start lumen ────────────────────────────────────────────────────────────────

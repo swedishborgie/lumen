@@ -165,7 +165,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # ── Browser ───────────────────────────────────────────────────────────────
     firefox \
     # ── Audio server ──────────────────────────────────────────────────────────
-    pulseaudio \
+    pipewire-pulse \
     # ── GPU / Mesa runtime ────────────────────────────────────────────────────
     libgl1 \
     libglx-mesa0 \
@@ -197,12 +197,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libinput10 \
     libevdev2 \
     libudev1 \
-    # ── PulseAudio runtime ────────────────────────────────────────────────────
+    # ── PulseAudio client runtime (libpulse; pipewire-pulse is the server) ────
     libpulse0 \
     # ── PipeWire runtime (lumen-audio virtual sink) ───────────────────────────
     pipewire \
     wireplumber \
     libpipewire-0.3-0 \
+    # ── KDE audio integration (volume applet QML module) ─────────────────────
+    plasma-pa \
     # ── PAM runtime ───────────────────────────────────────────────────────────
     libpam0g \
     # ── Pixman (Smithay CPU renderer) ─────────────────────────────────────────

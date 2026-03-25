@@ -29,12 +29,6 @@ if command -v dbus-daemon &>/dev/null && [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]
     echo "==> D-Bus session started: $DBUS_SESSION_BUS_ADDRESS"
 fi
 
-# ── PulseAudio ────────────────────────────────────────────────────────────────
-if command -v pulseaudio &>/dev/null; then
-    pulseaudio --daemonize --exit-idle-time=-1 --log-level=warn 2>/dev/null || true
-    echo "==> PulseAudio started"
-fi
-
 # ── /tmp/.X11-unix ────────────────────────────────────────────────────────────
 # XWayland (used by kwin_wayland and other compositors) requires this directory
 # to create its UNIX-domain socket.  It is not created automatically in a
@@ -45,6 +39,10 @@ chmod 1777 /tmp/.X11-unix
 # ── PipeWire ──────────────────────────────────────────────────────────────────
 # lumen-audio creates a PipeWire virtual sink for audio capture.  The PipeWire
 # daemon must be running before lumen starts, otherwise the sink creation fails.
+#
+# pipewire-pulse is used instead of the standalone PulseAudio daemon so that
+# all audio clients (including KDE apps using libpulse) land in the same
+# PipeWire graph and can be routed to lumen's virtual sink.
 if command -v pipewire &>/dev/null; then
     pipewire &
     PIPEWIRE_PID=$!
@@ -52,6 +50,11 @@ if command -v pipewire &>/dev/null; then
     sleep 0.5
     if command -v wireplumber &>/dev/null; then
         wireplumber &
+    fi
+    # Start the PulseAudio-compatible server so libpulse clients (Firefox,
+    # KDE plasmoids, etc.) connect to PipeWire rather than a separate daemon.
+    if command -v pipewire-pulse &>/dev/null; then
+        pipewire-pulse &
     fi
     echo "==> PipeWire started (pid $PIPEWIRE_PID)"
 else

@@ -149,13 +149,20 @@ fn run_pw_thread(
         Rc::new(RefCell::new(None));
     let original_default: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
 
+    // Set to true when Activate arrives before the metadata object is ready.
+    // The registry global callback applies the activation as soon as it binds
+    // the metadata object.
+    let pending_activate: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
+
     let meta_for_ctrl = meta.clone();
     let orig_for_ctrl = original_default.clone();
+    let pending_for_ctrl = pending_activate.clone();
 
     let _reg_listener = {
         let meta = meta.clone();
         let meta_listener = meta_listener.clone();
         let original_default = original_default.clone();
+        let pending_activate = pending_activate.clone();
         let registry_for_bind = registry.clone();
 
         registry
@@ -177,17 +184,44 @@ fn run_pw_thread(
                 };
 
                 // Listen for property events to capture the original default.
+                // NOTE: deferred activation is applied here — inside the
+                // property callback — so that we always capture the original
+                // value BEFORE switching the default to lumen_capture.
                 let orig = original_default.clone();
+                let pending_for_prop = pending_activate.clone();
+                let meta_for_prop = meta.clone();
                 let listener = meta_obj
                     .add_listener_local()
                     .property(move |subject, key, _type_, value| {
-                        if subject == 0
-                            && key == Some("default.audio.sink")
-                            && orig.borrow().is_none()
-                        {
-                            let saved = value.map(str::to_owned);
-                            tracing::debug!(saved = ?saved, "Saved original default audio sink");
-                            *orig.borrow_mut() = saved;
+                        if subject == 0 && key == Some("default.audio.sink") {
+                            if orig.borrow().is_none() {
+                                let saved = value.map(str::to_owned);
+                                tracing::debug!(
+                                    saved = ?saved,
+                                    "Saved original default audio sink"
+                                );
+                                *orig.borrow_mut() = saved;
+
+                                // Apply any activation that arrived before the
+                                // metadata object (and its current properties)
+                                // were ready.  We do this here rather than in
+                                // the registry global callback so the original
+                                // is always captured before we overwrite it.
+                                if *pending_for_prop.borrow() {
+                                    *pending_for_prop.borrow_mut() = false;
+                                    if let Some(m) = meta_for_prop.borrow().as_ref() {
+                                        tracing::info!(
+                                            "Setting default audio sink → lumen_capture (deferred)"
+                                        );
+                                        m.set_property(
+                                            0,
+                                            "default.audio.sink",
+                                            Some("Spa:String:JSON"),
+                                            Some("{ \"name\": \"lumen_capture\" }"),
+                                        );
+                                    }
+                                }
+                            }
                         }
                         0
                     })
@@ -303,12 +337,21 @@ fn run_pw_thread(
                     Some("{ \"name\": \"lumen_capture\" }"),
                 );
             } else {
-                tracing::warn!(
-                    "Cannot activate: PipeWire metadata object not yet found"
+                // The metadata object hasn't been discovered yet (registry
+                // round-trip is still in flight).  Set a flag so the registry
+                // global callback applies the activation as soon as the object
+                // is bound.
+                tracing::debug!(
+                    "PipeWire metadata not yet available; deferring default-sink activation"
                 );
+                *pending_for_ctrl.borrow_mut() = true;
             }
         }
         ControlMsg::Deactivate => {
+            // Clear any pending deferred activation so we don't switch the
+            // default sink after the peer has already disconnected.
+            *pending_for_ctrl.borrow_mut() = false;
+
             if let Some(meta) = meta_for_ctrl.borrow().as_ref() {
                 let orig = orig_for_ctrl.borrow();
                 if let Some(ref original) = *orig {

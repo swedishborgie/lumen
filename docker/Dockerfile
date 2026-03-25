@@ -266,10 +266,18 @@ RUN chmod +x /root/.config/labwc/autostart
 COPY docker/labwc-menu.xml /root/.config/labwc/menu.xml
 
 RUN mkdir -p /root/.config \
-             /root/.config/autostart-scripts
+             /root/.config/autostart-scripts \
+             /root/.local/share/konsole
 COPY docker/kde-kwinrc /root/.config/kwinrc
 COPY docker/kde-autostart /root/.config/autostart-scripts/lumen-kde-autostart.sh
 RUN chmod +x /root/.config/autostart-scripts/lumen-kde-autostart.sh
+# Pre-configure the Plasma taskbar (removes uninstalled systemsettings.desktop
+# and org.kde.discover.desktop from the launcher; keeps only preferred://browser).
+COPY docker/kde-plasma-desktop-appletsrc /root/.config/plasma-org.kde.plasma.desktop-appletsrc
+# Pre-configure Konsole with a default Shell profile so it doesn't warn about
+# a missing profile on first launch.
+COPY docker/konsole-shell.profile /root/.local/share/konsole/Shell.profile
+RUN kwriteconfig6 --file konsolerc --group "Desktop Entry" --key DefaultProfile Shell.profile
 # Disable systemd-based Plasma session startup (default since Plasma 5.25).
 # Containers have no systemd user instance, so the default causes startplasma-wayland
 # to stall waiting for systemd unit activation. Per: https://wiki.archlinux.org/title/KDE#systemd_startup

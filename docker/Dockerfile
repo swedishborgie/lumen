@@ -199,6 +199,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libudev1 \
     # ── PulseAudio runtime ────────────────────────────────────────────────────
     libpulse0 \
+    # ── PipeWire runtime (lumen-audio virtual sink) ───────────────────────────
+    pipewire \
+    wireplumber \
+    libpipewire-0.3-0 \
     # ── PAM runtime ───────────────────────────────────────────────────────────
     libpam0g \
     # ── Pixman (Smithay CPU renderer) ─────────────────────────────────────────
@@ -216,6 +220,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # ── Desktop-environment-specific packages ────────────────────────────────────
 # This ARG is declared AFTER the shared layer above so that changing DESKTOP
 # does not bust the cache for the large shared apt-get step.
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
+
 ARG DESKTOP=labwc
 
 # NOTE: no inline comments inside the apt-get lists — shell comments after a
@@ -261,6 +268,17 @@ RUN mkdir -p /root/.config \
 COPY docker/kde-kwinrc /root/.config/kwinrc
 COPY docker/kde-autostart /root/.config/autostart-scripts/lumen-kde-autostart.sh
 RUN chmod +x /root/.config/autostart-scripts/lumen-kde-autostart.sh
+# Disable systemd-based Plasma session startup (default since Plasma 5.25).
+# Containers have no systemd user instance, so the default causes startplasma-wayland
+# to stall waiting for systemd unit activation. Per: https://wiki.archlinux.org/title/KDE#systemd_startup
+RUN kwriteconfig6 --file startkderc --group General --key systemdBoot false
+
+# kwin_wayland ships with cap_sys_nice=ep (effective+permitted) so it can set
+# real-time thread priorities.  Container runtimes without CAP_SYS_NICE in the
+# bounding set cause execve() to return EPERM, silently preventing kwin from
+# launching.  Strip the file capability so kwin starts normally; it falls back
+# to standard SCHED_OTHER scheduling.
+RUN setcap -r /usr/bin/kwin_wayland
 
 # ── Expose ports ──────────────────────────────────────────────────────────────
 # 8080: lumen HTTP / WebRTC signaling

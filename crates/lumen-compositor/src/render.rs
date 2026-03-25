@@ -7,13 +7,23 @@
 use smithay::{
     backend::renderer::{
         damage::OutputDamageTracker,
+        element::RenderElementStates,
         gles::GlesRenderer,
         pixman::PixmanRenderer,
         Bind,
     },
-    desktop::utils::send_frames_surface_tree,
+    desktop::utils::{
+        send_frames_surface_tree,
+        surface_presentation_feedback_flags_from_states,
+        OutputPresentationFeedback,
+    },
     output::Output,
-    wayland::seat::WaylandFocus,
+    reexports::wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
+    utils::{Monotonic, Time},
+    wayland::{
+        presentation::Refresh,
+        seat::WaylandFocus,
+    },
 };
 use bytes::Bytes;
 use std::time::{Duration, Instant};
@@ -39,20 +49,51 @@ pub fn render_and_capture(state: &mut AppState, damage_tracker: &mut OutputDamag
         tracing::debug!(window_count, "Rendering frame");
     }
 
-    if state.use_gpu {
-        render_gles(state, damage_tracker, &output, now_ms, captured_at, width, height);
+    let render_states = if state.use_gpu {
+        render_gles(state, damage_tracker, &output, now_ms, captured_at, width, height)
     } else {
-        render_pixman(state, damage_tracker, &output, now_ms, captured_at, width, height);
-    }
+        render_pixman(state, damage_tracker, &output, now_ms, captured_at, width, height)
+    };
+
+    let time = Duration::from_millis(now_ms);
 
     // Send wl_surface.frame callbacks so clients know to render their next frame.
-    let time = Duration::from_millis(now_ms);
     for window in state.space.elements().cloned().collect::<Vec<_>>() {
         if let Some(surface) = window.wl_surface() {
             send_frames_surface_tree(&surface, &output, time, Some(Duration::ZERO), |_, _| {
                 Some(output.clone())
             });
         }
+    }
+
+    // Resolve wp_presentation feedback for all surfaces.  Clients like kwin use
+    // the `presented` event (not just wl_surface.frame) to pace their repaint
+    // loop.  Without this, kwin stalls after its first frame — it attaches a
+    // wp_presentation_feedback to its surface commit and waits indefinitely for
+    // `presented` or `discarded` before scheduling the next repaint.
+    if let Some(states) = render_states {
+        let mut feedback = OutputPresentationFeedback::new(&output);
+        let output_ref = output.clone();
+        for window in state.space.elements().cloned().collect::<Vec<_>>() {
+            if state.space.outputs_for_element(&window).contains(&output) {
+                window.take_presentation_feedback(
+                    &mut feedback,
+                    // lumen has one output; all surfaces are on it.
+                    |_, _| Some(output_ref.clone()),
+                    |surface, _| surface_presentation_feedback_flags_from_states(surface, None, &states),
+                );
+            }
+        }
+        let refresh = output
+            .current_mode()
+            .map(|m| Refresh::fixed(Duration::from_secs_f64(1_000f64 / m.refresh as f64)))
+            .unwrap_or(Refresh::Unknown);
+        feedback.presented::<_, Monotonic>(
+            Time::from(time),
+            refresh,
+            0,
+            wp_presentation_feedback::Kind::empty(),
+        );
     }
 
     state.frame_counter = state.frame_counter.wrapping_add(1);
@@ -70,21 +111,21 @@ fn render_gles(
     captured_at: Instant,
     width: u32,
     height: u32,
-) {
+) -> Option<RenderElementStates> {
     // Take the renderer out of state so we can also borrow state.space simultaneously.
     let mut renderer = match state.gles_renderer.take() {
         Some(r) => r,
-        None => return,
+        None => return None,
     };
 
     let elements = match collect_elements_gles(&mut renderer, &state.space, output) {
         Some(e) => e,
-        None => { state.gles_renderer = Some(renderer); return; }
+        None => { state.gles_renderer = Some(renderer); return None; }
     };
 
     if state.offscreen_buffers.is_empty() {
         state.gles_renderer = Some(renderer);
-        return;
+        return None;
     }
 
     // Advance to the next slot in the ring before binding.
@@ -105,7 +146,7 @@ fn render_gles(
         Err(e) => {
             tracing::warn!("GlesRenderer bind error: {:?}", e);
             state.gles_renderer = Some(renderer);
-            return;
+            return None;
         }
     };
     let bind_elapsed = bind_t0.elapsed();
@@ -121,11 +162,12 @@ fn render_gles(
     // NV12 frame regardless of damage, so partial repaints offer no benefit on
     // the GPU path and the extra bookkeeping just adds complexity.
     match damage_tracker.render_output(&mut renderer, &mut target, 0, &elements, [0.05, 0.05, 0.05, 1.0]) {
-        Ok(_) => {
+        Ok(result) => {
             // Flush pending GL commands so the compositor's write fence is submitted
             // promptly before the render target is unbound.  glFlush (non-blocking)
             // is sufficient — glFinish would stall the compositor thread unnecessarily.
             let _ = renderer.with_context(|gl| unsafe { gl.Flush() });
+            let states = result.states;
             drop(target);
             state.gles_renderer = Some(renderer);
             let _ = state.frame_tx.send(CapturedFrame {
@@ -138,11 +180,13 @@ fn render_gles(
                 captured_at,
             });
             state.encoded_frame_count += 1;
+            Some(states)
         }
         Err(e) => {
             tracing::warn!("GlesRenderer render_output error: {:?}", e);
             drop(target);
             state.gles_renderer = Some(renderer);
+            None
         }
     }
 }
@@ -172,15 +216,15 @@ fn render_pixman(
     captured_at: Instant,
     width: u32,
     height: u32,
-) {
+) -> Option<RenderElementStates> {
     let mut renderer = match state.pixman_renderer.take() {
         Some(r) => r,
-        None => return,
+        None => return None,
     };
 
     let elements = match collect_elements_pixman(&mut renderer, &state.space, output) {
         Some(e) => e,
-        None => { state.pixman_renderer = Some(renderer); return; }
+        None => { state.pixman_renderer = Some(renderer); return None; }
     };
 
     // Create a Pixman image backed directly by our frame_buffer Vec.
@@ -200,7 +244,7 @@ fn render_pixman(
             Err(_) => {
                 tracing::warn!("Failed to create pixman image from frame buffer");
                 state.pixman_renderer = Some(renderer);
-                return;
+                return None;
             }
         }
     };
@@ -210,7 +254,7 @@ fn render_pixman(
         Err(e) => {
             tracing::warn!("PixmanRenderer bind error: {:?}", e);
             state.pixman_renderer = Some(renderer);
-            return;
+            return None;
         }
     };
 
@@ -228,7 +272,7 @@ fn render_pixman(
     state.pixman_renderer = Some(renderer);
 
     match render_result {
-        Ok(_) => {
+        Ok(result) => {
             // Log element count and first pixel to diagnose black frames.
             if state.frame_counter % 150 == 0 {
                 let first_pixel = if state.frame_buffer.len() >= 4 {
@@ -255,9 +299,11 @@ fn render_pixman(
                 captured_at,
             });
             state.encoded_frame_count += 1;
+            Some(result.states)
         }
         Err(e) => {
             tracing::warn!("PixmanRenderer render_output error: {:?}", e);
+            None
         }
     }
 }

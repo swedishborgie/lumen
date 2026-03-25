@@ -158,13 +158,15 @@ pub struct ClientState {
 }
 
 impl smithay::reexports::wayland_server::backend::ClientData for ClientState {
-    fn initialized(&self, _client_id: smithay::reexports::wayland_server::backend::ClientId) {}
+    fn initialized(&self, client_id: smithay::reexports::wayland_server::backend::ClientId) {
+        tracing::info!("Wayland client connected: {:?}", client_id);
+    }
     fn disconnected(
         &self,
-        _client_id: smithay::reexports::wayland_server::backend::ClientId,
+        client_id: smithay::reexports::wayland_server::backend::ClientId,
         reason: smithay::reexports::wayland_server::backend::DisconnectReason,
     ) {
-        tracing::info!("Wayland client disconnected: {:?}", reason);
+        tracing::info!("Wayland client disconnected: {:?} reason={:?}", client_id, reason);
     }
 }
 

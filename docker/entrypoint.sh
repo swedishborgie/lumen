@@ -35,6 +35,29 @@ if command -v pulseaudio &>/dev/null; then
     echo "==> PulseAudio started"
 fi
 
+# ── /tmp/.X11-unix ────────────────────────────────────────────────────────────
+# XWayland (used by kwin_wayland and other compositors) requires this directory
+# to create its UNIX-domain socket.  It is not created automatically in a
+# container because there is no X server running.
+mkdir -p /tmp/.X11-unix
+chmod 1777 /tmp/.X11-unix
+
+# ── PipeWire ──────────────────────────────────────────────────────────────────
+# lumen-audio creates a PipeWire virtual sink for audio capture.  The PipeWire
+# daemon must be running before lumen starts, otherwise the sink creation fails.
+if command -v pipewire &>/dev/null; then
+    pipewire &
+    PIPEWIRE_PID=$!
+    # Give pipewire a moment to initialise before wireplumber connects to it.
+    sleep 0.5
+    if command -v wireplumber &>/dev/null; then
+        wireplumber &
+    fi
+    echo "==> PipeWire started (pid $PIPEWIRE_PID)"
+else
+    echo "==> WARN: pipewire not found — audio capture will be unavailable"
+fi
+
 # ── uinput (virtual gamepad devices) ─────────────────────────────────────────
 # Try to load the uinput kernel module.  This succeeds when the container has
 # CAP_SYS_MODULE (e.g. --privileged) or the module is already loaded on the host.
@@ -56,6 +79,18 @@ echo "==> Starting lumen  (Web UI: http://localhost:8080, desktop: $DESKTOP)"
 
 if [ "$DESKTOP" = "kde" ]; then
     echo "    Args: --auth none --desktop kde $*"
+    # Enable Qt/KDE debug logging so kwin and plasma_session startup failures
+    # appear in the container log.  Remove these once KDE is stable.
+    # export QT_LOGGING_RULES="kwin*=true;org.kde.plasma.session=true;kf.*=true;org.kde.kcminit=true;qt.dbus=true;qt.qml.*=true;qt.scenegraph.*=true"
+    # export QT_MESSAGE_PATTERN="[%{category}] %{message}"
+    # export QT_DEBUG_PLUGINS=1
+    # QSG_INFO=1 prints the OpenGL renderer/driver ksplashqml picks at startup;
+    # if it crashes before rendering this will be the last line before the abort.
+    # export QSG_INFO=1
+    # Force the software renderer so ksplashqml doesn't crash if GPU GL is broken.
+    # Remove once we confirm whether ksplash works with the GPU path.
+    # export QSG_RENDER_LOOP=basic
+    # export WAYLAND_DEBUG=1
     exec "$LUMEN_BIN" \
         --auth none \
         --desktop kde \

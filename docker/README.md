@@ -34,19 +34,16 @@ The build has three stages:
 
 ## Run
 
-> **Podman users — host networking:** Podman's default NAT networking can interfere with WebRTC UDP flows even when ports are mapped. If you experience connection issues, use `--network host` to bypass NAT entirely (port mapping flags are then unnecessary):
-> ```bash
-> podman run --rm -it --network host lumen:latest
-> ```
+`--network host` is the recommended networking mode — it bypasses NAT and avoids WebRTC UDP flow issues that can occur with port mapping:
+
+```bash
+podman run --rm -it --device /dev/dri --network host lumen:latest
+```
 
 ### No GPU (CPU / Pixman renderer)
 
 ```bash
-podman run --rm -it \
-    -p 8080:8080 \
-    -p 3478:3478/udp \
-    -p 50000-50010:50000-50010/udp \
-    lumen:latest
+podman run --rm -it --network host lumen:latest
 ```
 
 ### AMD or Intel GPU passthrough
@@ -57,29 +54,28 @@ Pass the entire DRI group so lumen can use VA-API hardware encoding:
 podman run --rm -it \
     --device /dev/dri \
     --security-opt label=disable \
-    -p 8080:8080 \
-    -p 3478:3478/udp \
-    -p 50000-50010:50000-50010/udp \
+    --network host \
     lumen:latest
 ```
 
 ### Gamepad / joystick passthrough
 
 Lumen forwards browser gamepad input to virtual Linux input devices via `uinput`.
-Pass `/dev/uinput` so the container can create those devices:
+Pass `/dev/uinput` and add the `input` group so the container can create those devices:
 
 ```bash
 podman run --rm -it \
     --device /dev/uinput \
-    -p 8080:8080 \
-    -p 3478:3478/udp \
-    -p 50000-50010:50000-50010/udp \
+    --group-add input \
+    --network host \
     lumen:latest
 ```
 
 The `uinput` kernel module must be loaded on the **host** before starting the container
 (it almost always is on modern Linux systems, but you can verify with `lsmod | grep uinput`
-or load it with `sudo modprobe uinput`).  Combine `--device /dev/uinput` with any other
+or load it with `sudo modprobe uinput`).
+
+The `input` group is granted write access to `/dev/uinput` by the udev rule installed with the package (`pkgs/70-lumen-uinput.rules`). Combine `--device /dev/uinput --group-add input` with any other
 flags (GPU, network) as needed.
 
 If `/dev/uinput` is not passed through, lumen starts normally and gamepad support is
@@ -93,9 +89,7 @@ NVIDIA GPU passthrough requires the [CDI plugin](https://docs.nvidia.com/datacen
 podman run --rm -it \
     --device nvidia.com/gpu=all \
     --security-opt label=disable \
-    -p 8080:8080 \
-    -p 3478:3478/udp \
-    -p 50000-50010:50000-50010/udp \
+    --network host \
     lumen:latest
 ```
 
@@ -205,9 +199,7 @@ To allow WebRTC connections from other machines, set `LUMEN_TURN_EXTERNAL_IP` to
 podman run --rm -it \
     --device /dev/dri \
     --security-opt label=disable \
-    -p 8080:8080 \
-    -p 3478:3478/udp \
-    -p 50000-50010:50000-50010/udp \
+    --network host \
     -e LUMEN_TURN_EXTERNAL_IP=192.168.1.100 \
     lumen:latest
 ```

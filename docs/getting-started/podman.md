@@ -3,7 +3,7 @@ title: Docker / Podman
 layout: default
 parent: Getting Started
 nav_order: 1
-description: "Run Lumen inside a Docker or Podman container with a bundled labwc desktop and Firefox."
+description: "Run Lumen inside a Podman container with a bundled desktop environment (labwc or KDE) and Firefox."
 ---
 
 # Docker / Podman
@@ -16,10 +16,10 @@ description: "Run Lumen inside a Docker or Podman container with a bundled labwc
 {:toc}
 </details>
 
-The Lumen Docker image bundles a complete desktop environment — **labwc** (a Wayland compositor), **XWayland**, and **Firefox** — on top of Ubuntu 24.04. It's the fastest way to try Lumen without installing anything on your host system.
+The Lumen container image bundles a complete desktop environment — **labwc** or **KDE Plasma**, **XWayland**, and **Firefox** — on top of Ubuntu. It's the fastest way to try Lumen without installing anything on your host system.
 
 {: .note }
-The instructions below use `podman`, but `docker` works as a drop-in replacement for every command unless noted otherwise.
+The instructions below use `podman`. `docker` works as a drop-in replacement for every command.
 
 ---
 
@@ -28,8 +28,19 @@ The instructions below use `podman`, but `docker` works as a drop-in replacement
 From the repository root:
 
 ```bash
+# Default — labwc (lightweight Wayland compositor)
 podman build -f docker/Dockerfile -t lumen:latest .
+
+# KDE Plasma 6 (kwin_wayland + plasmashell)
+podman build --build-arg DESKTOP=kde -f docker/Dockerfile -t lumen:kde .
 ```
+
+The `DESKTOP` build argument selects the desktop environment bundled into the image:
+
+| Value | Desktop | Terminal |
+|-------|---------|----------|
+| `labwc` *(default)* | labwc — lightweight wlroots compositor | foot |
+| `kde` | KDE Plasma 6 (kwin_wayland + plasmashell) | Konsole |
 
 {: .tip }
 The first build compiles Rust and all native C/C++ dependencies and will take several minutes. Subsequent builds that only change application source code reuse the cached dependency layer and are much faster. The dependency layer is only invalidated when `Cargo.toml` or `Cargo.lock` changes.
@@ -38,19 +49,23 @@ The first build compiles Rust and all native C/C++ dependencies and will take se
 
 ## Run the Container
 
-### No GPU (CPU / Pixman renderer)
+### Recommended: host networking
 
-The simplest way to start Lumen. Works on any Linux machine:
+Podman's default NAT networking can interfere with WebRTC UDP flows even when ports are mapped. Using `--network host` bypasses NAT entirely and is the recommended approach:
 
 ```bash
-podman run --rm -it \
-    -p 8080:8080 \
-    -p 3478:3478/udp \
-    -p 50000-50010:50000-50010/udp \
-    lumen:latest
+podman run --rm -it --device /dev/dri --network host lumen:latest
 ```
 
 Open `http://localhost:8080` in a browser and click **Connect**.
+
+### No GPU (CPU / Pixman renderer)
+
+Works on any Linux machine without a GPU:
+
+```bash
+podman run --rm -it --network host lumen:latest
+```
 
 ### AMD or Intel GPU passthrough
 
@@ -60,9 +75,7 @@ Pass the DRI device group to enable VA-API hardware encoding:
 podman run --rm -it \
     --device /dev/dri \
     --security-opt label=disable \
-    -p 8080:8080 \
-    -p 3478:3478/udp \
-    -p 50000-50010:50000-50010/udp \
+    --network host \
     lumen:latest
 ```
 
@@ -74,38 +87,39 @@ Requires the [NVIDIA Container Toolkit (CDI)](https://docs.nvidia.com/datacenter
 podman run --rm -it \
     --device nvidia.com/gpu=all \
     --security-opt label=disable \
-    -p 8080:8080 \
-    -p 3478:3478/udp \
-    -p 50000-50010:50000-50010/udp \
+    --network host \
     lumen:latest
 ```
 
 ### Gamepad / joystick passthrough
 
-Lumen can forward browser gamepad input to virtual Linux input devices via `uinput`. Pass `/dev/uinput` to enable this:
+Lumen can forward browser gamepad input to virtual Linux input devices via `uinput`. Pass `/dev/uinput` and add the `input` group to enable this:
 
 ```bash
 podman run --rm -it \
     --device /dev/uinput \
-    -p 8080:8080 \
-    -p 3478:3478/udp \
-    -p 50000-50010:50000-50010/udp \
+    --group-add input \
+    --network host \
     lumen:latest
 ```
 
 {: .note }
-The `uinput` kernel module must be loaded on the host (`lsmod | grep uinput`). Load it with `sudo modprobe uinput` if not. If `/dev/uinput` is not passed, Lumen starts normally and gamepad support is simply disabled.
+The `uinput` kernel module must be loaded on the host (`lsmod | grep uinput`). Load it with `sudo modprobe uinput` if not. The `input` group is granted write access to `/dev/uinput` by the udev rule installed with the package (`pkgs/70-lumen-uinput.rules`). If `/dev/uinput` is not passed, Lumen starts normally and gamepad support is simply disabled.
 
-You can combine `--device /dev/uinput` with GPU passthrough flags as needed.
+You can combine `--device /dev/uinput --group-add input` with GPU passthrough flags as needed.
 
----
+### Port mapping (alternative to host networking)
 
-## Podman Host Networking
-
-Podman's default NAT networking can interfere with WebRTC UDP flows even when ports are mapped. If you experience WebRTC connection issues, bypass NAT entirely with `--network host` (port mapping flags are then unnecessary):
+If you prefer explicit port mapping instead of `--network host`:
 
 ```bash
-podman run --rm -it --network host lumen:latest
+podman run --rm -it \
+    --device /dev/dri \
+    --security-opt label=disable \
+    -p 8080:8080 \
+    -p 3478:3478/udp \
+    -p 50000-50010:50000-50010/udp \
+    lumen:latest
 ```
 
 ---
@@ -136,9 +150,7 @@ To allow WebRTC connections from other machines on your network, set `LUMEN_TURN
 podman run --rm -it \
     --device /dev/dri \
     --security-opt label=disable \
-    -p 8080:8080 \
-    -p 3478:3478/udp \
-    -p 50000-50010:50000-50010/udp \
+    --network host \
     -e LUMEN_TURN_EXTERNAL_IP=192.168.1.100 \
     lumen:latest
 ```
@@ -177,6 +189,8 @@ On hosts with SELinux or AppArmor enforcement, GPU device passthrough may requir
 
 ## What's Inside the Image
 
+### labwc image (`DESKTOP=labwc`, default)
+
 | Component | Purpose |
 |-----------|---------|
 | `lumen` | The compositor/streamer binary |
@@ -184,5 +198,18 @@ On hosts with SELinux or AppArmor enforcement, GPU device passthrough may requir
 | `xwayland` | XWayland bridge for X11 apps |
 | `firefox` | Browser — auto-started by labwc on launch |
 | `foot` | Terminal emulator (available in the labwc right-click menu) |
+| `xclock` / `xeyes` | X11 test utilities |
+| `pulseaudio` | Audio server for audio capture |
+
+### KDE image (`DESKTOP=kde`)
+
+| Component | Purpose |
+|-----------|---------|
+| `lumen` | The compositor/streamer binary |
+| `kwin_wayland` | KDE window manager / inner Wayland compositor |
+| `plasmashell` | KDE Plasma desktop shell |
+| `xwayland` | XWayland bridge for X11 apps |
+| `firefox` | Browser — auto-started on launch |
+| `konsole` | KDE terminal emulator |
 | `xclock` / `xeyes` | X11 test utilities |
 | `pulseaudio` | Audio server for audio capture |

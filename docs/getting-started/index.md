@@ -12,7 +12,7 @@ Lumen can be installed in several ways depending on your environment and prefere
 
 | Method | Best for |
 |--------|----------|
-| [Docker / Podman](docker) | Quickest way to try Lumen — no host dependencies required |
+| [Docker / Podman](podman) | Quickest way to try Lumen — no host dependencies required |
 | [Ubuntu / Debian](ubuntu) | Native `.deb` package with systemd integration |
 | [Fedora / RHEL](fedora) | Native `.rpm` package with systemd integration |
 

@@ -22,7 +22,7 @@ Install Lumen on Fedora, RHEL, or CentOS using a native `.rpm` package. The pack
 
 ## Prerequisites
 
-You need **Docker** (or Podman) on any Linux machine to build the packages — no Rust or build dependencies are required on the target host.
+You need **Podman** (or Docker) on any Linux machine to build the packages — no Rust or build dependencies are required on the target host.
 
 ---
 
@@ -32,11 +32,11 @@ From the repository root:
 
 ```bash
 # Build the package image
-docker build -f docker/Dockerfile.packages -t lumen-packages .
+podman build -f docker/Dockerfile.packages -t lumen-packages .
 
 # Extract the .rpm (and .deb) into ./dist/
 mkdir -p dist
-docker run --rm -v ./dist:/output lumen-packages
+podman run --rm -v ./dist:/output lumen-packages
 ```
 
 The resulting package will be at `./dist/lumen-<version>-1.x86_64.rpm`.
@@ -44,7 +44,7 @@ The resulting package will be at `./dist/lumen-<version>-1.x86_64.rpm`.
 {: .tip }
 To build only the `.rpm` (skip the Ubuntu/deb build):
 ```bash
-docker build --build-arg BUILD_DEB=0 -f docker/Dockerfile.packages -t lumen-packages .
+podman build --build-arg BUILD_DEB=0 -f docker/Dockerfile.packages -t lumen-packages .
 ```
 
 ---
@@ -141,8 +141,8 @@ journalctl -u lumen@<username> -f
 
 ```bash
 # 1. Build and install the package
-docker build -f docker/Dockerfile.packages -t lumen-packages .
-mkdir -p dist && docker run --rm -v ./dist:/output lumen-packages
+podman build -f docker/Dockerfile.packages -t lumen-packages .
+mkdir -p dist && podman run --rm -v ./dist:/output lumen-packages
 sudo dnf install ./dist/lumen-*.rpm
 
 # 2. Create config

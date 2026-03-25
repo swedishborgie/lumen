@@ -51,7 +51,7 @@ Access to the stream can be controlled in several ways:
 
 Choose an installation method to get up and running:
 
-- [**Docker / Podman**](getting-started/docker) — Try Lumen in minutes with no host dependencies. Includes a bundled desktop and browser.
+- [**Docker / Podman**](getting-started/podman) — Try Lumen in minutes with no host dependencies. Includes a bundled desktop and browser.
 - [**Ubuntu / Debian**](getting-started/ubuntu) — Install via a native `.deb` package with systemd service integration.
 - [**Fedora / RHEL**](getting-started/fedora) — Install via a native `.rpm` package with systemd service integration.
 

@@ -58,13 +58,13 @@ Lumen is organized as a Rust workspace with several specialized crates:
 
 ### From a package (.deb / .rpm)
 
-The recommended way to install Lumen on a system is via a native package. Packages are built using Docker — no build dependencies required on the host.
+The recommended way to install Lumen on a system is via a native package. Packages are built using Podman — no build dependencies required on the host.
 
 ```bash
 # Build packages
-docker build -f docker/Dockerfile.packages -t lumen-packages .
+podman build -f docker/Dockerfile.packages -t lumen-packages .
 mkdir -p dist
-docker run --rm -v ./dist:/output lumen-packages
+podman run --rm -v ./dist:/output lumen-packages
 ```
 
 Then install the package for your distribution:
@@ -87,9 +87,9 @@ sudo systemctl start lumen@<username>
 
 See [`pkgs/README.md`](pkgs/README.md) for the full build, configuration, and service management guide.
 
-### From Docker
+### From a container (Podman)
 
-A Docker image is also available that bundles a full desktop (labwc + Firefox). See [`docker/README.md`](docker/README.md).
+A Podman image is also available that bundles a full desktop environment (labwc or KDE + Firefox). See [`docker/README.md`](docker/README.md).
 
 ---
 

@@ -6,23 +6,23 @@ This directory contains everything needed to build and install Lumen as a native
 
 ## Building the packages
 
-Packages are built inside Docker so you don't need any build dependencies on your host. The only requirement is Docker (or Podman).
+Packages are built inside a container so you don't need any build dependencies on your host. The only requirement is Podman (or Docker).
 
 ```bash
 # From the repository root
-docker build -f docker/Dockerfile.packages -t lumen-packages .
+podman build -f docker/Dockerfile.packages -t lumen-packages .
 
 # With an explicit version
-docker build --build-arg VERSION=1.2.3 -f docker/Dockerfile.packages -t lumen-packages .
+podman build --build-arg VERSION=1.2.3 -f docker/Dockerfile.packages -t lumen-packages .
 
 # .deb only (skip the Fedora/RPM build)
-docker build --build-arg BUILD_RPM=0 -f docker/Dockerfile.packages -t lumen-packages .
+podman build --build-arg BUILD_RPM=0 -f docker/Dockerfile.packages -t lumen-packages .
 
 # .rpm only (skip the Ubuntu/deb build)
-docker build --build-arg BUILD_DEB=0 -f docker/Dockerfile.packages -t lumen-packages .
+podman build --build-arg BUILD_DEB=0 -f docker/Dockerfile.packages -t lumen-packages .
 ```
 
-> The first build takes a while — it compiles Rust, all native C/C++ dependencies, and the packaging tools from scratch for both Ubuntu and Fedora. Subsequent builds reuse Docker's layer cache as long as `Cargo.toml`, `Cargo.lock`, and system dependencies haven't changed.
+> The first build takes a while — it compiles Rust, all native C/C++ dependencies, and the packaging tools from scratch for both Ubuntu and Fedora. Subsequent builds reuse Podman's layer cache as long as `Cargo.toml`, `Cargo.lock`, and system dependencies haven't changed.
 
 ### Extracting the packages
 
@@ -30,7 +30,7 @@ Mount a local directory to `/output` and run the image. Both packages are copied
 
 ```bash
 mkdir -p dist
-docker run --rm -v ./dist:/output lumen-packages
+podman run --rm -v ./dist:/output lumen-packages
 ```
 
 You will find the packages in `./dist/`:

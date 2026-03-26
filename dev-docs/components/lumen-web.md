@@ -85,12 +85,12 @@ ICE server descriptor sent to the browser via `/api/config`. STUN entries have o
 
 ## HTTP Routes
 
-| Route | Handler | Description |
-|-------|---------|-------------|
-| `GET /ws/signal` | `ws_handler` | WebSocket upgrade for WebRTC signaling |
-| `GET /api/config` | `config_handler` | Returns ICE server configuration as JSON for the browser client |
-| `GET /auth/callback` | `oauth2::callback_handler` | OIDC authorization code callback *(OAuth2 mode only)* |
-| `GET /*` | Static file server | Serves embedded browser client assets (HTML/JS/CSS) |
+| Route                | Handler                    | Description                                                     |
+| -------------------- | -------------------------- | --------------------------------------------------------------- |
+| `GET /ws/signal`     | `ws_handler`               | WebSocket upgrade for WebRTC signaling                          |
+| `GET /api/config`    | `config_handler`           | Returns ICE server configuration as JSON for the browser client |
+| `GET /auth/callback` | `oauth2::callback_handler` | OIDC authorization code callback _(OAuth2 mode only)_           |
+| `GET /*`             | Static file server         | Serves embedded browser client assets (HTML/JS/CSS)             |
 
 CORS and request tracing middleware are applied to all routes via `tower-http`.
 
@@ -153,13 +153,13 @@ Sessions are held in an in-memory `HashMap` protected by `RwLock`. They are not 
 
 **Configuration fields** (`AuthConfig::OAuth2`):
 
-| Field | Description |
-|-------|-------------|
-| `issuer_url` | OIDC issuer base URL (discovery doc fetched from `{issuer_url}/.well-known/openid-configuration`) |
-| `client_id` | OAuth2 client ID registered with the provider |
-| `client_secret` | OAuth2 client secret |
-| `redirect_uri` | Full callback URL registered with the provider, e.g. `http://localhost:8080/auth/callback` |
-| `expected_subject` | Expected `sub` claim value in the ID token; anyone else is denied |
+| Field              | Description                                                                                       |
+| ------------------ | ------------------------------------------------------------------------------------------------- |
+| `issuer_url`       | OIDC issuer base URL (discovery doc fetched from `{issuer_url}/.well-known/openid-configuration`) |
+| `client_id`        | OAuth2 client ID registered with the provider                                                     |
+| `client_secret`    | OAuth2 client secret                                                                              |
+| `redirect_uri`     | Full callback URL registered with the provider, e.g. `http://localhost:8080/auth/callback`        |
+| `expected_subject` | Expected `sub` claim value in the ID token; anyone else is denied                                 |
 
 ## WebSocket Signaling Protocol
 
@@ -224,6 +224,7 @@ When a session is created, a Tokio task is spawned to drive it:
 ## Resize Handling
 
 Resize requests from the browser are validated before forwarding:
+
 - Width and height must be positive
 - Both dimensions must be even (required by H.264)
 - Neither dimension may exceed 4096
@@ -236,12 +237,12 @@ The browser client lives in `web/` at the repository root.
 
 ### Files
 
-| File | Purpose |
-|------|---------|
-| `index.html` | Entry point; video element, Connect/Disconnect buttons, clipboard panel, statistics display |
-| `lumen-client.js` | `LumenClient` — all WebRTC logic |
-| `lumen-ui.js` | `LumenUI` — UI controller, wires client events to DOM |
-| `style.css` | Page styling |
+| File              | Purpose                                                                                     |
+| ----------------- | ------------------------------------------------------------------------------------------- |
+| `index.html`      | Entry point; video element, Connect/Disconnect buttons, clipboard panel, statistics display |
+| `lumen-client.js` | `LumenClient` — all WebRTC logic                                                            |
+| `lumen-ui.js`     | `LumenUI` — UI controller, wires client events to DOM                                       |
+| `style.css`       | Page styling                                                                                |
 
 ### `LumenClient` API
 
@@ -290,12 +291,12 @@ sequenceDiagram
 
 Keyboard, mouse, and scroll events are captured from the video element and sent as JSON over the data channel:
 
-| Browser Event | Data Channel Message |
-|--------------|---------------------|
-| `keydown` / `keyup` | `{ type: "keyboard_key", scancode: <evdev>, state: 1/0 }` |
-| `mousemove` | `{ type: "pointer_motion", x: <f64>, y: <f64> }` |
+| Browser Event           | Data Channel Message                                       |
+| ----------------------- | ---------------------------------------------------------- |
+| `keydown` / `keyup`     | `{ type: "keyboard_key", scancode: <evdev>, state: 1/0 }`  |
+| `mousemove`             | `{ type: "pointer_motion", x: <f64>, y: <f64> }`           |
 | `mousedown` / `mouseup` | `{ type: "pointer_button", btn: <linux_btn>, state: 1/0 }` |
-| `wheel` | `{ type: "pointer_axis", x: <delta>, y: <delta> }` |
+| `wheel`                 | `{ type: "pointer_axis", x: <delta>, y: <delta> }`         |
 
 Mouse buttons are mapped to Linux `BTN_*` codes (BTN_LEFT=272, BTN_RIGHT=273, BTN_MIDDLE=274). Keyboard keys are mapped via a static `KEY_MAP` table from DOM key names to Linux evdev scancodes.
 
@@ -310,14 +311,14 @@ A deduplication check in the compositor prevents the clipboard from echoing back
 
 ## Technology Stack
 
-| Library | Purpose |
-|---------|---------|
-| `axum` 0.8 | Async HTTP/WebSocket framework |
-| `axum-server` 0.8 | TLS-capable Axum server; used when `--tls-cert` and `--tls-key` are configured |
-| `tower-http` 0.6 | Middleware: CORS, request tracing |
-| `rust-embed` 8 | Embeds browser client assets (HTML/JS/CSS) into the binary at compile time; dev builds fall back to reading files from disk |
-| `pam` 0.8 | PAM authentication for Basic mode |
-| `openidconnect` 4.x | OIDC discovery, PKCE, token exchange, and ID token validation for OAuth2 mode |
-| `cookie` 0.18 | Session cookie encoding/decoding for OAuth2 mode |
-| `uuid` 1.x | Session token generation for OAuth2 mode |
-| `tokio` | Async runtime |
+| Library             | Purpose                                                                                                                     |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `axum` 0.8          | Async HTTP/WebSocket framework                                                                                              |
+| `axum-server` 0.8   | TLS-capable Axum server; used when `--tls-cert` and `--tls-key` are configured                                              |
+| `tower-http` 0.6    | Middleware: CORS, request tracing                                                                                           |
+| `rust-embed` 8      | Embeds browser client assets (HTML/JS/CSS) into the binary at compile time; dev builds fall back to reading files from disk |
+| `pam` 0.8           | PAM authentication for Basic mode                                                                                           |
+| `openidconnect` 4.x | OIDC discovery, PKCE, token exchange, and ID token validation for OAuth2 mode                                               |
+| `cookie` 0.18       | Session cookie encoding/decoding for OAuth2 mode                                                                            |
+| `uuid` 1.x          | Session token generation for OAuth2 mode                                                                                    |
+| `tokio`             | Async runtime                                                                                                               |

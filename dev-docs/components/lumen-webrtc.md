@@ -139,11 +139,13 @@ flowchart TD
 ### RTP Media Delivery
 
 **Video (H.264, RFC 6184)**:
+
 - Receives `EncodedFrame` with Annex-B H.264 data
 - Converts PTS from milliseconds to 90 kHz RTP clock
 - str0m packetizes NAL units into RTP packets and fragments large NALs per RFC 6184
 
 **Audio (Opus, RFC 7587)**:
+
 - Receives `OpusPacket` with encoded Opus bitstream
 - `pts_samples` used directly as the RTP timestamp (48 kHz clock)
 - Each Opus packet becomes one RTP packet
@@ -151,6 +153,7 @@ flowchart TD
 ### ICE Candidate Gathering
 
 On session creation, str0m gathers:
+
 - **Loopback candidates** (`127.0.0.1`) — for same-machine connections
 - **LAN candidates** — detected from local network interfaces
 
@@ -161,6 +164,7 @@ Trickle ICE candidates received from the browser via WebSocket are forwarded to 
 The data channel (named `"input"`) carries JSON messages in both directions.
 
 **Browser → Server** (input events):
+
 ```json
 { "type": "keyboard_key",    "scancode": 30, "state": 1 }
 { "type": "pointer_motion",  "x": 640.0, "y": 400.0 }
@@ -170,6 +174,7 @@ The data channel (named `"input"`) carries JSON messages in both directions.
 ```
 
 **Server → Browser** (cursor and clipboard):
+
 ```json
 { "type": "cursor_update",    "kind": "image", "width": 24, "height": 24,
   "hotspot_x": 0, "hotspot_y": 0, "data": "<base64 RGBA>" }

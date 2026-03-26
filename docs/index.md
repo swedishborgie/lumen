@@ -39,11 +39,11 @@ When hardware acceleration is available, frames travel from the GPU directly to 
 
 Access to the stream can be controlled in several ways:
 
-| Mode | Description |
-|------|-------------|
-| **HTTP Basic (PAM)** | Username and password validated against system accounts |
-| **Bearer token** | Preshared secret — simple and effective for reverse proxy setups |
-| **OAuth2 / OIDC** | Integrate with your existing identity provider (Google, Okta, etc.) |
+| Mode                 | Description                                                         |
+| -------------------- | ------------------------------------------------------------------- |
+| **HTTP Basic (PAM)** | Username and password validated against system accounts             |
+| **Bearer token**     | Preshared secret — simple and effective for reverse proxy setups    |
+| **OAuth2 / OIDC**    | Integrate with your existing identity provider (Google, Okta, etc.) |
 
 ---
 

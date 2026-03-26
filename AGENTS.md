@@ -1,6 +1,7 @@
 # Lumen — Agent Instructions
 
 See [`dev-docs/`](./dev-docs/README.md) for full documentation. Key references:
+
 - [Architecture](./dev-docs/architecture.md)
 - [Component design](./dev-docs/components/)
 - [Third-party libraries](./dev-docs/third-party-libraries.md)
@@ -15,14 +16,14 @@ Lumen is a **Wayland compositor that streams the desktop to browsers via WebRTC*
 
 ## Crate Map
 
-| Crate | Path | Role |
-|-------|------|------|
-| `lumen` | `src/` | Orchestration only — no business logic |
+| Crate              | Path                       | Role                                               |
+| ------------------ | -------------------------- | -------------------------------------------------- |
+| `lumen`            | `src/`                     | Orchestration only — no business logic             |
 | `lumen-compositor` | `crates/lumen-compositor/` | Wayland compositor, frame capture, input injection |
-| `lumen-audio` | `crates/lumen-audio/` | PipeWire capture, Opus encoding |
-| `lumen-encode` | `crates/lumen-encode/` | H.264 encoding (VA-API + x264 fallback) |
-| `lumen-webrtc` | `crates/lumen-webrtc/` | WebRTC sessions, SDP/ICE, RTP packetization |
-| `lumen-web` | `crates/lumen-web/` | Axum HTTP server, WebSocket signaling |
+| `lumen-audio`      | `crates/lumen-audio/`      | PipeWire capture, Opus encoding                    |
+| `lumen-encode`     | `crates/lumen-encode/`     | H.264 encoding (VA-API + x264 fallback)            |
+| `lumen-webrtc`     | `crates/lumen-webrtc/`     | WebRTC sessions, SDP/ICE, RTP packetization        |
+| `lumen-web`        | `crates/lumen-web/`        | Axum HTTP server, WebSocket signaling              |
 
 Crates are **intentionally decoupled** — no crate depends on another crate in this workspace. Only the main binary wires them together.
 

@@ -6,6 +6,7 @@ description: "Set up a build environment to develop and contribute to Lumen."
 ---
 
 # For Developers
+
 {: .no_toc }
 
 <details open markdown="block">
@@ -170,17 +171,17 @@ cargo test
 
 Lumen is a Cargo workspace. All business logic lives in the crates — the main binary in `src/` is thin orchestration only.
 
-| Crate | Path | Role |
-|-------|------|------|
-| `lumen` (binary) | `src/` | Wires crates together; no business logic |
+| Crate              | Path                       | Role                                               |
+| ------------------ | -------------------------- | -------------------------------------------------- |
+| `lumen` (binary)   | `src/`                     | Wires crates together; no business logic           |
 | `lumen-compositor` | `crates/lumen-compositor/` | Wayland compositor, frame capture, input injection |
-| `lumen-audio` | `crates/lumen-audio/` | PipeWire capture, Opus encoding |
-| `lumen-encode` | `crates/lumen-encode/` | H.264 encoding (VA-API + x264 fallback) |
-| `lumen-webrtc` | `crates/lumen-webrtc/` | WebRTC sessions, ICE/SDP, RTP packetization |
-| `lumen-web` | `crates/lumen-web/` | Axum HTTP server, WebSocket signaling |
-| `lumen-turn` | `crates/lumen-turn/` | Embedded TURN/STUN relay server |
-| `lumen-gamepad` | `crates/lumen-gamepad/` | Virtual uinput gamepad devices |
-| *(browser client)* | `web/` | Vanilla JavaScript; served by `lumen-web` |
+| `lumen-audio`      | `crates/lumen-audio/`      | PipeWire capture, Opus encoding                    |
+| `lumen-encode`     | `crates/lumen-encode/`     | H.264 encoding (VA-API + x264 fallback)            |
+| `lumen-webrtc`     | `crates/lumen-webrtc/`     | WebRTC sessions, ICE/SDP, RTP packetization        |
+| `lumen-web`        | `crates/lumen-web/`        | Axum HTTP server, WebSocket signaling              |
+| `lumen-turn`       | `crates/lumen-turn/`       | Embedded TURN/STUN relay server                    |
+| `lumen-gamepad`    | `crates/lumen-gamepad/`    | Virtual uinput gamepad devices                     |
+| _(browser client)_ | `web/`                     | Vanilla JavaScript; served by `lumen-web`          |
 
 **The crates are intentionally decoupled** — no crate depends on another crate in this workspace. Only `main.rs` wires them together by threading channels and `Arc` values through each crate's `Config` struct.
 
@@ -190,11 +191,11 @@ Lumen is a Cargo workspace. All business logic lives in the crates — the main 
 
 ### Concurrency Model
 
-| Component | Execution model | Reason |
-|-----------|----------------|--------|
-| Compositor | Dedicated `std::thread` (blocking `calloop` loop) | Must never be blocked by async scheduling |
-| Encoder / Audio | `tokio::task::spawn_blocking` | CPU-bound; must not block the async thread pool |
-| Everything else | `tokio::spawn` (async) | Network I/O, signaling, fan-out |
+| Component       | Execution model                                   | Reason                                          |
+| --------------- | ------------------------------------------------- | ----------------------------------------------- |
+| Compositor      | Dedicated `std::thread` (blocking `calloop` loop) | Must never be blocked by async scheduling       |
+| Encoder / Audio | `tokio::task::spawn_blocking`                     | CPU-bound; must not block the async thread pool |
+| Everything else | `tokio::spawn` (async)                            | Network I/O, signaling, fan-out                 |
 
 **Never `await` inside the compositor thread.** Use `calloop::channel` to send events to it from async tasks — not `tokio::sync` channels.
 
@@ -225,11 +226,11 @@ See the [Architecture page](../architecture#rendering-paths) for a full descript
 
 The browser client (`web/`) is vanilla JavaScript with no build step. Files are served directly by `lumen-web`. Key files:
 
-| File | Role |
-|------|------|
+| File                   | Role                                   |
+| ---------------------- | -------------------------------------- |
 | `web/lumen-client.mjs` | All WebRTC logic (`LumenClient` class) |
-| `web/lumen-ui.mjs` | DOM interaction (`LumenUI` class) |
-| `web/index.html` | Entry point |
+| `web/lumen-ui.mjs`     | DOM interaction (`LumenUI` class)      |
+| `web/index.html`       | Entry point                            |
 
 Data channel messages between the browser and server are JSON. Input events from the browser use Linux evdev scancodes for keyboard (the compositor adds +8 to convert to XKB keycodes) and `BTN_*` values for mouse buttons.
 
@@ -239,16 +240,16 @@ Data channel messages between the browser and server are JSON. Input events from
 
 All options can be set via CLI flags or environment variables. Run `lumen --help` for the full list, or see the table below for the most common options.
 
-| Flag | Env | Default | Description |
-|------|-----|---------|-------------|
-| `--bind-addr` | `LUMEN_BIND` | `0.0.0.0:8080` | HTTP/WebSocket bind address |
-| `--width` | `LUMEN_WIDTH` | `1920` | Output width in pixels |
-| `--height` | `LUMEN_HEIGHT` | `1080` | Output height in pixels |
-| `--fps` | `LUMEN_FPS` | `30.0` | Target frames per second |
-| `--video-bitrate-kbps` | `LUMEN_VIDEO_BITRATE_KBPS` | `4000` | Video encoder target bitrate (kbps) |
-| `--dri-node` | `LUMEN_DRI_NODE` | *(auto-detect)* | DRI render node for VA-API (e.g. `/dev/dri/renderD128`) |
-| `--launch` | `LUMEN_LAUNCH` | | Shell command to launch as a Wayland client on startup |
-| `--auth` | `LUMEN_AUTH` | `none` | Auth mode: `none`, `basic`, `bearer`, `oauth2` |
-| `--turn-port` | `LUMEN_TURN_PORT` | `3478` | Embedded TURN server UDP port (`0` to disable) |
-| `--tls-cert` | `LUMEN_TLS_CERT` | | Path to PEM TLS certificate (enables HTTPS with `--tls-key`) |
-| `--tls-key` | `LUMEN_TLS_KEY` | | Path to PEM TLS private key |
+| Flag                   | Env                        | Default         | Description                                                  |
+| ---------------------- | -------------------------- | --------------- | ------------------------------------------------------------ |
+| `--bind-addr`          | `LUMEN_BIND`               | `0.0.0.0:8080`  | HTTP/WebSocket bind address                                  |
+| `--width`              | `LUMEN_WIDTH`              | `1920`          | Output width in pixels                                       |
+| `--height`             | `LUMEN_HEIGHT`             | `1080`          | Output height in pixels                                      |
+| `--fps`                | `LUMEN_FPS`                | `30.0`          | Target frames per second                                     |
+| `--video-bitrate-kbps` | `LUMEN_VIDEO_BITRATE_KBPS` | `4000`          | Video encoder target bitrate (kbps)                          |
+| `--dri-node`           | `LUMEN_DRI_NODE`           | _(auto-detect)_ | DRI render node for VA-API (e.g. `/dev/dri/renderD128`)      |
+| `--launch`             | `LUMEN_LAUNCH`             |                 | Shell command to launch as a Wayland client on startup       |
+| `--auth`               | `LUMEN_AUTH`               | `none`          | Auth mode: `none`, `basic`, `bearer`, `oauth2`               |
+| `--turn-port`          | `LUMEN_TURN_PORT`          | `3478`          | Embedded TURN server UDP port (`0` to disable)               |
+| `--tls-cert`           | `LUMEN_TLS_CERT`           |                 | Path to PEM TLS certificate (enables HTTPS with `--tls-key`) |
+| `--tls-key`            | `LUMEN_TLS_KEY`            |                 | Path to PEM TLS private key                                  |

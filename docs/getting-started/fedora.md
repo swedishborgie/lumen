@@ -7,6 +7,7 @@ description: "Install Lumen on Fedora or RHEL using a native .rpm package with s
 ---
 
 # Fedora / RHEL
+
 {: .no_toc }
 
 <details open markdown="block">
@@ -43,6 +44,7 @@ The resulting package will be at `./dist/lumen-<version>-1.x86_64.rpm`.
 
 {: .tip }
 To build only the `.rpm` (skip the Ubuntu/deb build):
+
 ```bash
 podman build --build-arg BUILD_DEB=0 -f docker/Dockerfile.packages -t lumen-packages .
 ```
@@ -89,20 +91,20 @@ nano ~/.config/lumen/env
 
 ### Config file precedence
 
-| File | Managed by | Priority |
-|------|-----------|----------|
-| `/etc/lumen/<username>.env` | Admin | Lower |
-| `~/.config/lumen/env` | User | Higher (wins) |
+| File                        | Managed by | Priority      |
+| --------------------------- | ---------- | ------------- |
+| `/etc/lumen/<username>.env` | Admin      | Lower         |
+| `~/.config/lumen/env`       | User       | Higher (wins) |
 
 ### Authentication
 
 Set `LUMEN_AUTH` to control who can access the stream:
 
-| Mode | Description |
-|------|-------------|
-| `none` | No authentication (default) |
-| `basic` | HTTP Basic auth validated against system PAM |
-| `bearer` | Preshared bearer token (`LUMEN_AUTH_BEARER_TOKEN`) |
+| Mode     | Description                                             |
+| -------- | ------------------------------------------------------- |
+| `none`   | No authentication (default)                             |
+| `basic`  | HTTP Basic auth validated against system PAM            |
+| `bearer` | Preshared bearer token (`LUMEN_AUTH_BEARER_TOKEN`)      |
 | `oauth2` | OpenID Connect / OIDC (`LUMEN_AUTH_OAUTH2_*` variables) |
 
 ---

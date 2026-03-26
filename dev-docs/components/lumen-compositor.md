@@ -169,17 +169,17 @@ flowchart LR
 
 ## Wayland Protocols Supported
 
-| Protocol | Purpose |
-|---------|---------|
-| `wl_compositor`, `wl_surface` | Core surface management |
-| `wl_seat`, `wl_keyboard`, `wl_pointer` | Input device seat |
-| `xdg_shell` | Toplevel windows and popups |
-| `xdg_output` | Output geometry reporting |
-| `wlr_layer_shell` | Layer-surface (panels, overlays) |
-| `wl_data_device` | Clipboard (copy/paste) for running Wayland clients |
-| `wlr_data_control` | Programmatic clipboard read/write (used by the browser clipboard bridge) |
-| `zwp_linux_dmabuf` | DMA-BUF buffer import/export |
-| `xdg_decoration` | Server-side window decorations |
+| Protocol                               | Purpose                                                                  |
+| -------------------------------------- | ------------------------------------------------------------------------ |
+| `wl_compositor`, `wl_surface`          | Core surface management                                                  |
+| `wl_seat`, `wl_keyboard`, `wl_pointer` | Input device seat                                                        |
+| `xdg_shell`                            | Toplevel windows and popups                                              |
+| `xdg_output`                           | Output geometry reporting                                                |
+| `wlr_layer_shell`                      | Layer-surface (panels, overlays)                                         |
+| `wl_data_device`                       | Clipboard (copy/paste) for running Wayland clients                       |
+| `wlr_data_control`                     | Programmatic clipboard read/write (used by the browser clipboard bridge) |
+| `zwp_linux_dmabuf`                     | DMA-BUF buffer import/export                                             |
+| `xdg_decoration`                       | Server-side window decorations                                           |
 
 ## Design Notes
 

@@ -96,10 +96,10 @@ nano ~/.config/lumen/env
 
 ### Config file precedence
 
-| File | Managed by | Priority |
-|------|-----------|----------|
-| `/etc/lumen/<username>.env` | Admin | Lower |
-| `~/.config/lumen/env` | User | Higher (wins) |
+| File                        | Managed by | Priority      |
+| --------------------------- | ---------- | ------------- |
+| `/etc/lumen/<username>.env` | Admin      | Lower         |
+| `~/.config/lumen/env`       | User       | Higher (wins) |
 
 Both files are optional — the service starts without them using built-in defaults.
 
@@ -107,11 +107,11 @@ Both files are optional — the service starts without them using built-in defau
 
 Set `LUMEN_AUTH` in your env file to control who can access the stream:
 
-| Mode | Description |
-|------|-------------|
-| `none` | No authentication (default) |
-| `basic` | HTTP Basic auth validated against system PAM |
-| `bearer` | Preshared bearer token (`LUMEN_AUTH_BEARER_TOKEN`) |
+| Mode     | Description                                             |
+| -------- | ------------------------------------------------------- |
+| `none`   | No authentication (default)                             |
+| `basic`  | HTTP Basic auth validated against system PAM            |
+| `bearer` | Preshared bearer token (`LUMEN_AUTH_BEARER_TOKEN`)      |
 | `oauth2` | OpenID Connect / OIDC (`LUMEN_AUTH_OAUTH2_*` variables) |
 
 See [`example.env`](example.env) for all required variables for each mode.

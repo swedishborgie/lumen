@@ -6,6 +6,7 @@ description: "High-level architecture of Lumen: how the browser connects to the 
 ---
 
 # Architecture
+
 {: .no_toc }
 
 <details open markdown="block">
@@ -100,16 +101,16 @@ Once the SRTP connection is established, the WebSocket is no longer in the media
 
 ## Components at a Glance
 
-| Component | Role |
-|-----------|------|
+| Component            | Role                                                                                                                                     |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | **lumen-compositor** | Wayland compositor built on [Smithay](https://github.com/Smithay/smithay). Runs Wayland apps, captures frames, and injects input events. |
-| **lumen-encode** | H.264 encoder. Uses VA-API (GPU, zero-copy) when available; falls back to x264 (software) automatically. |
-| **lumen-audio** | Creates a virtual PipeWire audio sink (`lumen_capture`); captures audio routed to it and encodes it to Opus. |
-| **lumen-webrtc** | Manages WebRTC sessions via [str0m](https://github.com/algesten/str0m). Handles ICE, DTLS, SRTP, and RTP packetization. |
-| **lumen-web** | Axum HTTP server that serves the browser client and handles WebSocket signaling. |
-| **lumen-turn** | Embedded TURN/STUN relay. Ensures streams work across NAT without an external relay service. |
-| **lumen-gamepad** | Creates virtual input devices via `uinput` so browser gamepads appear as standard Linux input devices. |
-| **web/** | Vanilla JavaScript browser client. Handles WebRTC setup, video rendering, and input capture. |
+| **lumen-encode**     | H.264 encoder. Uses VA-API (GPU, zero-copy) when available; falls back to x264 (software) automatically.                                 |
+| **lumen-audio**      | Creates a virtual PipeWire audio sink (`lumen_capture`); captures audio routed to it and encodes it to Opus.                             |
+| **lumen-webrtc**     | Manages WebRTC sessions via [str0m](https://github.com/algesten/str0m). Handles ICE, DTLS, SRTP, and RTP packetization.                  |
+| **lumen-web**        | Axum HTTP server that serves the browser client and handles WebSocket signaling.                                                         |
+| **lumen-turn**       | Embedded TURN/STUN relay. Ensures streams work across NAT without an external relay service.                                             |
+| **lumen-gamepad**    | Creates virtual input devices via `uinput` so browser gamepads appear as standard Linux input devices.                                   |
+| **web/**             | Vanilla JavaScript browser client. Handles WebRTC setup, video rendering, and input capture.                                             |
 
 ---
 

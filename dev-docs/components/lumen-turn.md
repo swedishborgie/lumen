@@ -50,10 +50,10 @@ pub struct TurnServerConfig {
 
 ## Port Requirements
 
-| Port | Protocol | Purpose |
-|------|----------|---------|
-| `listen_port` (default 3478) | UDP | TURN control channel and STUN binding requests |
-| `min_relay_port`–`max_relay_port` (default 50000–50010) | UDP | Data relay range allocated per TURN client |
+| Port                                                    | Protocol | Purpose                                        |
+| ------------------------------------------------------- | -------- | ---------------------------------------------- |
+| `listen_port` (default 3478)                            | UDP      | TURN control channel and STUN binding requests |
+| `min_relay_port`–`max_relay_port` (default 50000–50010) | UDP      | Data relay range allocated per TURN client     |
 
 When running inside a container, both ranges must be port-mapped:
 

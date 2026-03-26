@@ -16,12 +16,13 @@ podman build --build-arg DESKTOP=kde -f docker/Dockerfile -t lumen:kde .
 
 The `DESKTOP` build argument selects the desktop environment:
 
-| Value | Desktop | Terminal |
-|-------|---------|----------|
-| `labwc` *(default)* | labwc — lightweight wlroots compositor | foot |
-| `kde` | KDE Plasma 6 (kwin_wayland + plasmashell) | Konsole |
+| Value               | Desktop                                   | Terminal |
+| ------------------- | ----------------------------------------- | -------- |
+| `labwc` _(default)_ | labwc — lightweight wlroots compositor    | foot     |
+| `kde`               | KDE Plasma 6 (kwin_wayland + plasmashell) | Konsole  |
 
 The build has three stages:
+
 1. **planner** — lightweight stage that runs `cargo chef prepare` to compute a dependency recipe from the workspace manifests
 2. **builder** — installs the full Rust toolchain and all native C/C++ dependencies; uses the recipe to compile all third-party crates into a dedicated cached layer, then compiles only the application code on top
 3. **runtime** — minimal Ubuntu image with the selected desktop, XWayland, Firefox, PipeWire, and the compiled `lumen` binary
@@ -103,11 +104,11 @@ Lumen includes an **embedded TURN server** (port 3478/udp) that acts as a relay.
 
 Required port mappings:
 
-| Port | Protocol | Purpose |
-|------|----------|---------|
-| `8080` | TCP | HTTP server + WebSocket signaling |
-| `3478` | UDP | TURN control (allocation requests) |
-| `50000–50010` | UDP | TURN relay data channels |
+| Port          | Protocol | Purpose                            |
+| ------------- | -------- | ---------------------------------- |
+| `8080`        | TCP      | HTTP server + WebSocket signaling  |
+| `3478`        | UDP      | TURN control (allocation requests) |
+| `50000–50010` | UDP      | TURN relay data channels           |
 
 The browser receives TURN credentials automatically via `/api/config` — no manual configuration required.
 
@@ -123,28 +124,28 @@ podman run ... -e LUMEN_TURN_PORT=0 lumen:latest
 
 ### labwc image (`DESKTOP=labwc`, default)
 
-| Component | Purpose |
-|-----------|---------|
-| `lumen` | The compositor/streamer binary |
-| `labwc` | Inner Wayland compositor (the desktop you stream) |
-| `xwayland` | XWayland bridge for X11 apps inside labwc |
-| `firefox` | Browser — auto-started by labwc on launch |
-| `foot` | Terminal emulator — available in the labwc right-click menu |
-| `xclock` / `xeyes` | X11 test utilities (`x11-apps` package) |
-| `pipewire` | Audio server for audio capture |
+| Component          | Purpose                                                     |
+| ------------------ | ----------------------------------------------------------- |
+| `lumen`            | The compositor/streamer binary                              |
+| `labwc`            | Inner Wayland compositor (the desktop you stream)           |
+| `xwayland`         | XWayland bridge for X11 apps inside labwc                   |
+| `firefox`          | Browser — auto-started by labwc on launch                   |
+| `foot`             | Terminal emulator — available in the labwc right-click menu |
+| `xclock` / `xeyes` | X11 test utilities (`x11-apps` package)                     |
+| `pipewire`         | Audio server for audio capture                              |
 
 ### KDE image (`DESKTOP=kde`)
 
-| Component | Purpose |
-|-----------|---------|
-| `lumen` | The compositor/streamer binary |
-| `kwin_wayland` | KDE window manager / inner Wayland compositor |
-| `plasmashell` | KDE Plasma desktop shell |
-| `xwayland` | XWayland bridge for X11 apps |
-| `firefox` | Browser — auto-started on launch |
-| `konsole` | KDE terminal emulator |
-| `xclock` / `xeyes` | X11 test utilities (`x11-apps` package) |
-| `pipewire` | Audio server for audio capture |
+| Component          | Purpose                                       |
+| ------------------ | --------------------------------------------- |
+| `lumen`            | The compositor/streamer binary                |
+| `kwin_wayland`     | KDE window manager / inner Wayland compositor |
+| `plasmashell`      | KDE Plasma desktop shell                      |
+| `xwayland`         | XWayland bridge for X11 apps                  |
+| `firefox`          | Browser — auto-started on launch              |
+| `konsole`          | KDE terminal emulator                         |
+| `xclock` / `xeyes` | X11 test utilities (`x11-apps` package)       |
+| `pipewire`         | Audio server for audio capture                |
 
 > **Gamepad support** requires passing `/dev/uinput` to the container (see [Gamepad passthrough](#gamepad--joystick-passthrough) above).
 
@@ -177,17 +178,17 @@ Both apps should appear as X11 windows rendered via XWayland inside the labwc se
 
 ## Environment variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DESKTOP` | `labwc` | Desktop environment — `labwc` or `kde`. Set at image build time; can be overridden at runtime with `-e DESKTOP=kde` when using an image built with the matching packages. |
-| `LUMEN_BIND` | `0.0.0.0:8080` | HTTP server bind address |
-| `LUMEN_DRI_NODE` | *(auto-detected)* | Override the DRI render node (e.g. `/dev/dri/renderD128`) |
-| `LUMEN_TURN_PORT` | `3478` | TURN server UDP port. Set to `0` to disable. |
-| `LUMEN_TURN_EXTERNAL_IP` | `127.0.0.1` | IP advertised as the TURN relay address. Change to the host LAN IP for remote access. |
-| `LUMEN_TURN_USERNAME` | `lumen` | TURN credential username |
-| `LUMEN_TURN_PASSWORD` | `lumenpass` | TURN credential password |
-| `LUMEN_TURN_MIN_PORT` | `50000` | Start of TURN relay UDP port range |
-| `LUMEN_TURN_MAX_PORT` | `50010` | End of TURN relay UDP port range |
+| Variable                 | Default           | Description                                                                                                                                                               |
+| ------------------------ | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DESKTOP`                | `labwc`           | Desktop environment — `labwc` or `kde`. Set at image build time; can be overridden at runtime with `-e DESKTOP=kde` when using an image built with the matching packages. |
+| `LUMEN_BIND`             | `0.0.0.0:8080`    | HTTP server bind address                                                                                                                                                  |
+| `LUMEN_DRI_NODE`         | _(auto-detected)_ | Override the DRI render node (e.g. `/dev/dri/renderD128`)                                                                                                                 |
+| `LUMEN_TURN_PORT`        | `3478`            | TURN server UDP port. Set to `0` to disable.                                                                                                                              |
+| `LUMEN_TURN_EXTERNAL_IP` | `127.0.0.1`       | IP advertised as the TURN relay address. Change to the host LAN IP for remote access.                                                                                     |
+| `LUMEN_TURN_USERNAME`    | `lumen`           | TURN credential username                                                                                                                                                  |
+| `LUMEN_TURN_PASSWORD`    | `lumenpass`       | TURN credential password                                                                                                                                                  |
+| `LUMEN_TURN_MIN_PORT`    | `50000`           | Start of TURN relay UDP port range                                                                                                                                        |
+| `LUMEN_TURN_MAX_PORT`    | `50010`           | End of TURN relay UDP port range                                                                                                                                          |
 
 ---
 

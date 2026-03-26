@@ -111,6 +111,7 @@ flowchart LR
 The compositor DMA-BUF handle is wrapped into an `AVBuffer` and fed into an FFmpeg filter graph. The `hwmap` filter maps it onto a VA-API hardware surface; `scale_vaapi` converts the pixel format from ARGB8888 to NV12 (required by the VA-API H.264 encoder); `h264_vaapi` performs the final hardware encode. No CPU memory copy occurs in this path.
 
 ### Initialization
+
 - Creates a DRM device context from the configured DRI node
 - Builds a VA-API hardware device context wrapping the DRM context
 - Constructs the filter graph: `buffer → hwmap → scale_vaapi → buffersink`
@@ -124,17 +125,18 @@ Uses **libx264** via the `x264-sys` FFI crate.
 
 ### Configuration
 
-| Parameter | Value | Rationale |
-|-----------|-------|-----------|
-| Preset | `ultrafast` | Minimize encode latency for real-time streaming |
-| Tune | `zerolatency` | Disable B-frames and lookahead; optimize for WebRTC |
-| Profile | `baseline` | Broadest browser compatibility |
-| Threads | `1` | Deterministic, single-threaded encode |
-| Annex-B | enabled | Direct RTP packetization compatibility |
-| Repeat headers | enabled | SPS/PPS prepended to every IDR frame |
-| RC mode | CBR (ABR) or CRF | Selectable via `EncoderConfig::cbr` |
+| Parameter      | Value            | Rationale                                           |
+| -------------- | ---------------- | --------------------------------------------------- |
+| Preset         | `ultrafast`      | Minimize encode latency for real-time streaming     |
+| Tune           | `zerolatency`    | Disable B-frames and lookahead; optimize for WebRTC |
+| Profile        | `baseline`       | Broadest browser compatibility                      |
+| Threads        | `1`              | Deterministic, single-threaded encode               |
+| Annex-B        | enabled          | Direct RTP packetization compatibility              |
+| Repeat headers | enabled          | SPS/PPS prepended to every IDR frame                |
+| RC mode        | CBR (ABR) or CRF | Selectable via `EncoderConfig::cbr`                 |
 
 ### Encode Steps
+
 1. Receive `CapturedFrame` with `rgba_buffer`
 2. Convert RGBA8888 → I420 (YUV 4:2:0) via `yuv.rs`
 3. Submit I420 planes to x264

@@ -7,6 +7,7 @@ description: "Run Lumen inside a Podman container with a bundled desktop environ
 ---
 
 # Docker / Podman
+
 {: .no_toc }
 
 <details open markdown="block">
@@ -37,10 +38,10 @@ podman build --build-arg DESKTOP=kde -f docker/Dockerfile -t lumen:kde .
 
 The `DESKTOP` build argument selects the desktop environment bundled into the image:
 
-| Value | Desktop | Terminal |
-|-------|---------|----------|
-| `labwc` *(default)* | labwc — lightweight wlroots compositor | foot |
-| `kde` | KDE Plasma 6 (kwin_wayland + plasmashell) | Konsole |
+| Value               | Desktop                                   | Terminal |
+| ------------------- | ----------------------------------------- | -------- |
+| `labwc` _(default)_ | labwc — lightweight wlroots compositor    | foot     |
+| `kde`               | KDE Plasma 6 (kwin_wayland + plasmashell) | Konsole  |
 
 {: .tip }
 The first build compiles Rust and all native C/C++ dependencies and will take several minutes. Subsequent builds that only change application source code reuse the cached dependency layer and are much faster. The dependency layer is only invalidated when `Cargo.toml` or `Cargo.lock` changes.
@@ -126,11 +127,11 @@ podman run --rm -it \
 
 ## Port Reference
 
-| Port | Protocol | Purpose |
-|------|----------|---------|
-| `8080` | TCP | HTTP server + WebSocket signaling |
-| `3478` | UDP | TURN server (NAT traversal control) |
-| `50000–50010` | UDP | TURN relay data channels |
+| Port          | Protocol | Purpose                             |
+| ------------- | -------- | ----------------------------------- |
+| `8080`        | TCP      | HTTP server + WebSocket signaling   |
+| `3478`        | UDP      | TURN server (NAT traversal control) |
+| `50000–50010` | UDP      | TURN relay data channels            |
 
 The embedded TURN server handles NAT traversal automatically. The browser receives TURN credentials via `/api/config` — no manual configuration is required.
 
@@ -159,20 +160,20 @@ podman run --rm -it \
 
 ## Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `LUMEN_BIND` | `0.0.0.0:8080` | HTTP server bind address |
-| `LUMEN_DRI_NODE` | *(auto-detected)* | Override the DRI render node (e.g. `/dev/dri/renderD128`) |
-| `LUMEN_TURN_PORT` | `3478` | TURN server UDP port. Set to `0` to disable. |
-| `LUMEN_TURN_EXTERNAL_IP` | `127.0.0.1` | IP advertised as the TURN relay address |
-| `LUMEN_TURN_USERNAME` | `lumen` | TURN credential username |
-| `LUMEN_TURN_PASSWORD` | `lumenpass` | TURN credential password |
-| `LUMEN_TURN_MIN_PORT` | `50000` | Start of TURN relay UDP port range |
-| `LUMEN_TURN_MAX_PORT` | `50010` | End of TURN relay UDP port range |
-| `LUMEN_WIDTH` | `1920` | Output width in pixels |
-| `LUMEN_HEIGHT` | `1080` | Output height in pixels |
-| `LUMEN_FPS` | `30.0` | Target frames per second |
-| `LUMEN_VIDEO_BITRATE_KBPS` | `4000` | Video encoder target bitrate (kbps) |
+| Variable                   | Default            | Description                                               |
+| -------------------------- | ------------------ | --------------------------------------------------------- |
+| `LUMEN_BIND`               | `0.0.0.0:8080`     | HTTP server bind address                                  |
+| `LUMEN_DRI_NODE`           | _(auto-detected)_  | Override the DRI render node (e.g. `/dev/dri/renderD128`) |
+| `LUMEN_TURN_PORT`          | `3478`             | TURN server UDP port. Set to `0` to disable.              |
+| `LUMEN_TURN_EXTERNAL_IP`   | `127.0.0.1`        | IP advertised as the TURN relay address                   |
+| `LUMEN_TURN_USERNAME`      | `(auto-generated)` | TURN credential username                                  |
+| `LUMEN_TURN_PASSWORD`      | `(auto-generated)` | TURN credential password                                  |
+| `LUMEN_TURN_MIN_PORT`      | `50000`            | Start of TURN relay UDP port range                        |
+| `LUMEN_TURN_MAX_PORT`      | `50010`            | End of TURN relay UDP port range                          |
+| `LUMEN_WIDTH`              | `1920`             | Output width in pixels                                    |
+| `LUMEN_HEIGHT`             | `1080`             | Output height in pixels                                   |
+| `LUMEN_FPS`                | `30.0`             | Target frames per second                                  |
+| `LUMEN_VIDEO_BITRATE_KBPS` | `4000`             | Video encoder target bitrate (kbps)                       |
 
 ---
 
@@ -191,25 +192,23 @@ On hosts with SELinux or AppArmor enforcement, GPU device passthrough may requir
 
 ### labwc image (`DESKTOP=labwc`, default)
 
-| Component | Purpose |
-|-----------|---------|
-| `lumen` | The compositor/streamer binary |
-| `labwc` | Inner Wayland compositor (the desktop you stream) |
-| `xwayland` | XWayland bridge for X11 apps |
-| `firefox` | Browser — auto-started by labwc on launch |
-| `foot` | Terminal emulator (available in the labwc right-click menu) |
-| `xclock` / `xeyes` | X11 test utilities |
-| `pipewire` | Audio server for audio capture |
+| Component  | Purpose                                                     |
+| ---------- | ----------------------------------------------------------- |
+| `lumen`    | The compositor/streamer binary                              |
+| `labwc`    | Inner Wayland compositor (the desktop you stream)           |
+| `xwayland` | XWayland bridge for X11 apps                                |
+| `firefox`  | Browser — auto-started by labwc on launch                   |
+| `foot`     | Terminal emulator (available in the labwc right-click menu) |
+| `pipewire` | Audio server for audio capture                              |
 
 ### KDE image (`DESKTOP=kde`)
 
-| Component | Purpose |
-|-----------|---------|
-| `lumen` | The compositor/streamer binary |
+| Component      | Purpose                                       |
+| -------------- | --------------------------------------------- |
+| `lumen`        | The compositor/streamer binary                |
 | `kwin_wayland` | KDE window manager / inner Wayland compositor |
-| `plasmashell` | KDE Plasma desktop shell |
-| `xwayland` | XWayland bridge for X11 apps |
-| `firefox` | Browser — auto-started on launch |
-| `konsole` | KDE terminal emulator |
-| `xclock` / `xeyes` | X11 test utilities |
-| `pipewire` | Audio server for audio capture |
+| `plasmashell`  | KDE Plasma desktop shell                      |
+| `xwayland`     | XWayland bridge for X11 apps                  |
+| `firefox`      | Browser — auto-started on launch              |
+| `konsole`      | KDE terminal emulator                         |
+| `pipewire`     | Audio server for audio capture                |

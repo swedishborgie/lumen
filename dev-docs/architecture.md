@@ -181,29 +181,29 @@ sequenceDiagram
 
 ## Communication Channels Summary
 
-| Channel | Type | Producer | Consumer(s) | Payload |
-|---------|------|----------|-------------|---------|
-| Captured frames | `tokio::broadcast` | Compositor | Encoder | `CapturedFrame` |
-| Encoded frames | `tokio::broadcast` | Encoder | Video fan-out | `EncodedFrame` |
-| Audio packets | `tokio::mpsc` | Audio capture | Audio fan-out | `OpusPacket` |
-| Cursor events | `tokio::broadcast` | Compositor | Cursor fan-out | `CursorEvent` |
-| Clipboard events | `tokio::broadcast` | Compositor | Clipboard fan-out | `ClipboardEvent` |
-| Input events | `tokio::mpsc` | Web/WebRTC drive tasks | Input forwarding task | `InputEvent` |
-| Resize | `tokio::mpsc` | Web server | Resize coordinator | `(u32, u32)` |
-| Compositor commands | `calloop::channel` | Async tasks | Compositor thread | `InputEvent`, resize |
+| Channel             | Type               | Producer               | Consumer(s)           | Payload              |
+| ------------------- | ------------------ | ---------------------- | --------------------- | -------------------- |
+| Captured frames     | `tokio::broadcast` | Compositor             | Encoder               | `CapturedFrame`      |
+| Encoded frames      | `tokio::broadcast` | Encoder                | Video fan-out         | `EncodedFrame`       |
+| Audio packets       | `tokio::mpsc`      | Audio capture          | Audio fan-out         | `OpusPacket`         |
+| Cursor events       | `tokio::broadcast` | Compositor             | Cursor fan-out        | `CursorEvent`        |
+| Clipboard events    | `tokio::broadcast` | Compositor             | Clipboard fan-out     | `ClipboardEvent`     |
+| Input events        | `tokio::mpsc`      | Web/WebRTC drive tasks | Input forwarding task | `InputEvent`         |
+| Resize              | `tokio::mpsc`      | Web server             | Resize coordinator    | `(u32, u32)`         |
+| Compositor commands | `calloop::channel` | Async tasks            | Compositor thread     | `InputEvent`, resize |
 
 ## Key Protocols
 
-| Protocol | Layer | Purpose |
-|---------|-------|---------|
-| **Wayland** | IPC (Unix socket) | Window manager ↔ application communication |
-| **WebSocket** | TCP/HTTP upgrade | SDP offer/answer and ICE candidate exchange |
-| **ICE** | UDP | NAT traversal and peer connectivity establishment |
-| **DTLS** | UDP | Key exchange for SRTP |
-| **SRTP** | UDP | Encrypted RTP media transport |
-| **RTP** (H.264, RFC 6184) | SRTP | Video frame packetization and delivery |
-| **RTP** (Opus, RFC 7587) | SRTP | Audio packet delivery |
-| **WebRTC Data Channel** | SCTP over DTLS | Input events, cursor updates, clipboard sync |
+| Protocol                  | Layer             | Purpose                                           |
+| ------------------------- | ----------------- | ------------------------------------------------- |
+| **Wayland**               | IPC (Unix socket) | Window manager ↔ application communication        |
+| **WebSocket**             | TCP/HTTP upgrade  | SDP offer/answer and ICE candidate exchange       |
+| **ICE**                   | UDP               | NAT traversal and peer connectivity establishment |
+| **DTLS**                  | UDP               | Key exchange for SRTP                             |
+| **SRTP**                  | UDP               | Encrypted RTP media transport                     |
+| **RTP** (H.264, RFC 6184) | SRTP              | Video frame packetization and delivery            |
+| **RTP** (Opus, RFC 7587)  | SRTP              | Audio packet delivery                             |
+| **WebRTC Data Channel**   | SCTP over DTLS    | Input events, cursor updates, clipboard sync      |
 
 ## Rendering Paths
 

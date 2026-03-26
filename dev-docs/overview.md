@@ -92,24 +92,24 @@ All options can be set via CLI flags or environment variables.
 | `--log-output` | `LUMEN_LOG_OUTPUT` | `stderr` | Log output destination: `stderr` (default), `journald`, or `file:/path/to/log` |
 | `--syslog-identifier` | `LUMEN_SYSLOG_IDENTIFIER` | *(binary name)* | Syslog identifier for journald output; set to systemd unit instance name (e.g. `lumen@alice`) |
 | `--bind-addr` | `LUMEN_BIND` | `0.0.0.0:8080` | HTTP/WebSocket bind address |
+| `--hostname` | `LUMEN_HOSTNAME` | *(OS hostname)* | Hostname shown in the browser tab title and PWA app name |
 | `--width` | `LUMEN_WIDTH` | `1920` | Output width in pixels |
 | `--height` | `LUMEN_HEIGHT` | `1080` | Output height in pixels |
 | `--fps` | `LUMEN_FPS` | `30.0` | Target frames per second |
 | `--video-bitrate-kbps` | `LUMEN_VIDEO_BITRATE_KBPS` | `4000` | Video encoder target bitrate (kbps) |
 | `--max-bitrate-kbps` | `LUMEN_MAX_BITRATE_KBPS` | *(2× target)* | Peak bitrate cap in kbps for VBR encoding |
 | `--audio-bitrate-bps` | `LUMEN_AUDIO_BITRATE_BPS` | `128000` | Opus audio encoder bitrate (bps) |
-| `--audio-device` | `LUMEN_AUDIO_DEVICE` | *(auto)* | PulseAudio source name (defaults to the default monitor source) |
 | `--dri-node` | `LUMEN_DRI_NODE` | *(auto-detect)* | Path to DRI render node (e.g. `/dev/dri/renderD128`) for GPU acceleration |
+| `--cuda-device` | `LUMEN_CUDA_DEVICE` | `0` | CUDA device index for NVENC hardware encoding (nvenc feature only); set to empty string to disable NVENC |
 | `--inner-display` | `LUMEN_INNER_DISPLAY` | `auto` | Wayland socket of a nested compositor for clipboard bridging; `auto` = scan `$XDG_RUNTIME_DIR`; empty string = disabled |
 | `--ice-servers` | `LUMEN_ICE_SERVERS` | `stun:stun.l.google.com:19302` | Comma-separated STUN/TURN server URLs (used only when the embedded TURN server is disabled) |
-| `--static-dir` | `LUMEN_STATIC_DIR` | `./web` | Directory containing the browser client assets |
 | `--turn-port` | `LUMEN_TURN_PORT` | `3478` | UDP port for the embedded TURN server; set to `0` to disable |
 | `--turn-external-ip` | `LUMEN_TURN_EXTERNAL_IP` | *(auto-detect)* | Public IP advertised as the TURN relay address; falls back to `127.0.0.1` |
-| `--turn-username` | `LUMEN_TURN_USERNAME` | `lumen` | TURN credential username |
-| `--turn-password` | `LUMEN_TURN_PASSWORD` | `lumenpass` | TURN credential password |
+| `--turn-username` | `LUMEN_TURN_USERNAME` | *(auto-generated)* | TURN credential username |
+| `--turn-password` | `LUMEN_TURN_PASSWORD` | *(auto-generated)* | TURN credential password |
 | `--turn-min-port` | `LUMEN_TURN_MIN_PORT` | `50000` | Lowest UDP port in the TURN relay range |
 | `--turn-max-port` | `LUMEN_TURN_MAX_PORT` | `50010` | Highest UDP port in the TURN relay range |
-| `--auth` | `LUMEN_AUTH` | `none` | Authentication mode: `none`, `basic` (PAM), `bearer` (preshared token), or `oauth2` (OIDC) |
+| `--auth` | `LUMEN_AUTH` | `basic` | Authentication mode: `none`, `basic` (PAM), `bearer` (preshared token), or `oauth2` (OIDC) |
 | `--auth-bearer-token` | `LUMEN_AUTH_BEARER_TOKEN` | *(required for bearer)* | Preshared token for bearer authentication |
 | `--auth-oauth2-issuer-url` | `LUMEN_AUTH_OAUTH2_ISSUER_URL` | *(required for oauth2)* | OIDC issuer URL |
 | `--auth-oauth2-client-id` | `LUMEN_AUTH_OAUTH2_CLIENT_ID` | *(required for oauth2)* | OAuth2 client ID |

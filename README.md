@@ -129,17 +129,17 @@ All options can be set via command-line flags or environment variables.
 | Flag | Env | Default | Description |
 |------|-----|---------|-------------|
 | `--bind-addr` | `LUMEN_BIND` | `0.0.0.0:8080` | Address to bind the web server to |
+| `--hostname` | `LUMEN_HOSTNAME` | *(OS hostname)* | Hostname shown in the browser tab title and PWA app name |
 | `--width` | `LUMEN_WIDTH` | `1920` | Output width in pixels |
 | `--height` | `LUMEN_HEIGHT` | `1080` | Output height in pixels |
 | `--fps` | `LUMEN_FPS` | `30.0` | Target frames per second |
 | `--video-bitrate-kbps` | `LUMEN_VIDEO_BITRATE_KBPS` | `4000` | Target video bitrate (kbps) |
 | `--max-bitrate-kbps` | `LUMEN_MAX_BITRATE_KBPS` | `2× video-bitrate` | Peak VBR bitrate cap (kbps) |
 | `--audio-bitrate-bps` | `LUMEN_AUDIO_BITRATE_BPS` | `128000` | Opus audio bitrate (bps) |
-| `--audio-device` | `LUMEN_AUDIO_DEVICE` | *(auto: monitor)* | PulseAudio device name to capture |
 | `--dri-node` | `LUMEN_DRI_NODE` | *(auto-detected)* | DRI render node for VA-API (e.g. `/dev/dri/renderD128`) |
+| `--cuda-device` | `LUMEN_CUDA_DEVICE` | `0` | CUDA device index for NVENC hardware encoding (nvenc feature only); set to empty string to disable NVENC |
 | `--inner-display` | `LUMEN_INNER_DISPLAY` | `auto` | Wayland socket of a nested compositor to bridge clipboard from; set to `""` to disable |
 | `--ice-servers` | `LUMEN_ICE_SERVERS` | `stun:stun.l.google.com:19302` | Comma-separated ICE/STUN server URLs |
-| `--static-dir` | `LUMEN_STATIC_DIR` | `./web` | Directory to serve the browser client from |
 | `--launch` | `LUMEN_LAUNCH` | | Shell command to launch as a Wayland client once the compositor is ready (e.g. `labwc`, `sway`) |
 
 #### TURN Server
@@ -150,8 +150,8 @@ Lumen includes an embedded TURN server to relay WebRTC traffic across NAT. It is
 |------|-----|---------|-------------|
 | `--turn-port` | `LUMEN_TURN_PORT` | `3478` | UDP port for the TURN server (set to `0` to disable) |
 | `--turn-external-ip` | `LUMEN_TURN_EXTERNAL_IP` | *(auto-detected)* | Public IP to advertise as the TURN relay address |
-| `--turn-username` | `LUMEN_TURN_USERNAME` | `lumen` | TURN username |
-| `--turn-password` | `LUMEN_TURN_PASSWORD` | `lumenpass` | TURN password |
+| `--turn-username` | `LUMEN_TURN_USERNAME` | *(auto-generated)* | TURN username |
+| `--turn-password` | `LUMEN_TURN_PASSWORD` | *(auto-generated)* | TURN password |
 | `--turn-min-port` | `LUMEN_TURN_MIN_PORT` | `50000` | Low end of UDP relay port range |
 | `--turn-max-port` | `LUMEN_TURN_MAX_PORT` | `50010` | High end of UDP relay port range |
 
@@ -159,7 +159,7 @@ Lumen includes an embedded TURN server to relay WebRTC traffic across NAT. It is
 
 | Flag | Env | Default | Description |
 |------|-----|---------|-------------|
-| `--auth` | `LUMEN_AUTH` | `none` | Auth mode: `none`, `basic` (PAM), `bearer`, or `oauth2` (OIDC) |
+| `--auth` | `LUMEN_AUTH` | `basic` | Auth mode: `none`, `basic` (PAM), `bearer`, or `oauth2` (OIDC) |
 | `--auth-bearer-token` | `LUMEN_AUTH_BEARER_TOKEN` | | `[bearer]` Preshared token; clients must send `Authorization: Bearer <token>` |
 | `--auth-oauth2-issuer-url` | `LUMEN_AUTH_OAUTH2_ISSUER_URL` | | `[oauth2]` OIDC issuer URL (discovery fetched from `/.well-known/openid-configuration`) |
 | `--auth-oauth2-client-id` | `LUMEN_AUTH_OAUTH2_CLIENT_ID` | | `[oauth2]` OAuth2 client ID |

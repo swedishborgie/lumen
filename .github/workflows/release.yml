@@ -36,7 +36,25 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push
+      - name: Build and push (labwc)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/swedishborgie/lumen:${{ steps.version.outputs.VERSION }}-labwc
+            ghcr.io/swedishborgie/lumen:latest-labwc
+          build-args: |
+            LUMEN_VERSION=${{ steps.version.outputs.VERSION }}
+            DESKTOP=labwc
+          # cargo-chef separates the long-lived dependency layer from the
+          # short-lived application layer.  The GHA BuildKit cache preserves
+          # both across runs; only source changes trigger a recompile.
+          cache-from: type=gha,scope=lumen-docker
+          cache-to: type=gha,scope=lumen-docker,mode=max
+
+      - name: Build and push (kde)
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -45,11 +63,13 @@ jobs:
           tags: |
             ghcr.io/swedishborgie/lumen:${{ steps.version.outputs.VERSION }}
             ghcr.io/swedishborgie/lumen:latest
+            ghcr.io/swedishborgie/lumen:${{ steps.version.outputs.VERSION }}-kde
+            ghcr.io/swedishborgie/lumen:latest-kde
           build-args: |
             LUMEN_VERSION=${{ steps.version.outputs.VERSION }}
-          # cargo-chef separates the long-lived dependency layer from the
-          # short-lived application layer.  The GHA BuildKit cache preserves
-          # both across runs; only source changes trigger a recompile.
+            DESKTOP=kde
+          # Reuses the planner, builder, and shared runtime layers cached by the
+          # labwc step above; only the DESKTOP-specific apt-get layer is rebuilt.
           cache-from: type=gha,scope=lumen-docker
           cache-to: type=gha,scope=lumen-docker,mode=max
 
@@ -82,7 +102,6 @@ jobs:
           build-args: |
             VERSION=${{ steps.version.outputs.VERSION }}
             LUMEN_VERSION=${{ steps.version.outputs.VERSION }}
-            BUILD_RPM=0
           # Shares scope with build-rpm so the common planner stage is cached
           # by whichever job runs first and reused by the other.
           cache-from: type=gha,scope=lumen-packages
@@ -140,7 +159,6 @@ jobs:
           build-args: |
             VERSION=${{ steps.version.outputs.VERSION }}
             LUMEN_VERSION=${{ steps.version.outputs.VERSION }}
-            BUILD_DEB=0
           cache-from: type=gha,scope=lumen-packages
           cache-to: type=gha,scope=lumen-packages,mode=max
 

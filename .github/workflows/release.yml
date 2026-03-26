@@ -101,7 +101,6 @@ jobs:
           tags: lumen-deb:build
           build-args: |
             VERSION=${{ steps.version.outputs.VERSION }}
-            LUMEN_VERSION=${{ steps.version.outputs.VERSION }}
           # Shares scope with build-rpm so the common planner stage is cached
           # by whichever job runs first and reused by the other.
           cache-from: type=gha,scope=lumen-packages
@@ -158,7 +157,6 @@ jobs:
           tags: lumen-rpm:build
           build-args: |
             VERSION=${{ steps.version.outputs.VERSION }}
-            LUMEN_VERSION=${{ steps.version.outputs.VERSION }}
           cache-from: type=gha,scope=lumen-packages
           cache-to: type=gha,scope=lumen-packages,mode=max
 

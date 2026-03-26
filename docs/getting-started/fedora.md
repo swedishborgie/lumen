@@ -21,40 +21,16 @@ Install Lumen on Fedora, RHEL, or CentOS using a native `.rpm` package. The pack
 
 ---
 
-## Prerequisites
+## Download the Package
 
-You need **Podman** (or Docker) on any Linux machine to build the packages — no Rust or build dependencies are required on the target host.
-
----
-
-## Build the Package
-
-From the repository root:
-
-```bash
-# Build the package image
-podman build -f docker/Dockerfile.packages -t lumen-packages .
-
-# Extract the .rpm (and .deb) into ./dist/
-mkdir -p dist
-podman run --rm -v ./dist:/output lumen-packages
-```
-
-The resulting package will be at `./dist/lumen-<version>-1.x86_64.rpm`.
-
-{: .tip }
-To build only the `.rpm` (skip the Ubuntu/deb build):
-
-```bash
-podman build --build-arg BUILD_DEB=0 -f docker/Dockerfile.packages -t lumen-packages .
-```
+Download the latest `.rpm` from the [Lumen releases page](https://github.com/swedishborgie/lumen/releases/latest).
 
 ---
 
 ## Install
 
 ```bash
-sudo dnf install ./dist/lumen-*.rpm
+sudo dnf install ./lumen-*.rpm
 ```
 
 `dnf` installs all runtime dependencies automatically. After installation, the post-install scriptlet creates `/etc/lumen/` and copies in a sample configuration file.
@@ -142,21 +118,20 @@ journalctl -u lumen@<username> -f
 ## Full Example: Setting Up for User `alice`
 
 ```bash
-# 1. Build and install the package
-podman build -f docker/Dockerfile.packages -t lumen-packages .
-mkdir -p dist && podman run --rm -v ./dist:/output lumen-packages
-sudo dnf install ./dist/lumen-*.rpm
+# 1. Download the package from https://github.com/swedishborgie/lumen/releases/latest
+# 2. Install it
+sudo dnf install ./lumen-*.rpm
 
-# 2. Create config
+# 3. Create config
 sudo cp /etc/lumen/example.env /etc/lumen/alice.env
 sudo nano /etc/lumen/alice.env   # set LUMEN_LAUNCH, auth, etc.
 
-# 3. Start the service
+# 4. Start the service
 sudo systemctl start lumen@alice
 
-# 4. Open a browser to http://<host>:8080
+# 5. Open a browser to http://<host>:8080
 
-# 5. (Optional) enable autostart
+# 6. (Optional) enable autostart
 sudo systemctl enable lumen@alice
 ```
 

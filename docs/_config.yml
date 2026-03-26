@@ -4,6 +4,9 @@ url: "https://github.com/pages/lumen/lumen"
 
 remote_theme: just-the-docs/just-the-docs
 
+# Logo in the navigation pane
+logo: "/assets/images/lumen-text.svg"
+
 # Just the Docs configuration
 color_scheme: dark
 

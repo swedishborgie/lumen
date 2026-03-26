@@ -24,27 +24,22 @@ The instructions below use `podman`. `docker` works as a drop-in replacement for
 
 ---
 
-## Build the Image
+## Pull the Image
 
-From the repository root:
+Pre-built images are available on the GitHub Container Registry. Choose the desktop environment you want:
 
 ```bash
-# Default — labwc (lightweight Wayland compositor)
-podman build -f docker/Dockerfile -t lumen:latest .
+# labwc (lightweight Wayland compositor) — default
+podman pull ghcr.io/swedishborgie/lumen:latest-labwc
 
-# KDE Plasma 6 (kwin_wayland + plasmashell)
-podman build --build-arg DESKTOP=kde -f docker/Dockerfile -t lumen:kde .
+# KDE Plasma 6
+podman pull ghcr.io/swedishborgie/lumen:latest-kde
 ```
 
-The `DESKTOP` build argument selects the desktop environment bundled into the image:
-
-| Value               | Desktop                                   | Terminal |
-| ------------------- | ----------------------------------------- | -------- |
-| `labwc` _(default)_ | labwc — lightweight wlroots compositor    | foot     |
-| `kde`               | KDE Plasma 6 (kwin_wayland + plasmashell) | Konsole  |
-
-{: .tip }
-The first build compiles Rust and all native C/C++ dependencies and will take several minutes. Subsequent builds that only change application source code reuse the cached dependency layer and are much faster. The dependency layer is only invalidated when `Cargo.toml` or `Cargo.lock` changes.
+| Image tag                      | Desktop                                   | Terminal |
+| ------------------------------ | ----------------------------------------- | -------- |
+| `latest-labwc` _(recommended)_ | labwc — lightweight wlroots compositor    | foot     |
+| `latest-kde`                   | KDE Plasma 6 (kwin_wayland + plasmashell) | Konsole  |
 
 ---
 
@@ -55,7 +50,7 @@ The first build compiles Rust and all native C/C++ dependencies and will take se
 Podman's default NAT networking can interfere with WebRTC UDP flows even when ports are mapped. Using `--network host` bypasses NAT entirely and is the recommended approach:
 
 ```bash
-podman run --rm -it --device /dev/dri --network host lumen:latest
+podman run --rm -it --device /dev/dri --network host ghcr.io/swedishborgie/lumen:latest-labwc
 ```
 
 Open `http://localhost:8080` in a browser and click **Connect**.
@@ -65,7 +60,7 @@ Open `http://localhost:8080` in a browser and click **Connect**.
 Works on any Linux machine without a GPU:
 
 ```bash
-podman run --rm -it --network host lumen:latest
+podman run --rm -it --network host ghcr.io/swedishborgie/lumen:latest-labwc
 ```
 
 ### AMD or Intel GPU passthrough
@@ -77,7 +72,7 @@ podman run --rm -it \
     --device /dev/dri \
     --security-opt label=disable \
     --network host \
-    lumen:latest
+    ghcr.io/swedishborgie/lumen:latest-labwc
 ```
 
 ### NVIDIA GPU passthrough (CDI)
@@ -89,7 +84,7 @@ podman run --rm -it \
     --device nvidia.com/gpu=all \
     --security-opt label=disable \
     --network host \
-    lumen:latest
+    ghcr.io/swedishborgie/lumen:latest-labwc
 ```
 
 ### Gamepad / joystick passthrough
@@ -101,7 +96,7 @@ podman run --rm -it \
     --device /dev/uinput \
     --group-add input \
     --network host \
-    lumen:latest
+    ghcr.io/swedishborgie/lumen:latest-labwc
 ```
 
 {: .note }
@@ -120,7 +115,7 @@ podman run --rm -it \
     -p 8080:8080 \
     -p 3478:3478/udp \
     -p 50000-50010:50000-50010/udp \
-    lumen:latest
+    ghcr.io/swedishborgie/lumen:latest-labwc
 ```
 
 ---
@@ -138,7 +133,7 @@ The embedded TURN server handles NAT traversal automatically. The browser receiv
 To **disable** the TURN server:
 
 ```bash
-podman run ... -e LUMEN_TURN_PORT=0 lumen:latest
+podman run ... -e LUMEN_TURN_PORT=0 ghcr.io/swedishborgie/lumen:latest-labwc
 ```
 
 ---
@@ -153,7 +148,7 @@ podman run --rm -it \
     --security-opt label=disable \
     --network host \
     -e LUMEN_TURN_EXTERNAL_IP=192.168.1.100 \
-    lumen:latest
+    ghcr.io/swedishborgie/lumen:latest-labwc
 ```
 
 ---

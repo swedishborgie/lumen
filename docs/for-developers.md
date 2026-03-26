@@ -109,7 +109,7 @@ rustup default stable
 ## Clone and Build
 
 ```bash
-git clone https://github.com/your-org/lumen.git
+git clone https://github.com/swedishborgie/lumen.git
 cd lumen
 cargo build --release
 ```

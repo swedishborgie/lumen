@@ -38,10 +38,10 @@ These crates are available to all crates in the workspace.
 
 ## lumen-audio
 
-| Crate                                                                         | Version | Purpose                                                                                                                                                              | Documentation                                                              |
-| ----------------------------------------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| [`pipewire`](https://crates.io/crates/pipewire)                               | 0.9     | Native PipeWire Rust bindings; used to create a virtual `Audio/Sink` stream, receive F32LE PCM frames via the process callback, and manage the default-sink metadata | [docs.rs/pipewire](https://docs.rs/pipewire)                               |
-| [`opus`](https://crates.io/crates/opus)                                       | 0.3     | Rust bindings to `libopus`; provides the Opus audio encoder and decoder                                                                                              | [docs.rs/opus](https://docs.rs/opus)                                       |
+| Crate                                           | Version | Purpose                                                                                                                                                              | Documentation                                |
+| ----------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| [`pipewire`](https://crates.io/crates/pipewire) | 0.9     | Native PipeWire Rust bindings; used to create a virtual `Audio/Sink` stream, receive F32LE PCM frames via the process callback, and manage the default-sink metadata | [docs.rs/pipewire](https://docs.rs/pipewire) |
+| [`opus`](https://crates.io/crates/opus)         | 0.3     | Rust bindings to `libopus`; provides the Opus audio encoder and decoder                                                                                              | [docs.rs/opus](https://docs.rs/opus)         |
 
 ## lumen-encode
 
@@ -56,12 +56,12 @@ These crates are available to all crates in the workspace.
 
 ## lumen-webrtc
 
-| Crate                                     | Version | Purpose                                                                                                                       | Documentation                                                                        |
-| ----------------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| [`str0m`](https://crates.io/crates/str0m) | 0.16    | Pure-Rust WebRTC stack; handles SDP parsing/generation, ICE agent, DTLS handshake, SRTP key derivation, and RTP packetization | [docs.rs/str0m](https://docs.rs/str0m) / [GitHub](https://github.com/algesten/str0m) |
-| [`turn`](https://crates.io/crates/turn)   | 0.17    | TURN client support; used to include relay candidates from the embedded TURN server in ICE negotiation                        | [docs.rs/turn](https://docs.rs/turn)                                                  |
-| [`webrtc-util`](https://crates.io/crates/webrtc-util) | 0.17  | WebRTC utility types shared with the TURN client integration                                                          | [docs.rs/webrtc-util](https://docs.rs/webrtc-util)                                    |
-| [`uuid`](https://crates.io/crates/uuid)   | 1.x     | UUID generation (v4); used to create unique `SessionId`s for each WebRTC peer                                                 | [docs.rs/uuid](https://docs.rs/uuid)                                                  |
+| Crate                                                 | Version | Purpose                                                                                                                       | Documentation                                                                        |
+| ----------------------------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| [`str0m`](https://crates.io/crates/str0m)             | 0.16    | Pure-Rust WebRTC stack; handles SDP parsing/generation, ICE agent, DTLS handshake, SRTP key derivation, and RTP packetization | [docs.rs/str0m](https://docs.rs/str0m) / [GitHub](https://github.com/algesten/str0m) |
+| [`turn`](https://crates.io/crates/turn)               | 0.17    | TURN client support; used to include relay candidates from the embedded TURN server in ICE negotiation                        | [docs.rs/turn](https://docs.rs/turn)                                                 |
+| [`webrtc-util`](https://crates.io/crates/webrtc-util) | 0.17    | WebRTC utility types shared with the TURN client integration                                                                  | [docs.rs/webrtc-util](https://docs.rs/webrtc-util)                                   |
+| [`uuid`](https://crates.io/crates/uuid)               | 1.x     | UUID generation (v4); used to create unique `SessionId`s for each WebRTC peer                                                 | [docs.rs/uuid](https://docs.rs/uuid)                                                 |
 
 ## lumen-web
 
@@ -93,13 +93,13 @@ These crates are available to all crates in the workspace.
 
 ## Main Binary (`lumen`)
 
-| Crate                                   | Version | Purpose                                                                                                              | Documentation                        |
-| --------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| [`clap`](https://crates.io/crates/clap)             | 4.x  | CLI argument parsing; provides `--flag` arguments and `LUMEN_*` environment variable bindings with the `env` feature | [docs.rs/clap](https://docs.rs/clap)                 |
-| [`hostname`](https://crates.io/crates/hostname)     | 0.4  | Retrieves the OS hostname; used as the default value for `--hostname`                                                 | [docs.rs/hostname](https://docs.rs/hostname)          |
-| [`rand`](https://crates.io/crates/rand)             | 0.9  | Random number generation; used to auto-generate TURN credentials at startup when none are provided                    | [docs.rs/rand](https://docs.rs/rand)                  |
-| [`rustls`](https://crates.io/crates/rustls)         | 0.23 | Pure-Rust TLS implementation; provides the TLS certificate/key loading for the HTTPS server via `axum-server`        | [docs.rs/rustls](https://docs.rs/rustls)              |
-| [`tracing-journald`](https://crates.io/crates/tracing-journald) | 0.3 | Tracing subscriber layer that emits log events to the systemd journal; activated when `--log-output journald` is set | [docs.rs/tracing-journald](https://docs.rs/tracing-journald) |
+| Crate                                                           | Version | Purpose                                                                                                              | Documentation                                                |
+| --------------------------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| [`clap`](https://crates.io/crates/clap)                         | 4.x     | CLI argument parsing; provides `--flag` arguments and `LUMEN_*` environment variable bindings with the `env` feature | [docs.rs/clap](https://docs.rs/clap)                         |
+| [`hostname`](https://crates.io/crates/hostname)                 | 0.4     | Retrieves the OS hostname; used as the default value for `--hostname`                                                | [docs.rs/hostname](https://docs.rs/hostname)                 |
+| [`rand`](https://crates.io/crates/rand)                         | 0.9     | Random number generation; used to auto-generate TURN credentials at startup when none are provided                   | [docs.rs/rand](https://docs.rs/rand)                         |
+| [`rustls`](https://crates.io/crates/rustls)                     | 0.23    | Pure-Rust TLS implementation; provides the TLS certificate/key loading for the HTTPS server via `axum-server`        | [docs.rs/rustls](https://docs.rs/rustls)                     |
+| [`tracing-journald`](https://crates.io/crates/tracing-journald) | 0.3     | Tracing subscriber layer that emits log events to the systemd journal; activated when `--log-output journald` is set | [docs.rs/tracing-journald](https://docs.rs/tracing-journald) |
 
 ## Key Technology Notes
 

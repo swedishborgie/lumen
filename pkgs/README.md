@@ -4,9 +4,36 @@ This directory contains everything needed to build and install Lumen as a native
 
 ---
 
+## Installation
+
+Pre-built packages are available on the [Lumen releases page](https://github.com/swedishborgie/lumen/releases/latest). Download the appropriate package for your distribution and install it:
+
+### Ubuntu / Debian (.deb)
+
+```bash
+sudo apt install ./lumen_*_amd64.deb
+```
+
+`apt` handles all runtime dependencies automatically. After installation, the post-install script will:
+
+1. Create `/etc/lumen/` (mode `750`)
+2. Copy `example.env` to `/etc/lumen/example.env`
+3. Install the udev rule for controller support and reload udev
+4. Print a getting-started message
+
+### Fedora / RHEL / CentOS (.rpm)
+
+```bash
+sudo dnf install ./lumen-*.rpm
+```
+
+The same setup steps run as a post-install scriptlet.
+
+---
+
 ## Building the packages
 
-Packages are built inside a container so you don't need any build dependencies on your host. The only requirement is Podman (or Docker).
+If you need to build packages from source (e.g. for a different architecture or to include local changes), packages are built inside a container — no build dependencies on the host are required beyond Podman (or Docker).
 
 ```bash
 # From the repository root
@@ -37,34 +64,9 @@ You will find the packages in `./dist/`:
 
 ```
 dist/
-├── lumen_0.1.0_amd64.deb
-└── lumen-0.1.0-1.x86_64.rpm
+├── lumen_<version>_amd64.deb
+└── lumen-<version>-1.x86_64.rpm
 ```
-
----
-
-## Installation
-
-### Ubuntu / Debian (.deb)
-
-```bash
-sudo apt install ./dist/lumen_*.deb
-```
-
-`apt` handles all runtime dependencies automatically. After installation, the post-install script will:
-
-1. Create `/etc/lumen/` (mode `750`)
-2. Copy `example.env` to `/etc/lumen/example.env`
-3. Install the udev rule for controller support and reload udev
-4. Print a getting-started message
-
-### Fedora / RHEL / CentOS (.rpm)
-
-```bash
-sudo dnf install ./dist/lumen-*.rpm
-```
-
-The same setup steps run as a post-install scriptlet.
 
 ---
 

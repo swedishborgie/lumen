@@ -6,7 +6,9 @@ description: "Lumen — access your Linux desktop from any web browser, anywhere
 permalink: /
 ---
 
-# Lumen
+<p align="center">
+  <img src="assets/images/lumen-text.png" alt="Lumen" width="320">
+</p>
 
 **Your Linux desktop, in any browser.**
 
@@ -46,6 +48,10 @@ Access to the stream can be controlled in several ways:
 | **OAuth2 / OIDC**    | Integrate with your existing identity provider (Google, Okta, etc.) |
 
 ---
+
+<p align="center">
+  <img src="assets/images/screenshot.png" alt="Lumen desktop streaming in a browser" style="max-width: 100%; border-radius: 6px;">
+</p>
 
 ## Get Started
 

@@ -1,35 +1,25 @@
 # Lumen — Docker / Podman Container
 
-A multi-stage container image that builds Lumen from source and runs it inside a minimal Ubuntu 24.04 desktop (XWayland + Firefox). The desktop environment is selected at build time. The Lumen WebRTC stream is accessible at **http://localhost:8080** from the host.
+A container image that bundles a complete desktop environment — **labwc** or **KDE Plasma**, **XWayland**, and **Firefox** — on top of Ubuntu. The Lumen WebRTC stream is accessible at **http://localhost:8080** from the host.
 
 ---
 
-## Build
+## Pull the Image
+
+Pre-built images are available on the GitHub Container Registry:
 
 ```bash
-# Default — labwc (lightweight Wayland compositor)
-podman build -f docker/Dockerfile -t lumen:latest .
+# labwc (lightweight Wayland compositor) — recommended
+podman pull ghcr.io/swedishborgie/lumen:latest-labwc
 
-# KDE Plasma (kwin_wayland + plasmashell)
-podman build --build-arg DESKTOP=kde -f docker/Dockerfile -t lumen:kde .
+# KDE Plasma 6 (kwin_wayland + plasmashell)
+podman pull ghcr.io/swedishborgie/lumen:latest-kde
 ```
 
-The `DESKTOP` build argument selects the desktop environment:
-
-| Value               | Desktop                                   | Terminal |
-| ------------------- | ----------------------------------------- | -------- |
-| `labwc` _(default)_ | labwc — lightweight wlroots compositor    | foot     |
-| `kde`               | KDE Plasma 6 (kwin_wayland + plasmashell) | Konsole  |
-
-The build has three stages:
-
-1. **planner** — lightweight stage that runs `cargo chef prepare` to compute a dependency recipe from the workspace manifests
-2. **builder** — installs the full Rust toolchain and all native C/C++ dependencies; uses the recipe to compile all third-party crates into a dedicated cached layer, then compiles only the application code on top
-3. **runtime** — minimal Ubuntu image with the selected desktop, XWayland, Firefox, PipeWire, and the compiled `lumen` binary
-
-> **Tip:** The first build will take a while (Rust + Smithay + FFmpeg bindings compile time). Subsequent builds that only change application source skip the dependency compilation step entirely — Podman reuses the cached layer. The large shared runtime layer (GPU drivers, codecs, Wayland libs) is also shared between labwc and KDE builds; only the small DE-specific package step differs.
-
-> **KDE and systemd:** KDE Plasma 6's `startplasma-wayland` automatically detects whether systemd is available and falls back to direct launch mode when it is not (the normal case inside a container). No special configuration is required.
+| Image tag                      | Desktop                                   | Terminal |
+| ------------------------------ | ----------------------------------------- | -------- |
+| `latest-labwc` _(recommended)_ | labwc — lightweight wlroots compositor    | foot     |
+| `latest-kde`                   | KDE Plasma 6 (kwin_wayland + plasmashell) | Konsole  |
 
 ---
 
@@ -38,13 +28,13 @@ The build has three stages:
 `--network host` is the recommended networking mode — it bypasses NAT and avoids WebRTC UDP flow issues that can occur with port mapping:
 
 ```bash
-podman run --rm -it --device /dev/dri --network host lumen:latest
+podman run --rm -it --device /dev/dri --network host ghcr.io/swedishborgie/lumen:latest-labwc
 ```
 
 ### No GPU (CPU / Pixman renderer)
 
 ```bash
-podman run --rm -it --network host lumen:latest
+podman run --rm -it --network host ghcr.io/swedishborgie/lumen:latest-labwc
 ```
 
 ### AMD or Intel GPU passthrough
@@ -56,7 +46,7 @@ podman run --rm -it \
     --device /dev/dri \
     --security-opt label=disable \
     --network host \
-    lumen:latest
+    ghcr.io/swedishborgie/lumen:latest-labwc
 ```
 
 ### Gamepad / joystick passthrough
@@ -69,7 +59,7 @@ podman run --rm -it \
     --device /dev/uinput \
     --group-add input \
     --network host \
-    lumen:latest
+    ghcr.io/swedishborgie/lumen:latest-labwc
 ```
 
 The `uinput` kernel module must be loaded on the **host** before starting the container
@@ -91,7 +81,7 @@ podman run --rm -it \
     --device nvidia.com/gpu=all \
     --security-opt label=disable \
     --network host \
-    lumen:latest
+    ghcr.io/swedishborgie/lumen:latest-labwc
 ```
 
 ---
@@ -115,7 +105,7 @@ The browser receives TURN credentials automatically via `/api/config` — no man
 To **disable** the TURN server (e.g. if lumen is accessed directly on the host without containers):
 
 ```bash
-podman run ... -e LUMEN_TURN_PORT=0 lumen:latest
+podman run ... -e LUMEN_TURN_PORT=0 ghcr.io/swedishborgie/lumen:latest-labwc
 ```
 
 ---
@@ -202,7 +192,7 @@ podman run --rm -it \
     --security-opt label=disable \
     --network host \
     -e LUMEN_TURN_EXTERNAL_IP=192.168.1.100 \
-    lumen:latest
+    ghcr.io/swedishborgie/lumen:latest-labwc
 ```
 
 ---
@@ -215,3 +205,27 @@ On hosts with SELinux or AppArmor enforcement, GPU device passthrough may requir
 --security-opt label=disable   # SELinux
 --security-opt apparmor=unconfined  # AppArmor
 ```
+
+---
+
+## Building from Source
+
+If you need to build the image locally (e.g. to test local changes), use the Dockerfile in the repository root:
+
+```bash
+# labwc (lightweight Wayland compositor)
+podman build -f docker/Dockerfile -t lumen:latest .
+
+# KDE Plasma 6 (kwin_wayland + plasmashell)
+podman build --build-arg DESKTOP=kde -f docker/Dockerfile -t lumen:kde .
+```
+
+The build has three stages:
+
+1. **planner** — runs `cargo chef prepare` to compute a dependency recipe
+2. **builder** — compiles all Rust and native C/C++ dependencies, then the application
+3. **runtime** — minimal Ubuntu image with the selected desktop, XWayland, Firefox, PipeWire, and the compiled `lumen` binary
+
+> **Tip:** The first build takes a while (Rust + Smithay + FFmpeg bindings). Subsequent builds that only change application source skip the dependency compilation step entirely — Podman reuses the cached layer.
+
+> **KDE and systemd:** KDE Plasma 6's `startplasma-wayland` automatically detects whether systemd is available and falls back to direct launch mode when it is not (the normal case inside a container).

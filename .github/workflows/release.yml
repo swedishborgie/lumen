@@ -5,6 +5,10 @@ on:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
 
+# Opt into Node.js 24 ahead of the June 2026 forced migration.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 # Least-privilege defaults; individual jobs add what they need.
 permissions:
   contents: write  # create GitHub Releases and upload release assets

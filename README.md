@@ -59,23 +59,14 @@ Lumen is organized as a Rust workspace with several specialized crates:
 
 ### From a package (.deb / .rpm)
 
-The recommended way to install Lumen on a system is via a native package. Packages are built using Podman — no build dependencies required on the host.
-
-```bash
-# Build packages
-podman build -f docker/Dockerfile.packages -t lumen-packages .
-mkdir -p dist
-podman run --rm -v ./dist:/output lumen-packages
-```
-
-Then install the package for your distribution:
+Download the latest package for your distribution from the [Lumen releases page](https://github.com/swedishborgie/lumen/releases/latest), then install it:
 
 ```bash
 # Ubuntu / Debian
-sudo apt install ./dist/lumen_*.deb
+sudo apt install ./lumen_*_amd64.deb
 
 # Fedora / RHEL
-sudo dnf install ./dist/lumen-*.rpm
+sudo dnf install ./lumen-*.rpm
 ```
 
 After installation, create a config file and start the service:
@@ -88,9 +79,19 @@ sudo systemctl start lumen@<username>
 
 See [`pkgs/README.md`](pkgs/README.md) for the full build, configuration, and service management guide.
 
-### From a container (Podman)
+### From a container (Podman / Docker)
 
-A Podman image is also available that bundles a full desktop environment (labwc or KDE + Firefox). See [`docker/README.md`](docker/README.md).
+Pre-built images are available on the GitHub Container Registry:
+
+```bash
+# labwc (lightweight Wayland compositor) — recommended
+podman run --rm -it --device /dev/dri --network host ghcr.io/swedishborgie/lumen:latest-labwc
+
+# KDE Plasma 6
+podman run --rm -it --device /dev/dri --network host ghcr.io/swedishborgie/lumen:latest-kde
+```
+
+See [`docker/README.md`](docker/README.md) for full GPU passthrough, gamepad, and networking options.
 
 ---
 

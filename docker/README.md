@@ -24,7 +24,7 @@ The `DESKTOP` build argument selects the desktop environment:
 The build has three stages:
 1. **planner** — lightweight stage that runs `cargo chef prepare` to compute a dependency recipe from the workspace manifests
 2. **builder** — installs the full Rust toolchain and all native C/C++ dependencies; uses the recipe to compile all third-party crates into a dedicated cached layer, then compiles only the application code on top
-3. **runtime** — minimal Ubuntu image with the selected desktop, XWayland, Firefox, PulseAudio, and the compiled `lumen` binary
+3. **runtime** — minimal Ubuntu image with the selected desktop, XWayland, Firefox, PipeWire, and the compiled `lumen` binary
 
 > **Tip:** The first build will take a while (Rust + Smithay + FFmpeg bindings compile time). Subsequent builds that only change application source skip the dependency compilation step entirely — Podman reuses the cached layer. The large shared runtime layer (GPU drivers, codecs, Wayland libs) is also shared between labwc and KDE builds; only the small DE-specific package step differs.
 
@@ -131,7 +131,7 @@ podman run ... -e LUMEN_TURN_PORT=0 lumen:latest
 | `firefox` | Browser — auto-started by labwc on launch |
 | `foot` | Terminal emulator — available in the labwc right-click menu |
 | `xclock` / `xeyes` | X11 test utilities (`x11-apps` package) |
-| `pulseaudio` | Audio server for audio capture |
+| `pipewire` | Audio server for audio capture |
 
 ### KDE image (`DESKTOP=kde`)
 
@@ -144,7 +144,7 @@ podman run ... -e LUMEN_TURN_PORT=0 lumen:latest
 | `firefox` | Browser — auto-started on launch |
 | `konsole` | KDE terminal emulator |
 | `xclock` / `xeyes` | X11 test utilities (`x11-apps` package) |
-| `pulseaudio` | Audio server for audio capture |
+| `pipewire` | Audio server for audio capture |
 
 > **Gamepad support** requires passing `/dev/uinput` to the container (see [Gamepad passthrough](#gamepad--joystick-passthrough) above).
 

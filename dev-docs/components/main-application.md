@@ -59,7 +59,7 @@ All options accept both a `--flag` and a `LUMEN_*` environment variable.
 graph TD
     main["main()"]
     comp["std::thread::spawn\nCompositor\n(calloop, blocking)"]
-    audio["spawn_blocking\nAudio Capture\n(PulseAudio loop)"]
+    audio["spawn_blocking\nAudio Capture\n(PipeWire loop)"]
     encoder["spawn_blocking\nEncoder Loop\n(H.264 encode)"]
     launch["spawn_blocking\n--launch child\n(optional)"]
     gamepad["spawn_blocking\nGamepad Manager\n(uinput loop)"]
@@ -136,7 +136,7 @@ Runs the Smithay calloop event loop. Emits frames, cursor events, and clipboard 
 tokio::task::spawn_blocking(|| audio_capture.run())
 ```
 
-Runs the PulseAudio capture loop. Sends `OpusPacket`s on an mpsc channel to the audio fan-out task.
+Runs the PipeWire capture loop. Sends `OpusPacket`s on an mpsc channel to the audio fan-out task.
 
 ### Encoder (blocking task)
 

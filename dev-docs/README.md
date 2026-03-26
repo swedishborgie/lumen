@@ -18,7 +18,7 @@ Detailed design documents for each crate and the main application:
 |----------|----------------|
 | [Main Application](./components/main-application.md) | `src/main.rs` — orchestration, task spawning, channel wiring |
 | [lumen-compositor](./components/lumen-compositor.md) | `crates/lumen-compositor` — Wayland compositor, rendering, frame capture, input injection |
-| [lumen-audio](./components/lumen-audio.md) | `crates/lumen-audio` — PulseAudio capture and Opus encoding |
+| [lumen-audio](./components/lumen-audio.md) | `crates/lumen-audio` — PipeWire capture and Opus encoding |
 | [lumen-encode](./components/lumen-encode.md) | `crates/lumen-encode` — H.264 video encoding (hardware VA-API and software x264) |
 | [lumen-webrtc](./components/lumen-webrtc.md) | `crates/lumen-webrtc` — WebRTC session management, SDP/ICE, RTP packetization |
 | [lumen-web](./components/lumen-web.md) | `crates/lumen-web` — HTTP server, WebSocket signaling, browser client |

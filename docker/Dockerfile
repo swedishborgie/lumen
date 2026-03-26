@@ -73,8 +73,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libinput-dev \
     libevdev-dev \
     libudev-dev \
-    # PulseAudio (lumen-audio)
-    libpulse-dev \
     # PipeWire (lumen-audio)
     libpipewire-0.3-dev \
     libspa-0.2-dev \

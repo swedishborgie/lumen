@@ -38,8 +38,8 @@ These crates are available to all crates in the workspace.
 
 | Crate | Version | Purpose | Documentation |
 |-------|---------|---------|---------------|
-| [`libpulse-binding`](https://crates.io/crates/libpulse-binding) | 2.28 | Safe Rust bindings to the PulseAudio client library (`libpulse`); provides the main PulseAudio API | [docs.rs/libpulse-binding](https://docs.rs/libpulse-binding) |
-| [`libpulse-simple-binding`](https://crates.io/crates/libpulse-simple-binding) | 2.28 | Bindings to the PulseAudio Simple API (`libpulse-simple`); used for straightforward synchronous PCM capture | [docs.rs/libpulse-simple-binding](https://docs.rs/libpulse-simple-binding) |
+| [`libpulse-binding`](https://crates.io/crates/libpulse-binding) | 2.28 | Safe Rust bindings to the PulseAudio client library (`libpulse`); used via PipeWire's PulseAudio compatibility layer to capture audio | [docs.rs/libpulse-binding](https://docs.rs/libpulse-binding) |
+| [`libpulse-simple-binding`](https://crates.io/crates/libpulse-simple-binding) | 2.28 | Bindings to the PulseAudio Simple API (`libpulse-simple`); used for straightforward synchronous PCM capture via PipeWire's compatibility layer | [docs.rs/libpulse-simple-binding](https://docs.rs/libpulse-simple-binding) |
 | [`opus`](https://crates.io/crates/opus) | 0.3 | Rust bindings to `libopus`; provides the Opus audio encoder and decoder | [docs.rs/opus](https://docs.rs/opus) |
 
 ## lumen-encode

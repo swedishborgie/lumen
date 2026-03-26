@@ -77,7 +77,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Input
     libinput-dev libevdev-dev libudev-dev \
     # Audio
-    libpulse-dev libopus-dev \
+    libpipewire-0.3-dev libopus-dev \
     # Video
     libx264-dev libva-dev \
     # FFmpeg
@@ -144,7 +144,7 @@ RUN dnf install -y \
     # Input
     libinput-devel libevdev-devel systemd-devel \
     # Audio
-    pulseaudio-libs-devel opus-devel \
+    pipewire-devel opus-devel \
     # Video
     x264-devel libva-devel \
     # FFmpeg

@@ -56,7 +56,7 @@ graph LR
     subgraph lumen["Lumen Server"]
         Compositor["lumen-compositor\nWayland Compositor"]
         Encoder["lumen-encode\nH.264 Encoder"]
-        Audio["lumen-audio\nAudio Capture"]
+        Audio["lumen-audio\nVirtual PW Sink\n+ Opus Encoder"]
         WebRTC["lumen-webrtc\nWebRTC Sessions"]
         Web["lumen-web\nHTTP · Signaling"]
     end
@@ -64,6 +64,7 @@ graph LR
     Browser["🌐 Browser"]
 
     Apps -- "Wayland" --> Compositor
+    Apps -- "PipeWire\n(audio routed to\nlumen_capture sink)" --> Audio
     Compositor -- "Raw frames" --> Encoder
     Encoder -- "H.264" --> WebRTC
     Audio -- "Opus" --> WebRTC
@@ -103,7 +104,7 @@ Once the SRTP connection is established, the WebSocket is no longer in the media
 |-----------|------|
 | **lumen-compositor** | Wayland compositor built on [Smithay](https://github.com/Smithay/smithay). Runs Wayland apps, captures frames, and injects input events. |
 | **lumen-encode** | H.264 encoder. Uses VA-API (GPU, zero-copy) when available; falls back to x264 (software) automatically. |
-| **lumen-audio** | Captures system audio from a PulseAudio monitor source and encodes it to Opus. |
+| **lumen-audio** | Creates a virtual PipeWire audio sink (`lumen_capture`); captures audio routed to it and encodes it to Opus. |
 | **lumen-webrtc** | Manages WebRTC sessions via [str0m](https://github.com/algesten/str0m). Handles ICE, DTLS, SRTP, and RTP packetization. |
 | **lumen-web** | Axum HTTP server that serves the browser client and handles WebSocket signaling. |
 | **lumen-turn** | Embedded TURN/STUN relay. Ensures streams work across NAT without an external relay service. |

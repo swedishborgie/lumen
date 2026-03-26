@@ -33,7 +33,7 @@ graph LR
     subgraph Server
         Compositor["lumen-compositor\n(Wayland compositor)"]
         Encoder["lumen-encode\n(H.264 encoder)"]
-        Audio["lumen-audio\n(PulseAudio + Opus)"]
+        Audio["lumen-audio\n(PipeWire + Opus)"]
         WebRTC["lumen-webrtc\n(WebRTC sessions)"]
         Web["lumen-web\n(HTTP + WS signaling)"]
     end
@@ -60,12 +60,13 @@ Different parts of the system require different concurrency models. The composit
 
 ```mermaid
 graph TD
-    subgraph OS Thread
+    subgraph OS Threads
         CT["Compositor\ncalloop event loop\n(blocking)"]
+        PW["PipeWire virtual sink\nlumen-pipewire thread\n(blocking)"]
     end
 
     subgraph Tokio Blocking Tasks
-        AT["Audio Capture\nPulseAudio loop\n(spawn_blocking)"]
+        AT["Audio Capture\nOpus encode loop\n(spawn_blocking)"]
         ET["Encoder\nH.264 encode loop\n(spawn_blocking)"]
     end
 
@@ -80,6 +81,7 @@ graph TD
         DS["Per-Session Drive Tasks"]
     end
 
+    PW -->|"mpsc (PcmFrame)"| AT
     CT <-->|"calloop channel"| IF
     AT -->|"mpsc"| AF
     ET -->|"broadcast"| VF

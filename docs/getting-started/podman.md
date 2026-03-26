@@ -199,7 +199,7 @@ On hosts with SELinux or AppArmor enforcement, GPU device passthrough may requir
 | `firefox` | Browser — auto-started by labwc on launch |
 | `foot` | Terminal emulator (available in the labwc right-click menu) |
 | `xclock` / `xeyes` | X11 test utilities |
-| `pulseaudio` | Audio server for audio capture |
+| `pipewire` | Audio server for audio capture |
 
 ### KDE image (`DESKTOP=kde`)
 
@@ -212,4 +212,4 @@ On hosts with SELinux or AppArmor enforcement, GPU device passthrough may requir
 | `firefox` | Browser — auto-started on launch |
 | `konsole` | KDE terminal emulator |
 | `xclock` / `xeyes` | X11 test utilities |
-| `pulseaudio` | Audio server for audio capture |
+| `pipewire` | Audio server for audio capture |

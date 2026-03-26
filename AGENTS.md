@@ -19,7 +19,7 @@ Lumen is a **Wayland compositor that streams the desktop to browsers via WebRTC*
 |-------|------|------|
 | `lumen` | `src/` | Orchestration only — no business logic |
 | `lumen-compositor` | `crates/lumen-compositor/` | Wayland compositor, frame capture, input injection |
-| `lumen-audio` | `crates/lumen-audio/` | PulseAudio capture, Opus encoding |
+| `lumen-audio` | `crates/lumen-audio/` | PipeWire capture, Opus encoding |
 | `lumen-encode` | `crates/lumen-encode/` | H.264 encoding (VA-API + x264 fallback) |
 | `lumen-webrtc` | `crates/lumen-webrtc/` | WebRTC sessions, SDP/ICE, RTP packetization |
 | `lumen-web` | `crates/lumen-web/` | Axum HTTP server, WebSocket signaling |
@@ -137,7 +137,7 @@ cargo test                   # run tests
 RUST_LOG=lumen=debug cargo run --release   # run with debug logging
 ```
 
-Prerequisites: `libx264`, `libva`, `libdrm`, `libopus`, `libwayland-dev`, PulseAudio/PipeWire.
+Prerequisites: `libx264`, `libva`, `libdrm`, `libopus`, `libwayland-dev`, PipeWire.
 
 ---
 

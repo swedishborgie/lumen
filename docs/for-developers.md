@@ -46,7 +46,6 @@ sudo dnf install \
     libinput-devel \
     libevdev-devel \
     systemd-devel \
-    pulseaudio-libs-devel \
     pipewire-devel \
     opus-devel \
     x264-devel \
@@ -82,7 +81,6 @@ sudo apt install \
     libinput-dev \
     libevdev-dev \
     libudev-dev \
-    libpulse-dev \
     libpipewire-0.3-dev \
     libspa-0.2-dev \
     libopus-dev \
@@ -176,7 +174,7 @@ Lumen is a Cargo workspace. All business logic lives in the crates — the main 
 |-------|------|------|
 | `lumen` (binary) | `src/` | Wires crates together; no business logic |
 | `lumen-compositor` | `crates/lumen-compositor/` | Wayland compositor, frame capture, input injection |
-| `lumen-audio` | `crates/lumen-audio/` | PulseAudio capture, Opus encoding |
+| `lumen-audio` | `crates/lumen-audio/` | PipeWire capture, Opus encoding |
 | `lumen-encode` | `crates/lumen-encode/` | H.264 encoding (VA-API + x264 fallback) |
 | `lumen-webrtc` | `crates/lumen-webrtc/` | WebRTC sessions, ICE/SDP, RTP packetization |
 | `lumen-web` | `crates/lumen-web/` | Axum HTTP server, WebSocket signaling |

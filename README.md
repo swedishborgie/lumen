@@ -48,7 +48,7 @@ Lumen is organized as a Rust workspace with several specialized crates:
 - **`lumen-compositor`**: The core Wayland compositor logic using Smithay. Handles window management, rendering, and frame capture.
 - **`lumen-webrtc`**: Manages WebRTC sessions, ICE negotiation (via str0m), and RTP packetization for H.264 and Opus.
 - **`lumen-encode`**: Video encoding abstraction layer. Supports VA-API and software (x264) backends.
-- **`lumen-audio`**: Captures system audio from PulseAudio monitor sources and encodes it using Opus.
+- **`lumen-audio`**: Creates a virtual PipeWire audio sink; applications route audio to it, and the crate captures, encodes with Opus, and delivers packets for WebRTC.
 - **`lumen-web`**: An Axum-based web server that serves the frontend client and handles WebSocket signaling.
 - **`lumen-turn`**: Embedded TURN/STUN relay server so WebRTC peers behind NAT can exchange media without an external relay.
 - **`lumen-gamepad`**: Virtual gamepad devices via `uinput` — browser-connected gamepads appear as standard `/dev/input` devices to applications.
@@ -98,7 +98,7 @@ A Podman image is also available that bundles a full desktop environment (labwc 
 ### Prerequisites
 
 - Rust (latest stable)
-- PulseAudio / PipeWire (with PulseAudio compatibility)
+- PipeWire
 - VA-API compatible drivers (optional, for hardware acceleration)
 - Native library development headers: `libx264`, `libva`, `libopus`, `libpipewire`, `libwayland`, `libxkbcommon`, `libpixman`, `libinput`, `libpam`, `libssl`, and FFmpeg
 
@@ -177,7 +177,7 @@ Lumen includes an embedded TURN server to relay WebRTC traffic across NAT. It is
 ## Architecture
 
 1.  **Compositor**: Renders the desktop/applications. Frames are captured and sent to the Encoder.
-2.  **Audio**: Captures audio samples from PulseAudio and encodes them into Opus packets.
+2.  **Audio**: Captures audio samples from PipeWire and encodes them into Opus packets.
 3.  **Encoder**: Takes raw frames and produces H.264 bitstream (using VA-API if available).
 4.  **Signaling**: The browser connects to the Web Server via WebSocket to exchange SDP offers/answers and ICE candidates.
 5.  **WebRTC**: Once the connection is established, H.264 and Opus packets are sent over SRTP. Input events are sent back from the browser via WebRTC Data Channels.

@@ -34,7 +34,7 @@ Lumen bridges this gap by combining:
 | **WebRTC streaming** | H.264 video + Opus audio over SRTP to any WebRTC-capable browser |
 | **Hardware acceleration** | Zero-copy VA-API encoding (Intel/AMD) via FFmpeg filter graph |
 | **Software fallback** | Automatic fallback to x264 when GPU acceleration is unavailable |
-| **System audio** | PulseAudio monitor source capture, Opus-encoded, synchronized with video |
+| **System audio** | PipeWire virtual sink capture, Opus-encoded, synchronized with video |
 | **Full input support** | Keyboard (evdev scancodes), mouse (buttons + scroll), clipboard (bidirectional) |
 | **Dynamic resize** | Browser can request a new output resolution at runtime |
 | **Multi-client** | Multiple browsers can connect simultaneously; frames are encoded once and fanned out |
@@ -49,7 +49,7 @@ lumen/
 ├── src/                    # Main binary — orchestration
 ├── crates/
 │   ├── lumen-compositor/   # Wayland compositor, frame capture, input injection
-│   ├── lumen-audio/        # PulseAudio capture, Opus encoding
+│   ├── lumen-audio/        # PipeWire capture, Opus encoding
 │   ├── lumen-encode/       # H.264 encoding (VA-API + x264)
 │   ├── lumen-webrtc/       # WebRTC session management
 │   ├── lumen-web/          # HTTP server, WebSocket signaling
@@ -66,7 +66,7 @@ lumen/
 | `libx264` dev headers | Software H.264 encoding fallback |
 | `libva`, `libdrm` dev headers | VA-API hardware encoding |
 | `libopus` dev headers | Opus audio codec |
-| PulseAudio or PipeWire (with PulseAudio compatibility layer) | Audio capture |
+| PipeWire | Audio capture |
 | Wayland development libraries (`libwayland-dev`) | Compositor foundation |
 
 ### Build

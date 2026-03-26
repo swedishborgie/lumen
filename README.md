@@ -1,5 +1,5 @@
 <p align="center">
-    <img src="web/images/lumen-text.png" alt="Lumen">
+    <img src="web/images/lumen-text.svg" alt="Lumen">
 <p>
 
 **Lumen** is a Wayland compositor that streams your Linux desktop to a web browser over WebRTC — no client software required.

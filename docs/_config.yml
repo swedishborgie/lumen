@@ -5,7 +5,7 @@ url: "https://github.com/pages/lumen/lumen"
 remote_theme: just-the-docs/just-the-docs
 
 # Logo in the navigation pane
-logo: "/assets/images/lumen-text.svg"
+logo: "/assets/images/lumen.svg"
 
 # Just the Docs configuration
 color_scheme: dark
@@ -22,7 +22,7 @@ nav_sort: order
 # Aux links (top-right)
 aux_links:
   "GitHub":
-    - "https://github.com/your-org/lumen"
+  - "https://github.com/swedishborgie/lumen"
 aux_links_new_tab: true
 
 # Callouts
@@ -48,4 +48,4 @@ mermaid:
   version: "10"
 
 plugins:
-  - jekyll-seo-tag
+- jekyll-seo-tag

@@ -7,7 +7,7 @@ permalink: /
 ---
 
 <p align="center">
-  <img src="assets/images/lumen-text.png" alt="Lumen" width="320">
+  <img src="assets/images/lumen-text.svg" alt="Lumen" width="320">
 </p>
 
 **Your Linux desktop, in any browser.**

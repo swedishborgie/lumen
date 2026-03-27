@@ -306,6 +306,13 @@ fn spawn_drive_task(
                 _ = video_notify.notified() => {}
             }
         }
+        // Release any keys the peer was holding when it disconnected, so they
+        // don't stay stuck at the compositor level after an abrupt disconnect.
+        if let Some(session) = sessions.get_session(&id).await {
+            for ev in session.lock().await.take_pressed_keys() {
+                let _ = input_tx.try_send(ev);
+            }
+        }
         // Always clean up — whether the peer disconnected cleanly, the drive
         // task errored, or the session was already removed externally.
         sessions.remove_session(&id).await;

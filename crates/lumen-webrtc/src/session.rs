@@ -31,6 +31,9 @@ pub struct WebRtcSession {
     /// Audio track mid; populated on first `Event::MediaAdded` for audio.
     audio_mid: Option<Mid>,
     input_events: Vec<InputEvent>,
+    /// Scancodes of keys currently held down by this peer.
+    /// Used to synthesize key-release events when the session ends abruptly.
+    pressed_keys: HashSet<u32>,
     /// Outbound data channel messages queued for sending.
     pending_dc_out: VecDeque<Vec<u8>>,
     /// The data channel ID, populated when the browser opens the channel.
@@ -129,6 +132,7 @@ impl WebRtcSession {
                 video_mid: None,
                 audio_mid: None,
                 input_events: Vec::new(),
+                pressed_keys: HashSet::new(),
                 pending_dc_out: VecDeque::new(),
                 dc_channel_id: None,
                 connected: false,
@@ -306,6 +310,16 @@ impl WebRtcSession {
         std::mem::take(&mut self.input_events)
     }
 
+    /// Drain the set of currently-pressed keys and return synthetic key-release
+    /// events for each. Call this when a session ends to avoid stuck keys at the
+    /// compositor level if the peer disconnected without sending keyup events.
+    pub fn take_pressed_keys(&mut self) -> Vec<InputEvent> {
+        std::mem::take(&mut self.pressed_keys)
+            .into_iter()
+            .map(|scancode| InputEvent::KeyboardKey { scancode, state: 0 })
+            .collect()
+    }
+
     /// Queue a message to be sent to the browser via the data channel.
     pub fn push_dc_message(&mut self, data: Vec<u8>) {
         self.pending_dc_out.push_back(data);
@@ -433,6 +447,13 @@ impl WebRtcSession {
                     match serde_json::from_slice::<InputEvent>(&data.data) {
                         Ok(ev) => {
                             tracing::debug!("Data channel input: {:?}", ev);
+                            if let InputEvent::KeyboardKey { scancode, state } = ev {
+                                if state == 1 {
+                                    self.pressed_keys.insert(scancode);
+                                } else {
+                                    self.pressed_keys.remove(&scancode);
+                                }
+                            }
                             self.input_events.push(ev);
                         }
                         Err(e) => {

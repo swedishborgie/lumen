@@ -2,12 +2,14 @@
  * touch.mjs — TouchHandler for Lumen.
  *
  * Implements trackpad-style touch input for mobile browsers:
- *   - Single-finger drag        → relative cursor movement (1:1 delta mapping)
- *   - Quick tap                 → left click (< TAP_MAX_MS, < TAP_MAX_PX movement)
- *   - Long press (500 ms)       → right click on finger lift
- *   - Two-finger drag           → scroll wheel events
- *   - Double-tap drag           → hold left button while dragging (tap, then tap-and-hold
- *                                 within DOUBLE_TAP_MAX_MS to enter drag-lock; lift to release)
+ *   - Single-finger drag             → relative cursor movement (1:1 delta mapping)
+ *   - Quick tap                      → left click (deferred by DOUBLE_TAP_MAX_MS)
+ *   - Long press (500 ms)            → right click on finger lift
+ *   - Two-finger drag                → scroll wheel events
+ *   - Double-tap drag                → hold left button while dragging (tap, then tap-and-hold
+ *                                      within DOUBLE_TAP_MAX_MS to enter drag-lock; lift to release)
+ *   - Two-finger double-tap drag     → hold right button while dragging (two-finger tap, then
+ *                                      two-finger tap-and-hold within DOUBLE_TAP_MAX_MS; lift to release)
  *
  * Touch events call preventDefault() so they do not also fire as Pointer
  * Events, avoiding double-handling by InputHandler.
@@ -48,15 +50,24 @@ export class TouchHandler {
   #isLongPress    = false;  // true when the 500ms timer fired and touch still held
 
   // Double-tap drag state.
-  #lastTapTime    = 0;      // Date.now() when the last quick-tap fired (0 = none recent)
-  #lastTapX       = 0;      // clientX of the last tap
-  #lastTapY       = 0;      // clientY of the last tap
-  #isDragLock     = false;  // true while left button is held for a double-tap drag
+  #lastTapTime            = 0;     // Date.now() when the last quick-tap fired (0 = none recent)
+  #lastTapX               = 0;     // clientX of the last tap
+  #lastTapY               = 0;     // clientY of the last tap
+  #isDragLock             = false; // true while left button is held for a double-tap drag
+  #pendingClickTimer      = null;  // setTimeout handle for the deferred left click
 
-  // Two-finger scroll state.
-  #scrollTouches = new Map(); // identifier → { x, y }
-  #lastScrollMidX = 0;
-  #lastScrollMidY = 0;
+  // Two-finger scroll / right-drag state.
+  #scrollTouches           = new Map(); // identifier → { x, y }
+  #lastScrollMidX          = 0;
+  #lastScrollMidY          = 0;
+  #twoFingerStartTime      = 0;    // Date.now() when the two-finger gesture started
+  #twoFingerStartMidX      = 0;    // midpoint X when the two-finger gesture started
+  #twoFingerStartMidY      = 0;    // midpoint Y when the two-finger gesture started
+  #lastTwoTapTime          = 0;    // Date.now() of the last recognized two-finger tap
+  #lastTwoTapMidX          = 0;    // midpoint X of the last two-finger tap
+  #lastTwoTapMidY          = 0;    // midpoint Y of the last two-finger tap
+  #isRightDragLock         = false; // true while right button is held for a two-finger double-tap drag
+  #pendingRightClickTimer  = null;  // setTimeout handle for the deferred two-finger right click
 
   #handlers = {};
 
@@ -102,6 +113,8 @@ export class TouchHandler {
     this.#container.removeEventListener('touchcancel', onCancel);
     this.#handlers = {};
     this.#cancelLongPress();
+    this.#cancelPendingClick();
+    this.#cancelPendingRightClick();
   }
 
   // ── private helpers ───────────────────────────────────────────────────────────
@@ -110,6 +123,20 @@ export class TouchHandler {
     if (this.#longPressTimer !== null) {
       clearTimeout(this.#longPressTimer);
       this.#longPressTimer = null;
+    }
+  }
+
+  #cancelPendingClick() {
+    if (this.#pendingClickTimer !== null) {
+      clearTimeout(this.#pendingClickTimer);
+      this.#pendingClickTimer = null;
+    }
+  }
+
+  #cancelPendingRightClick() {
+    if (this.#pendingRightClickTimer !== null) {
+      clearTimeout(this.#pendingRightClickTimer);
+      this.#pendingRightClickTimer = null;
     }
   }
 
@@ -136,15 +163,16 @@ export class TouchHandler {
 
     const touches = e.changedTouches;
 
-    // ── two-finger scroll entry ───────────────────────────────────────────────
+    // ── two-finger scroll / right-drag entry ─────────────────────────────────
     if (e.touches.length === 2) {
       // Transition: cancel any in-progress single-touch gesture.
       this.#cancelLongPress();
-      this.#touchId = null;
+      this.#cancelPendingClick();
+      this.#touchId     = null;
       // Clear tap state so a preceding tap doesn't accidentally trigger drag-lock.
       this.#lastTapTime = 0;
 
-      // Record both touch positions for scroll delta computation.
+      // Record both touch positions for scroll / right-drag delta computation.
       this.#scrollTouches.clear();
       for (const t of e.touches) {
         this.#scrollTouches.set(t.identifier, { x: t.clientX, y: t.clientY });
@@ -152,6 +180,30 @@ export class TouchHandler {
       const [a, b] = [...this.#scrollTouches.values()];
       this.#lastScrollMidX = (a.x + b.x) / 2;
       this.#lastScrollMidY = (a.y + b.y) / 2;
+
+      // Record start time and midpoint for two-finger tap detection.
+      this.#twoFingerStartTime = Date.now();
+      this.#twoFingerStartMidX = this.#lastScrollMidX;
+      this.#twoFingerStartMidY = this.#lastScrollMidY;
+
+      // ── Two-finger double-tap drag detection ──────────────────────────────
+      // If this two-finger touch starts within the double-tap window of the last
+      // recognized two-finger tap, enter right-button drag-lock.
+      const timeSinceLastTwoTap = Date.now() - this.#lastTwoTapTime;
+      const distFromLastTwoTap  = Math.hypot(
+        this.#lastScrollMidX - this.#lastTwoTapMidX,
+        this.#lastScrollMidY - this.#lastTwoTapMidY,
+      );
+      if (this.#lastTwoTapTime > 0
+          && timeSinceLastTwoTap < DOUBLE_TAP_MAX_MS
+          && distFromLastTwoTap  < DOUBLE_TAP_MAX_PX) {
+        // Cancel the deferred right click — we're entering drag-lock instead.
+        this.#cancelPendingRightClick();
+        this.#isRightDragLock = true;
+        this.#lastTwoTapTime  = 0; // consume the gesture
+        this.#client.sendInput({ type: 'pointer_button', btn: BTN_RIGHT, state: 1 });
+      }
+
       return;
     }
 
@@ -175,6 +227,8 @@ export class TouchHandler {
       if (this.#lastTapTime > 0
           && timeSinceLastTap < DOUBLE_TAP_MAX_MS
           && distFromLastTap < DOUBLE_TAP_MAX_PX) {
+        // Cancel the deferred click — we're entering drag-lock instead.
+        this.#cancelPendingClick();
         this.#isDragLock  = true;
         this.#lastTapTime = 0;  // consume the gesture
         this.#client.sendInput({ type: 'pointer_button', btn: BTN_LEFT, state: 1 });
@@ -196,7 +250,7 @@ export class TouchHandler {
   #handleTouchMove(e) {
     e.preventDefault();
 
-    // ── two-finger scroll ─────────────────────────────────────────────────────
+    // ── two-finger scroll / right-drag movement ──────────────────────────────
     if (this.#scrollTouches.size === 2 && e.touches.length >= 2) {
       // Update positions for any changed touches.
       for (const t of e.changedTouches) {
@@ -210,8 +264,13 @@ export class TouchHandler {
       const dx   = midX - this.#lastScrollMidX;
       const dy   = midY - this.#lastScrollMidY;
       if (dx !== 0 || dy !== 0) {
-        // Negate: dragging fingers downward scrolls content upward (natural scroll).
-        this.#client.sendInput({ type: 'pointer_axis', x: -dx, y: -dy, source: 'continuous', v120_x: 0, v120_y: 0 });
+        if (this.#isRightDragLock) {
+          // Right drag-lock: move cursor with midpoint instead of scrolling.
+          this.#moveCursor(dx, dy);
+        } else {
+          // Negate: dragging fingers downward scrolls content upward (natural scroll).
+          this.#client.sendInput({ type: 'pointer_axis', x: -dx, y: -dy, source: 'continuous', v120_x: 0, v120_y: 0 });
+        }
       }
       this.#lastScrollMidX = midX;
       this.#lastScrollMidY = midY;
@@ -248,14 +307,42 @@ export class TouchHandler {
   #handleTouchEnd(e) {
     e.preventDefault();
 
-    // ── two-finger scroll end ─────────────────────────────────────────────────
+    // ── two-finger scroll / right-drag end ───────────────────────────────────
     if (this.#scrollTouches.size === 2) {
       for (const t of e.changedTouches) {
         this.#scrollTouches.delete(t.identifier);
       }
-      // Send a scroll stop frame.
+      // Act when the last finger of the pair lifts.
       if (this.#scrollTouches.size < 2) {
-        this.#client.sendInput({ type: 'pointer_axis', x: 0, y: 0, source: 'continuous', v120_x: 0, v120_y: 0 });
+        if (this.#isRightDragLock) {
+          // Right drag-lock ends: release right button.
+          this.#isRightDragLock = false;
+          this.#client.sendInput({ type: 'pointer_button', btn: BTN_RIGHT, state: 0 });
+        } else {
+          // Send a scroll stop frame.
+          this.#client.sendInput({ type: 'pointer_axis', x: 0, y: 0, source: 'continuous', v120_x: 0, v120_y: 0 });
+
+          // Detect a two-finger tap for potential right-button double-tap drag.
+          const twoFingerElapsed = Date.now() - this.#twoFingerStartTime;
+          const twoFingerMovement = Math.hypot(
+            this.#lastScrollMidX - this.#twoFingerStartMidX,
+            this.#lastScrollMidY - this.#twoFingerStartMidY,
+          );
+          if (twoFingerElapsed < TAP_MAX_MS && twoFingerMovement < TAP_MAX_PX) {
+            this.#lastTwoTapTime = Date.now();
+            this.#lastTwoTapMidX = this.#lastScrollMidX;
+            this.#lastTwoTapMidY = this.#lastScrollMidY;
+            // Defer right click to allow a second two-finger tap to cancel it and
+            // enter right-button drag-lock instead.
+            this.#pendingRightClickTimer = setTimeout(() => {
+              this.#pendingRightClickTimer = null;
+              this.#lastTwoTapTime         = 0; // tap window expired
+              this.#click(BTN_RIGHT);
+            }, DOUBLE_TAP_MAX_MS);
+          } else {
+            this.#lastTwoTapTime = 0;
+          }
+        }
         this.#scrollTouches.clear();
       }
       return;
@@ -276,7 +363,14 @@ export class TouchHandler {
     // ── Drag-lock end ─────────────────────────────────────────────────────────
     if (this.#isDragLock) {
       this.#isDragLock = false;
+      const elapsed = Date.now() - this.#startTime;
       this.#client.sendInput({ type: 'pointer_button', btn: BTN_LEFT, state: 0 });
+      // If the second touch was a quick tap with minimal movement, the user intended
+      // a double-click (not a drag). The drag-lock press+release counts as click 1;
+      // send a second click to complete the double-click sequence.
+      if (elapsed < TAP_MAX_MS && this.#totalMovement < TAP_MAX_PX) {
+        this.#click(BTN_LEFT);
+      }
       return;
     }
 
@@ -286,11 +380,16 @@ export class TouchHandler {
       // Long-press: right click on release.
       this.#click(BTN_RIGHT);
     } else if (elapsed < TAP_MAX_MS && this.#totalMovement < TAP_MAX_PX) {
-      // Quick tap: left click. Record position for potential double-tap drag.
-      this.#click(BTN_LEFT);
+      // Quick tap: record position for potential double-tap drag, then defer the
+      // left click by DOUBLE_TAP_MAX_MS so we can cancel it if drag-lock follows.
       this.#lastTapTime = Date.now();
       this.#lastTapX    = tracked.clientX;
       this.#lastTapY    = tracked.clientY;
+      this.#pendingClickTimer = setTimeout(() => {
+        this.#pendingClickTimer = null;
+        this.#lastTapTime       = 0; // tap window expired; can no longer trigger drag-lock
+        this.#click(BTN_LEFT);
+      }, DOUBLE_TAP_MAX_MS);
     }
     // Otherwise: drag ended — cursor already moved, no click needed.
   }
@@ -298,13 +397,20 @@ export class TouchHandler {
   #handleTouchCancel(e) {
     e.preventDefault();
     this.#cancelLongPress();
+    this.#cancelPendingClick();
+    this.#cancelPendingRightClick();
     if (this.#isDragLock) {
       this.#isDragLock = false;
       this.#client.sendInput({ type: 'pointer_button', btn: BTN_LEFT, state: 0 });
     }
-    this.#touchId     = null;
-    this.#isLongPress = false;
-    this.#lastTapTime = 0;
+    if (this.#isRightDragLock) {
+      this.#isRightDragLock = false;
+      this.#client.sendInput({ type: 'pointer_button', btn: BTN_RIGHT, state: 0 });
+    }
+    this.#touchId       = null;
+    this.#isLongPress   = false;
+    this.#lastTapTime   = 0;
+    this.#lastTwoTapTime = 0;
     this.#scrollTouches.clear();
   }
 }

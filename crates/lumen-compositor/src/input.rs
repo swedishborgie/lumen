@@ -90,10 +90,18 @@ pub enum InputEvent {
         index: u8,
         /// Human-readable name from the browser.
         name: String,
-        /// Number of axes reported by the browser's Gamepad API.
-        num_axes: u8,
-        /// Number of buttons reported by the browser's Gamepad API.
-        num_buttons: u8,
+        /// The `Gamepad.mapping` string from the browser (`"standard"` or `""`).
+        mapping: String,
+        /// Per-button capability declarations, indexed by browser button index.
+        ///
+        /// `None` means the controller layout is unknown; the compositor will
+        /// skip creating a virtual device until a mapping is provided (future
+        /// user-defined mapping UI).
+        buttons: Option<Vec<ButtonMapping>>,
+        /// Per-axis capability declarations, indexed by browser axis index.
+        ///
+        /// `None` when `buttons` is `None`.
+        axes: Option<Vec<AxisMapping>>,
     },
     /// A gamepad was disconnected in the browser.
     GamepadDisconnected {
@@ -104,7 +112,8 @@ pub enum InputEvent {
     GamepadButton {
         /// Gamepad slot index (0–3).
         index: u8,
-        /// Web Gamepad button index (0–16 for the standard layout).
+        /// Raw browser button index.  The compositor looks up the evdev code
+        /// from the capability declaration sent with `GamepadConnected`.
         button: u8,
         /// Analog value in the range 0.0–1.0.
         value: f32,
@@ -115,11 +124,35 @@ pub enum InputEvent {
     GamepadAxis {
         /// Gamepad slot index (0–3).
         index: u8,
-        /// Web Gamepad axis index (0–3 for the standard layout).
+        /// Raw browser axis index.  The compositor looks up the evdev code
+        /// from the capability declaration sent with `GamepadConnected`.
         axis: u8,
         /// Normalised value in the range −1.0 to 1.0.
         value: f32,
     },
+}
+
+/// Evdev capability declaration for a single gamepad button.
+///
+/// Sent as part of [`InputEvent::GamepadConnected`] so the compositor can build
+/// a virtual uinput device without any hardcoded layout knowledge.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ButtonMapping {
+    /// Linux `BTN_*` evdev key code.
+    pub btn_code: u16,
+    /// If set, the button also drives this `ABS_*` analog axis (e.g. LT/RT
+    /// triggers in the standard layout drive `ABS_Z`/`ABS_RZ`).
+    pub trigger_abs_code: Option<u16>,
+}
+
+/// Evdev capability declaration for a single gamepad axis.
+///
+/// Sent as part of [`InputEvent::GamepadConnected`] so the compositor can build
+/// a virtual uinput device without any hardcoded layout knowledge.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AxisMapping {
+    /// Linux `ABS_*` evdev absolute-axis code.
+    pub abs_code: u16,
 }
 
 /// Inject an [`InputEvent`] into the Smithay seat, dispatching it to the

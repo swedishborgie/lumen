@@ -1,23 +1,15 @@
 //! Per-gamepad virtual device backed by Linux uinput.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::os::fd::AsRawFd as _;
 
 use evdev::{
     uinput::VirtualDevice,
-    AbsInfo, AttributeSet, EventSummary, FFEffectCode, FFStatusCode,
+    AbsInfo, AbsoluteAxisCode as Abs, AttributeSet, EventSummary, FFEffectCode, FFStatusCode,
     InputEvent as EvdevEvent, KeyCode, UInputCode, UinputAbsSetup,
 };
 
-use crate::{
-    mapping::{
-        AXIS_MAP, AXIS_SCALE, BUTTON_MAP, RAW_BUTTON_MAP,
-        TRIGGER_AXIS_MAP, TRIGGER_SCALE,
-        TRIGGER_FROM_AXIS_MAP, TRIGGER_FROM_AXIS_SCALE,
-        HAT_AXIS_MAP,
-    },
-    GamepadError, HapticCommand,
-};
+use crate::{AxisMapping, ButtonMapping, GamepadError, HapticCommand};
 
 use tracing::trace;
 
@@ -33,9 +25,10 @@ type StoredEffect = (u16, u16, u32);
 /// A single virtual gamepad device created via uinput.
 pub(crate) struct GamepadDevice {
     device: VirtualDevice,
-    /// True when the controller uses raw evdev layout (triggers as analog axes,
-    /// no digital trigger buttons at indices 6/7).
-    raw_layout: bool,
+    /// Capability declaration, indexed by raw browser button index.
+    buttons: Vec<ButtonMapping>,
+    /// Capability declaration, indexed by raw browser axis index.
+    axes: Vec<AxisMapping>,
     /// Free effect-ID pool (0..FF_EFFECTS_MAX).
     free_ids: BTreeSet<u16>,
     /// Uploaded effects: effect_id → (strong_raw, weak_raw, duration_ms).
@@ -43,82 +36,63 @@ pub(crate) struct GamepadDevice {
 }
 
 impl GamepadDevice {
-    /// Create a new virtual gamepad device with `num_buttons` and `num_axes`
-    /// capabilities from the standard layout mapping tables.
-    pub(crate) fn new(name: &str, num_buttons: u8, num_axes: u8) -> Result<Self, GamepadError> {
-        // Detect layout: controllers with more than 2 axes expose triggers as
-        // analog axes (raw evdev layout); others use the W3C standard layout
-        // where triggers appear as digital buttons at indices 6/7.
-        let raw_layout = num_axes > 2;
-        let button_map = if raw_layout { RAW_BUTTON_MAP } else { BUTTON_MAP };
-
+    /// Create a new virtual gamepad device from a capability declaration.
+    ///
+    /// `buttons` and `axes` are indexed by browser button/axis index and carry
+    /// the evdev codes used to register device capabilities and to look up
+    /// codes at event time.  Capabilities are built dynamically from the
+    /// declaration, so no hardcoded layout knowledge is needed here.
+    pub(crate) fn new(
+        name: &str,
+        buttons: Vec<ButtonMapping>,
+        axes: Vec<AxisMapping>,
+    ) -> Result<Self, GamepadError> {
+        // ── Build key set ─────────────────────────────────────────────────────
         let mut keys = AttributeSet::<KeyCode>::new();
-        for &(idx, key) in button_map {
-            if (idx as u8) < num_buttons {
-                keys.insert(key);
-            }
+        for btn in &buttons {
+            keys.insert(KeyCode(btn.btn_code));
         }
 
-        let mut abs_axes: Vec<UinputAbsSetup> = Vec::new();
+        // ── Build abs-axis set ────────────────────────────────────────────────
+        // Collect all abs codes, deduplicating trigger_abs_code entries that
+        // might appear under both buttons (trigger) and axes (analog stick).
+        let mut abs_codes: Vec<u16> = Vec::new();
+        let mut seen: HashSet<u16> = HashSet::new();
 
-        // Stick axes (±32 767).
-        for &(idx, axis) in AXIS_MAP {
-            if (idx as u8) < num_axes {
-                abs_axes.push(UinputAbsSetup::new(
-                    axis,
-                    AbsInfo::new(0, -32_767, 32_767, 16, 128, 0),
-                ));
+        // Axes from the axis declaration come first.
+        for ax in &axes {
+            if seen.insert(ax.abs_code) {
+                abs_codes.push(ax.abs_code);
             }
         }
-
-        // Trigger axes — prefer axis-based triggers (raw evdev layout, e.g.
-        // 8BitDo) when axis indices 2 or 5 are present; otherwise fall back to
-        // button-based triggers (W3C standard layout).
-        if raw_layout {
-            for &(idx, axis) in TRIGGER_FROM_AXIS_MAP {
-                if (idx as u8) < num_axes {
-                    abs_axes.push(UinputAbsSetup::new(
-                        axis,
-                        AbsInfo::new(0, 0, 255, 0, 0, 0),
-                    ));
-                }
-            }
-        } else {
-            for &(btn_idx, axis) in TRIGGER_AXIS_MAP {
-                if (btn_idx as u8) < num_buttons {
-                    abs_axes.push(UinputAbsSetup::new(
-                        axis,
-                        AbsInfo::new(0, 0, 255, 0, 0, 0),
-                    ));
+        // Trigger analog axes implied by button trigger_abs_code.
+        for btn in &buttons {
+            if let Some(code) = btn.trigger_abs_code {
+                if seen.insert(code) {
+                    abs_codes.push(code);
                 }
             }
         }
 
-        // Hat / D-pad axes (−1, 0, 1).
-        for &(idx, axis) in HAT_AXIS_MAP {
-            if (idx as u8) < num_axes {
-                abs_axes.push(UinputAbsSetup::new(
-                    axis,
-                    AbsInfo::new(0, -1, 1, 0, 0, 0),
-                ));
-            }
-        }
+        // ── Build FF set ──────────────────────────────────────────────────────
+        let mut ff_set = AttributeSet::<FFEffectCode>::new();
+        ff_set.insert(FFEffectCode::FF_RUMBLE);
 
+        // ── Assemble virtual device ───────────────────────────────────────────
         let mut builder = VirtualDevice::builder()
             .map_err(GamepadError::UinputOpen)?
             .name(name)
             .with_keys(&keys)
             .map_err(GamepadError::DeviceSetup)?;
 
-        let abs_axes_len = abs_axes.len();
-        for setup in abs_axes {
+        let n_abs = abs_codes.len();
+        for &code in &abs_codes {
+            let setup = abs_setup_for_code(code);
             builder = builder
                 .with_absolute_axis(&setup)
                 .map_err(GamepadError::DeviceSetup)?;
         }
 
-        let mut ff_set = AttributeSet::<FFEffectCode>::new();
-        ff_set.insert(FFEffectCode::FF_RUMBLE);
         builder = builder
             .with_ff(&ff_set)
             .map_err(GamepadError::DeviceSetup)?
@@ -136,79 +110,65 @@ impl GamepadDevice {
 
         let free_ids = (0..FF_EFFECTS_MAX).collect();
         trace!(
-            "GamepadDevice::new: created {name:?} with {} keys, {} abs axes, FF_RUMBLE enabled",
+            "GamepadDevice::new: created {name:?} with {} keys, {} abs axes, FF_RUMBLE",
             keys.iter().count(),
-            abs_axes_len,
+            n_abs,
         );
-        Ok(Self { device, raw_layout, free_ids, effects: HashMap::new() })
+        Ok(Self { device, buttons, axes, free_ids, effects: HashMap::new() })
     }
 
-    /// Emit a button press or release event.
+    /// Emit a button event.
+    ///
+    /// `button_idx` is the raw browser button index.  The evdev `BTN_*` code
+    /// and optional trigger `ABS_*` code are looked up from the stored
+    /// capability declaration.
     pub(crate) fn send_button(
         &mut self,
         button_idx: u8,
         pressed: bool,
         value: f32,
     ) -> Result<(), GamepadError> {
-        let mut events: Vec<EvdevEvent> = Vec::with_capacity(3);
+        let mapping = self.buttons.get(button_idx as usize)
+            .ok_or(GamepadError::NotConnected(button_idx))?
+            .clone();
 
-        // Select the correct button map for this controller's layout.
-        let button_map = if self.raw_layout { RAW_BUTTON_MAP } else { BUTTON_MAP };
+        let mut events: Vec<EvdevEvent> = Vec::with_capacity(2);
 
-        // Digital button event.
-        if let Some(&(_, key)) = button_map.iter().find(|&&(i, _)| i == button_idx as usize) {
-            events.push(EvdevEvent::new(
-                evdev::EventType::KEY.0,
-                key.0,
-                i32::from(pressed),
-            ));
+        events.push(EvdevEvent::new(evdev::EventType::KEY.0, mapping.btn_code, i32::from(pressed)));
+
+        if let Some(abs_code) = mapping.trigger_abs_code {
+            // Trigger button value is 0..1; scale to 0..255.
+            #[allow(clippy::cast_possible_truncation)]
+            let abs_val = (value.clamp(0.0, 1.0) * 255.0).round() as i32;
+            events.push(EvdevEvent::new(evdev::EventType::ABSOLUTE.0, abs_code, abs_val));
         }
 
-        // Trigger buttons also drive ABS_Z / ABS_RZ — standard layout only.
-        // Raw-layout controllers send triggers as axis events, not button events.
-        if !self.raw_layout {
-            if let Some(&(_, axis)) = TRIGGER_AXIS_MAP
-                .iter()
-                .find(|&&(i, _)| i == button_idx as usize)
-            {
-                #[allow(clippy::cast_possible_truncation)]
-                let abs_val = (value.clamp(0.0, 1.0) * TRIGGER_SCALE).round() as i32;
-                events.push(EvdevEvent::new(evdev::EventType::ABSOLUTE.0, axis.0, abs_val));
-            }
-        }
-
-        if !events.is_empty() {
-            self.device.emit(&events).map_err(GamepadError::Emit)?;
-        }
-        Ok(())
+        self.device.emit(&events).map_err(GamepadError::Emit)
     }
 
     /// Emit an axis movement event.
+    ///
+    /// `axis_idx` is the raw browser axis index.  The evdev `ABS_*` code is
+    /// looked up from the stored capability declaration.  The float `value` is
+    /// scaled based on the axis type:
+    ///
+    /// - Trigger axes (`ABS_Z`=2, `ABS_RZ`=5): browser `−1.0..1.0` → evdev `0..255`
+    /// - Hat/D-pad axes (`ABS_HAT0X`=16, `ABS_HAT0Y`=17): rounded to `−1..1`
+    /// - All other axes: `−1.0..1.0` → `−32 767..32 767`
     pub(crate) fn send_axis(&mut self, axis_idx: u8, value: f32) -> Result<(), GamepadError> {
-        // Stick axes — scale ±1.0 to ±32 767.
-        if let Some(&(_, axis)) = AXIS_MAP.iter().find(|&&(i, _)| i == axis_idx as usize) {
-            #[allow(clippy::cast_possible_truncation)]
-            let scaled = (value.clamp(-1.0, 1.0) * AXIS_SCALE).round() as i32;
-            let event = EvdevEvent::new(evdev::EventType::ABSOLUTE.0, axis.0, scaled);
-            return self.device.emit(&[event]).map_err(GamepadError::Emit);
-        }
+        let abs_code = self.axes.get(axis_idx as usize)
+            .ok_or(GamepadError::NotConnected(axis_idx))?
+            .abs_code;
 
-        // Trigger axes — browser range −1..1 → evdev 0..255.
-        if let Some(&(_, axis)) = TRIGGER_FROM_AXIS_MAP.iter().find(|&&(i, _)| i == axis_idx as usize) {
-            #[allow(clippy::cast_possible_truncation)]
-            let scaled = ((value.clamp(-1.0, 1.0) + 1.0) / 2.0 * TRIGGER_FROM_AXIS_SCALE).round() as i32;
-            let event = EvdevEvent::new(evdev::EventType::ABSOLUTE.0, axis.0, scaled);
-            return self.device.emit(&[event]).map_err(GamepadError::Emit);
-        }
+        #[allow(clippy::cast_possible_truncation)]
+        let scaled: i32 = match abs_code {
+            2 | 5   => ((value.clamp(-1.0, 1.0) + 1.0) * 0.5 * 255.0).round() as i32,
+            16 | 17 => value.round() as i32,
+            _       => (value.clamp(-1.0, 1.0) * 32_767.0).round() as i32,
+        };
 
-        // Hat / D-pad axes — values are −1, 0, or 1.
-        if let Some(&(_, axis)) = HAT_AXIS_MAP.iter().find(|&&(i, _)| i == axis_idx as usize) {
-            let val = value.round() as i32;
-            let event = EvdevEvent::new(evdev::EventType::ABSOLUTE.0, axis.0, val);
-            return self.device.emit(&[event]).map_err(GamepadError::Emit);
-        }
-
-        Ok(())
+        let event = EvdevEvent::new(evdev::EventType::ABSOLUTE.0, abs_code, scaled);
+        self.device.emit(&[event]).map_err(GamepadError::Emit)
     }
 
     /// Poll pending force-feedback events from the uinput fd (non-blocking).
@@ -282,3 +242,22 @@ impl GamepadDevice {
         commands
     }
 }
+
+// ── Axis capability helpers ───────────────────────────────────────────────────
+
+/// Return the appropriate `UinputAbsSetup` for a given `ABS_*` code.
+///
+/// - ABS_Z (2) / ABS_RZ (5): trigger axes, range 0–255
+/// - ABS_HAT0X (16) / ABS_HAT0Y (17): D-pad hat axes, range ±1
+/// - All others: stick axes, range ±32 767
+fn abs_setup_for_code(code: u16) -> UinputAbsSetup {
+    let abs = Abs(code);
+    match code {
+        2 | 5   => UinputAbsSetup::new(abs, AbsInfo::new(0, 0, 255, 0, 0, 0)),
+        16 | 17 => UinputAbsSetup::new(abs, AbsInfo::new(0, -1, 1, 0, 0, 0)),
+        _       => UinputAbsSetup::new(abs, AbsInfo::new(0, -32_767, 32_767, 16, 128, 0)),
+    }
+}
+
+
+// (end of file)

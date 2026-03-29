@@ -3,7 +3,119 @@
  *
  * Manages browser gamepad connections and a requestAnimationFrame polling
  * loop that sends button/axis delta events to the compositor.
+ *
+ * For controllers with `Gamepad.mapping === "standard"`, a capability
+ * declaration (button and axis evdev codes) is computed once at connect time
+ * and sent as part of the `gamepad_connected` message.  The Rust side uses this
+ * declaration to build the virtual uinput device and to look up evdev codes when
+ * poll events arrive.
+ *
+ * For non-standard controllers the declaration is `null`, which tells the
+ * compositor that no virtual device should be created yet.  This leaves the
+ * architecture open for a future user-defined mapping UI.
  */
+
+// ── Linux evdev button codes (BTN_*) ─────────────────────────────────────────
+const BTN_SOUTH      = 0x130; // A / Cross
+const BTN_EAST       = 0x131; // B / Circle
+const BTN_NORTH      = 0x133; // Y / Triangle
+const BTN_WEST       = 0x134; // X / Square
+const BTN_TL         = 0x136; // LB / L1
+const BTN_TR         = 0x137; // RB / R1
+const BTN_TL2        = 0x138; // LT / L2
+const BTN_TR2        = 0x139; // RT / R2
+const BTN_SELECT     = 0x13a; // Back / Select
+const BTN_START      = 0x13b; // Start
+const BTN_MODE       = 0x13c; // Guide / Home
+const BTN_THUMBL     = 0x13d; // L3 (left stick click)
+const BTN_THUMBR     = 0x13e; // R3 (right stick click)
+const BTN_DPAD_UP    = 0x220;
+const BTN_DPAD_DOWN  = 0x221;
+const BTN_DPAD_LEFT  = 0x222;
+const BTN_DPAD_RIGHT = 0x223;
+
+// ── Linux evdev absolute axis codes (ABS_*) ───────────────────────────────────
+const ABS_X  = 0x00; // Left stick X
+const ABS_Y  = 0x01; // Left stick Y
+const ABS_Z  = 0x02; // Left trigger analog (0–255 in evdev)
+const ABS_RX = 0x03; // Right stick X
+const ABS_RY = 0x04; // Right stick Y
+const ABS_RZ = 0x05; // Right trigger analog (0–255 in evdev)
+
+// ── W3C Standard Gamepad Layout mapping tables ────────────────────────────────
+// Reference: https://w3c.github.io/gamepad/#dfn-standard-gamepad-layout
+
+/**
+ * Browser button index → { btnCode, triggerAbsCode? }.
+ *
+ * `triggerAbsCode` is set for LT/RT: those buttons also drive an analog axis
+ * on the virtual uinput device.
+ */
+const STANDARD_BTN_MAP = [
+  { btnCode: BTN_SOUTH },                         // 0  A / Cross
+  { btnCode: BTN_EAST },                          // 1  B / Circle
+  { btnCode: BTN_WEST },                          // 2  X / Square
+  { btnCode: BTN_NORTH },                         // 3  Y / Triangle
+  { btnCode: BTN_TL },                            // 4  LB
+  { btnCode: BTN_TR },                            // 5  RB
+  { btnCode: BTN_TL2, triggerAbsCode: ABS_Z  },  // 6  LT (digital + analog)
+  { btnCode: BTN_TR2, triggerAbsCode: ABS_RZ },  // 7  RT (digital + analog)
+  { btnCode: BTN_SELECT },                        // 8  Back / Select
+  { btnCode: BTN_START },                         // 9  Start
+  { btnCode: BTN_THUMBL },                        // 10 L3
+  { btnCode: BTN_THUMBR },                        // 11 R3
+  { btnCode: BTN_DPAD_UP },                       // 12 D-pad Up
+  { btnCode: BTN_DPAD_DOWN },                     // 13 D-pad Down
+  { btnCode: BTN_DPAD_LEFT },                     // 14 D-pad Left
+  { btnCode: BTN_DPAD_RIGHT },                    // 15 D-pad Right
+  { btnCode: BTN_MODE },                          // 16 Guide / Home
+];
+
+/** Browser axis index → evdev ABS_* code. */
+const STANDARD_AXIS_MAP = [
+  ABS_X,  // 0 Left stick X
+  ABS_Y,  // 1 Left stick Y
+  ABS_RX, // 2 Right stick X
+  ABS_RY, // 3 Right stick Y
+];
+
+/**
+ * Build a capability declaration for the given gamepad.
+ *
+ * Returns `{ buttons, axes }` for known layouts, or `{ buttons: null, axes: null }`
+ * for controllers the browser has not normalized to a standard layout.
+ *
+ * The returned arrays are indexed by browser button/axis index and contain the
+ * Linux evdev codes that Rust will use to register and drive the uinput device.
+ *
+ * @param {Gamepad} gp
+ * @returns {{ buttons: Array<{btn_code:number, trigger_abs_code:number|null}>|null,
+ *             axes:    Array<{abs_code:number}>|null }}
+ */
+function buildMappingDeclaration(gp) {
+  if (gp.mapping !== 'standard') {
+    // Non-standard controller — no mapping known yet.
+    return { buttons: null, axes: null };
+  }
+
+  const numButtons = Math.min(gp.buttons.length, STANDARD_BTN_MAP.length);
+  const buttons = [];
+  for (let i = 0; i < numButtons; i++) {
+    const m = STANDARD_BTN_MAP[i];
+    buttons.push({
+      btn_code:         m.btnCode,
+      trigger_abs_code: m.triggerAbsCode ?? null,
+    });
+  }
+
+  const numAxes = Math.min(gp.axes.length, STANDARD_AXIS_MAP.length);
+  const axes = [];
+  for (let i = 0; i < numAxes; i++) {
+    axes.push({ abs_code: STANDARD_AXIS_MAP[i] });
+  }
+
+  return { buttons, axes };
+}
 
 export class GamepadController {
   #client;
@@ -48,12 +160,14 @@ export class GamepadController {
     const gamepads = navigator.getGamepads();
     for (const gp of gamepads) {
       if (!gp || !this.#state.has(gp.index)) continue;
+      const { buttons, axes } = buildMappingDeclaration(gp);
       this.#client.sendInput({
-        type:        'gamepad_connected',
-        index:       gp.index,
-        name:        gp.id,
-        num_axes:    gp.axes.length,
-        num_buttons: gp.buttons.length,
+        type:    'gamepad_connected',
+        index:   gp.index,
+        name:    gp.id,
+        mapping: gp.mapping,
+        buttons,
+        axes,
       });
     }
     if (this.#rafHandle === null) {
@@ -103,12 +217,14 @@ export class GamepadController {
       buttons: new Float32Array(gp.buttons.length),
       axes:    new Float32Array(gp.axes.length),
     });
+    const { buttons, axes } = buildMappingDeclaration(gp);
     this.#client.sendInput({
-      type:        'gamepad_connected',
+      type:    'gamepad_connected',
       index,
-      name:        gp.id,
-      num_axes:    gp.axes.length,
-      num_buttons: gp.buttons.length,
+      name:    gp.id,
+      mapping: gp.mapping,
+      buttons,
+      axes,
     });
     this.#onConnect?.(index, gp.id);
     if (this.#rafHandle === null) {
@@ -136,7 +252,9 @@ export class GamepadController {
 
   /**
    * Read the current gamepad state, diff against the previous snapshot, and
-   * send events only for changed buttons/axes.
+   * send events only for changed buttons/axes.  Raw browser button/axis indices
+   * are sent as-is; the Rust side looks up evdev codes from the capability
+   * declaration received at connect time.
    */
   #poll() {
     const gamepads = navigator.getGamepads();
@@ -146,10 +264,9 @@ export class GamepadController {
       if (!prev) continue;
 
       for (let i = 0; i < gp.buttons.length; i++) {
-        const btn     = gp.buttons[i];
-        const curVal  = btn.value;
-        const prevVal = prev.buttons[i] ?? 0;
-        if (curVal !== prevVal) {
+        const btn    = gp.buttons[i];
+        const curVal = btn.value;
+        if (curVal !== (prev.buttons[i] ?? 0)) {
           prev.buttons[i] = curVal;
           this.#client.sendInput({
             type:    'gamepad_button',
@@ -163,10 +280,9 @@ export class GamepadController {
 
       // Axes — apply dead-zone filtering.
       for (let i = 0; i < gp.axes.length; i++) {
-        const raw     = gp.axes[i];
-        const curVal  = Math.abs(raw) < 0.05 ? 0 : raw;
-        const prevVal = prev.axes[i] ?? 0;
-        if (curVal !== prevVal) {
+        const raw    = gp.axes[i];
+        const curVal = Math.abs(raw) < 0.05 ? 0 : raw;
+        if (curVal !== (prev.axes[i] ?? 0)) {
           prev.axes[i] = curVal;
           this.#client.sendInput({
             type:  'gamepad_axis',

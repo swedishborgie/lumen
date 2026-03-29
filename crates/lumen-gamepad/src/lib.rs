@@ -18,7 +18,6 @@
 //! continue without gamepad support.
 
 mod device;
-mod mapping;
 
 use std::collections::HashMap;
 
@@ -52,6 +51,29 @@ pub enum GamepadError {
     AlreadyConnected(u8),
 }
 
+/// Evdev capability declaration for a single gamepad button.
+///
+/// Received once at connect time as part of [`GamepadEvent::Connected`].
+/// Stored by the device to look up evdev codes when raw-index poll events arrive.
+#[derive(Debug, Clone)]
+pub struct ButtonMapping {
+    /// Linux `BTN_*` evdev key code.
+    pub btn_code: u16,
+    /// If set, the button also drives this `ABS_*` analog axis (e.g. LT/RT
+    /// triggers in the standard layout drive `ABS_Z`/`ABS_RZ`).
+    pub trigger_abs_code: Option<u16>,
+}
+
+/// Evdev capability declaration for a single gamepad axis.
+///
+/// Received once at connect time as part of [`GamepadEvent::Connected`].
+/// Stored by the device to look up evdev codes when raw-index poll events arrive.
+#[derive(Debug, Clone)]
+pub struct AxisMapping {
+    /// Linux `ABS_*` evdev absolute-axis code.
+    pub abs_code: u16,
+}
+
 /// An event from the browser's Web Gamepad API to be applied to the virtual device.
 #[derive(Debug, Clone)]
 pub enum GamepadEvent {
@@ -61,10 +83,17 @@ pub enum GamepadEvent {
         index: u8,
         /// Human-readable name from the browser (e.g. `"Xbox 360 Controller"`).
         name: String,
-        /// Number of axes reported by the browser.
-        num_axes: u8,
-        /// Number of buttons reported by the browser.
-        num_buttons: u8,
+        /// The `Gamepad.mapping` string from the browser (`"standard"` or `""`).
+        mapping: String,
+        /// Per-button capability declarations, indexed by browser button index.
+        ///
+        /// `None` means the controller layout is unknown; no virtual device will
+        /// be created until a mapping is provided (future user-defined mapping UI).
+        buttons: Option<Vec<ButtonMapping>>,
+        /// Per-axis capability declarations, indexed by browser axis index.
+        ///
+        /// `None` when `buttons` is `None`.
+        axes: Option<Vec<AxisMapping>>,
     },
     /// A gamepad was disconnected in the browser.
     Disconnected {
@@ -75,7 +104,8 @@ pub enum GamepadEvent {
     Button {
         /// Gamepad slot index (0–3).
         index: u8,
-        /// Web Gamepad button index (0–16 for the standard layout).
+        /// Raw browser button index.  Looked up against the stored capability
+        /// declaration to obtain the evdev `BTN_*` code.
         button: u8,
         /// Analog value in the range 0.0–1.0.
         value: f32,
@@ -86,7 +116,8 @@ pub enum GamepadEvent {
     Axis {
         /// Gamepad slot index (0–3).
         index: u8,
-        /// Web Gamepad axis index (0–3 for the standard layout).
+        /// Raw browser axis index.  Looked up against the stored capability
+        /// declaration to obtain the evdev `ABS_*` code.
         axis: u8,
         /// Normalised value in the range −1.0 to 1.0.
         value: f32,
@@ -133,9 +164,9 @@ impl GamepadManager {
 
     fn try_handle_event(&mut self, event: GamepadEvent) -> Result<(), GamepadError> {
         match event {
-            GamepadEvent::Connected { index, name, num_axes, num_buttons } => {
-                debug!("GamepadManager: Connected index={index} name={name:?} axes={num_axes} buttons={num_buttons}");
-                self.connect(index, &name, num_axes, num_buttons)
+            GamepadEvent::Connected { index, name, mapping, buttons, axes } => {
+                debug!("GamepadManager: Connected index={index} name={name:?} mapping={mapping:?}");
+                self.connect(index, &name, &mapping, buttons, axes)
             }
             GamepadEvent::Disconnected { index } => {
                 debug!("GamepadManager: Disconnected index={index}");
@@ -156,12 +187,17 @@ impl GamepadManager {
         &mut self,
         index: u8,
         name: &str,
-        num_axes: u8,
-        num_buttons: u8,
+        mapping: &str,
+        buttons: Option<Vec<ButtonMapping>>,
+        axes: Option<Vec<AxisMapping>>,
     ) -> Result<(), GamepadError> {
         if index >= MAX_GAMEPADS {
             return Err(GamepadError::IndexOutOfRange(index));
         }
+        let (Some(buttons), Some(axes)) = (buttons, axes) else {
+            warn!("gamepad {index}: no mapping declaration (non-standard controller); skipping device creation");
+            return Ok(());
+        };
         if self.devices.contains_key(&index) {
             // Browser may re-send connected; treat as reconnect.
             warn!("gamepad {index}: already connected, replacing device");
@@ -181,8 +217,10 @@ impl GamepadManager {
                 full[..boundary].to_string()
             }
         };
-        let device = GamepadDevice::new(&device_name, num_buttons, num_axes)?;
-        info!("gamepad {index}: virtual device created — {num_buttons} buttons, {num_axes} axes");
+        let n_buttons = buttons.len();
+        let n_axes = axes.len();
+        let device = GamepadDevice::new(&device_name, buttons, axes)?;
+        info!("gamepad {index}: virtual device created (mapping={mapping:?}, {n_buttons} buttons, {n_axes} axes)");
         self.devices.insert(index, device);
         Ok(())
     }

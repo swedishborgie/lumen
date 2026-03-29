@@ -303,10 +303,17 @@ pub fn spawn_input_forwarder(
                 lumen_compositor::InputEvent::ClipboardWrite { text } => {
                     compositor_input_tx.clipboard_write(text);
                 }
-                lumen_compositor::InputEvent::GamepadConnected { index, name, num_axes, num_buttons } => {
-                    tracing::debug!("Routing GamepadConnected: index={index} name={name:?} axes={num_axes} buttons={num_buttons}");
+                lumen_compositor::InputEvent::GamepadConnected { index, name, mapping, buttons, axes } => {
+                    tracing::debug!("Routing GamepadConnected: index={index} name={name:?} mapping={mapping:?}");
+                    let gp_buttons = buttons.map(|bs| bs.into_iter().map(|b| lumen_gamepad::ButtonMapping {
+                        btn_code: b.btn_code,
+                        trigger_abs_code: b.trigger_abs_code,
+                    }).collect());
+                    let gp_axes = axes.map(|ax| ax.into_iter().map(|a| lumen_gamepad::AxisMapping {
+                        abs_code: a.abs_code,
+                    }).collect());
                     if gamepad_tx.send(lumen_gamepad::GamepadEvent::Connected {
-                        index, name, num_axes, num_buttons,
+                        index, name, mapping, buttons: gp_buttons, axes: gp_axes,
                     }).await.is_err() {
                         tracing::warn!("Gamepad manager channel closed; dropping GamepadConnected for index={index}");
                     }

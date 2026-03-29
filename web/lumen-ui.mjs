@@ -10,6 +10,7 @@
 import { CursorManager }     from './ui/cursor.mjs';
 import { InputHandler }      from './ui/input.mjs';
 import { GamepadController } from './ui/gamepad.mjs';
+import { GamepadMapper }     from './ui/gamepad-mapper.mjs';
 import { ResizeManager }     from './ui/resize.mjs';
 import { TouchHandler }      from './ui/touch.mjs';
 import { FloatingKeyboard }  from './ui/keyboard-button.mjs';
@@ -40,7 +41,7 @@ export class LumenUI {
 
   #audioUnlocked       = false;
   #clipboardDebounceTimer = null;
-  #connectedGamepads   = new Map(); // gamepad index → name
+  #connectedGamepads   = new Map(); // gamepad index → { name, mapping }
 
   // Auto-reconnect state.
   #intentionalDisconnect = false; // true when the user clicked Disconnect
@@ -103,8 +104,8 @@ export class LumenUI {
     this.#cursor  = new CursorManager(cursorCanvas, video);
     this.#input   = new InputHandler(video, client, this.#cursor, () => this.#tryUnlockAudio(), elements.macModeToggle);
     this.#gamepad = new GamepadController(client, {
-      onConnect:    (index, name) => this.#onGamepadConnect(index, name),
-      onDisconnect: (index)       => this.#onGamepadDisconnect(index),
+      onConnect:    (index, name, mapping) => this.#onGamepadConnect(index, name, mapping),
+      onDisconnect: (index)                => this.#onGamepadDisconnect(index),
     });
     this.#resize  = new ResizeManager(video, videoContainer, client, this.#cursor);
     this.#perf    = new PerformanceMonitor(perfCanvas, client, video);
@@ -549,8 +550,8 @@ export class LumenUI {
 
   // ── gamepad detection ────────────────────────────────────────────────────────
 
-  #onGamepadConnect(index, name) {
-    this.#connectedGamepads.set(index, name);
+  #onGamepadConnect(index, name, mapping) {
+    this.#connectedGamepads.set(index, { name, mapping });
     this.#updateGamepadList();
   }
 
@@ -567,12 +568,44 @@ export class LumenUI {
       return;
     }
     el.innerHTML = '';
-    for (const [, name] of this.#connectedGamepads) {
+    for (const [index, { name, mapping }] of this.#connectedGamepads) {
+      const isNonStandard = mapping !== 'standard';
+
+      const entry = document.createElement('div');
+      entry.className = isNonStandard ? 'gamepad-entry' : '';
+
       const item = document.createElement('div');
       item.className = 'gamepad-item';
       item.textContent = name;
-      el.appendChild(item);
+      entry.appendChild(item);
+
+      if (isNonStandard) {
+        const mapBtn = document.createElement('button');
+        mapBtn.className = 'gamepad-map-btn';
+        mapBtn.textContent = 'Map Controller';
+        mapBtn.title = 'Define button mapping for this controller';
+        mapBtn.addEventListener('click', () => this.#openMapper(index));
+        entry.appendChild(mapBtn);
+      }
+
+      el.appendChild(entry);
     }
+  }
+
+  /**
+   * Open the mapping wizard for the given gamepad index.
+   *
+   * @param {number} index - Gamepad slot index.
+   */
+  #openMapper(index) {
+    const gamepads = navigator.getGamepads();
+    const gp = gamepads[index];
+    if (!gp) return;
+
+    const mapper = new GamepadMapper(gp, (declaration) => {
+      this.#gamepad.applyMapping(index, declaration);
+    });
+    mapper.show();
   }
 
   // ── clipboard panel (browser → compositor) ───────────────────────────────────

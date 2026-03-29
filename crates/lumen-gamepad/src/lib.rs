@@ -88,12 +88,15 @@ pub enum GamepadEvent {
         /// Per-button capability declarations, indexed by browser button index.
         ///
         /// `None` means the controller layout is unknown; no virtual device will
-        /// be created until a mapping is provided (future user-defined mapping UI).
-        buttons: Option<Vec<ButtonMapping>>,
+        /// be created until a mapping is provided (user-defined mapping UI).
+        /// Each inner `Option` may also be `None` for buttons skipped in the
+        /// mapping wizard.
+        buttons: Option<Vec<Option<ButtonMapping>>>,
         /// Per-axis capability declarations, indexed by browser axis index.
         ///
-        /// `None` when `buttons` is `None`.
-        axes: Option<Vec<AxisMapping>>,
+        /// `None` when `buttons` is `None`.  Each inner `Option` may be `None`
+        /// for axes skipped in the mapping wizard.
+        axes: Option<Vec<Option<AxisMapping>>>,
     },
     /// A gamepad was disconnected in the browser.
     Disconnected {
@@ -188,8 +191,8 @@ impl GamepadManager {
         index: u8,
         name: &str,
         mapping: &str,
-        buttons: Option<Vec<ButtonMapping>>,
-        axes: Option<Vec<AxisMapping>>,
+        buttons: Option<Vec<Option<ButtonMapping>>>,
+        axes: Option<Vec<Option<AxisMapping>>>,
     ) -> Result<(), GamepadError> {
         if index >= MAX_GAMEPADS {
             return Err(GamepadError::IndexOutOfRange(index));

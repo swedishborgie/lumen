@@ -294,6 +294,7 @@ button:disabled { opacity: 0.4; cursor: default; }
 
 /* ── Gamepad section ────────────────────────────────────────────────────────── */
 #gamepad-section { display: flex; flex-direction: column; gap: 8px; }
+.gamepad-entry { display: flex; flex-direction: column; gap: 3px; }
 .gamepad-item {
   font-size: 12px;
   color: #ccc;
@@ -306,7 +307,115 @@ button:disabled { opacity: 0.4; cursor: default; }
   text-overflow: ellipsis;
 }
 .gamepad-item::before { content: '🎮 '; }
+.gamepad-map-btn {
+  align-self: flex-start;
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 3px;
+  border: 1px solid rgba(120, 180, 255, 0.4);
+  background: rgba(60, 100, 180, 0.25);
+  color: #8bcaff;
+  cursor: pointer;
+  line-height: 1.4;
+  transition: background 0.15s, color 0.15s;
+}
+.gamepad-map-btn:hover {
+  background: rgba(80, 130, 220, 0.45);
+  color: #c5e4ff;
+}
 .gamepad-none { font-size: 12px; color: #555; font-style: italic; }
+
+/* ── Gamepad mapping wizard modal ───────────────────────────────────────────── */
+.gm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.gm-modal {
+  background: #1a1c22;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  padding: 22px 24px 18px;
+  width: 340px;
+  max-width: 92vw;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  color: #ddd;
+}
+.gm-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.gm-title { font-size: 15px; font-weight: 600; color: #eee; }
+.gm-cancel-btn {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 2px 4px;
+  line-height: 1;
+}
+.gm-cancel-btn:hover { color: #ccc; }
+.gm-controller-name {
+  font-size: 11px;
+  color: #666;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gm-progress-bar {
+  height: 4px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.gm-progress-fill {
+  height: 100%;
+  background: #5b9af5;
+  border-radius: 2px;
+  transition: width 0.25s ease;
+}
+.gm-step-area {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  padding: 18px 16px;
+  text-align: center;
+  transition: background 0.2s, border-color 0.2s;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.gm-step-area.gm-detected {
+  background: rgba(60, 180, 100, 0.18);
+  border-color: rgba(80, 200, 120, 0.4);
+}
+.gm-step-icon { font-size: 28px; }
+.gm-step-label { font-size: 15px; font-weight: 600; color: #eee; }
+.gm-step-hint  { font-size: 12px; color: #888; }
+.gm-step-status { font-size: 11px; color: #5b9af5; min-height: 16px; }
+.gm-actions { display: flex; justify-content: flex-end; }
+.gm-skip-btn {
+  font-size: 12px;
+  padding: 5px 14px;
+  border-radius: 5px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.06);
+  color: #aaa;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.gm-skip-btn:hover { background: rgba(255,255,255,0.12); color: #ddd; }
+
 
 /* ── Floating keyboard button (mobile only) ─────────────────────────────────── */
 #keyboard-btn {

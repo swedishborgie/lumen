@@ -94,14 +94,15 @@ pub enum InputEvent {
         mapping: String,
         /// Per-button capability declarations, indexed by browser button index.
         ///
-        /// `None` means the controller layout is unknown; the compositor will
-        /// skip creating a virtual device until a mapping is provided (future
-        /// user-defined mapping UI).
-        buttons: Option<Vec<ButtonMapping>>,
+        /// `None` means no mapping has been provided yet (non-standard controller
+        /// that the user hasn't mapped).  Each inner `Option` may also be `None`
+        /// for buttons that were skipped during the mapping wizard.
+        buttons: Option<Vec<Option<ButtonMapping>>>,
         /// Per-axis capability declarations, indexed by browser axis index.
         ///
-        /// `None` when `buttons` is `None`.
-        axes: Option<Vec<AxisMapping>>,
+        /// `None` when `buttons` is `None`.  Each inner `Option` may be `None`
+        /// for axes that were skipped during the mapping wizard.
+        axes: Option<Vec<Option<AxisMapping>>>,
     },
     /// A gamepad was disconnected in the browser.
     GamepadDisconnected {

@@ -26,9 +26,11 @@ type StoredEffect = (u16, u16, u32);
 pub(crate) struct GamepadDevice {
     device: VirtualDevice,
     /// Capability declaration, indexed by raw browser button index.
-    buttons: Vec<ButtonMapping>,
+    /// `None` entries represent buttons that were skipped during mapping.
+    buttons: Vec<Option<ButtonMapping>>,
     /// Capability declaration, indexed by raw browser axis index.
-    axes: Vec<AxisMapping>,
+    /// `None` entries represent axes that were skipped during mapping.
+    axes: Vec<Option<AxisMapping>>,
     /// Free effect-ID pool (0..FF_EFFECTS_MAX).
     free_ids: BTreeSet<u16>,
     /// Uploaded effects: effect_id → (strong_raw, weak_raw, duration_ms).
@@ -44,12 +46,12 @@ impl GamepadDevice {
     /// declaration, so no hardcoded layout knowledge is needed here.
     pub(crate) fn new(
         name: &str,
-        buttons: Vec<ButtonMapping>,
-        axes: Vec<AxisMapping>,
+        buttons: Vec<Option<ButtonMapping>>,
+        axes: Vec<Option<AxisMapping>>,
     ) -> Result<Self, GamepadError> {
         // ── Build key set ─────────────────────────────────────────────────────
         let mut keys = AttributeSet::<KeyCode>::new();
-        for btn in &buttons {
+        for btn in buttons.iter().flatten() {
             keys.insert(KeyCode(btn.btn_code));
         }
 
@@ -60,13 +62,13 @@ impl GamepadDevice {
         let mut seen: HashSet<u16> = HashSet::new();
 
         // Axes from the axis declaration come first.
-        for ax in &axes {
+        for ax in axes.iter().flatten() {
             if seen.insert(ax.abs_code) {
                 abs_codes.push(ax.abs_code);
             }
         }
         // Trigger analog axes implied by button trigger_abs_code.
-        for btn in &buttons {
+        for btn in buttons.iter().flatten() {
             if let Some(code) = btn.trigger_abs_code {
                 if seen.insert(code) {
                     abs_codes.push(code);
@@ -128,9 +130,11 @@ impl GamepadDevice {
         pressed: bool,
         value: f32,
     ) -> Result<(), GamepadError> {
-        let mapping = self.buttons.get(button_idx as usize)
-            .ok_or(GamepadError::NotConnected(button_idx))?
-            .clone();
+        let Some(Some(mapping)) = self.buttons.get(button_idx as usize) else {
+            // Button not mapped (None slot from wizard skip or out of range) — skip silently.
+            return Ok(());
+        };
+        let mapping = mapping.clone();
 
         let mut events: Vec<EvdevEvent> = Vec::with_capacity(2);
 
@@ -156,9 +160,11 @@ impl GamepadDevice {
     /// - Hat/D-pad axes (`ABS_HAT0X`=16, `ABS_HAT0Y`=17): rounded to `−1..1`
     /// - All other axes: `−1.0..1.0` → `−32 767..32 767`
     pub(crate) fn send_axis(&mut self, axis_idx: u8, value: f32) -> Result<(), GamepadError> {
-        let abs_code = self.axes.get(axis_idx as usize)
-            .ok_or(GamepadError::NotConnected(axis_idx))?
-            .abs_code;
+        let Some(Some(ax)) = self.axes.get(axis_idx as usize) else {
+            // Axis not mapped (None slot from wizard skip or out of range) — skip silently.
+            return Ok(());
+        };
+        let abs_code = ax.abs_code;
 
         #[allow(clippy::cast_possible_truncation)]
         let scaled: i32 = match abs_code {

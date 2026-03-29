@@ -10,9 +10,12 @@
  * declaration to build the virtual uinput device and to look up evdev codes when
  * poll events arrive.
  *
- * For non-standard controllers the declaration is `null`, which tells the
- * compositor that no virtual device should be created yet.  This leaves the
- * architecture open for a future user-defined mapping UI.
+ * For non-standard controllers the declaration starts as `{ buttons: null, axes: null }`,
+ * which tells the compositor that no virtual device should be created yet.  If the
+ * user has previously mapped this controller via the mapping wizard, the saved mapping
+ * is loaded from localStorage and sent immediately so the device is created without
+ * user intervention.  The "Map" button in the sidebar always remains visible for
+ * non-standard controllers so the user can remap at any time.
  */
 
 // ── Linux evdev button codes (BTN_*) ─────────────────────────────────────────
@@ -117,16 +120,36 @@ function buildMappingDeclaration(gp) {
   return { buttons, axes };
 }
 
+// ── localStorage helpers ──────────────────────────────────────────────────────
+
+const MAPPING_STORAGE_PREFIX = 'lumen.gamepad-mapping.';
+
+/** Persist a mapping declaration for a given gamepad id. */
+function saveMappingToStorage(id, declaration) {
+  try {
+    localStorage.setItem(MAPPING_STORAGE_PREFIX + id, JSON.stringify(declaration));
+  } catch { /* storage quota or private mode — ignore */ }
+}
+
+/** Load a previously saved mapping declaration, or null if not found. */
+function loadMappingFromStorage(id) {
+  try {
+    const raw = localStorage.getItem(MAPPING_STORAGE_PREFIX + id);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+
 export class GamepadController {
   #client;
   #rafHandle    = null;    // requestAnimationFrame handle for the poll loop
-  #state        = new Map(); // gamepad index → { buttons: Float32Array, axes: Float32Array }
-  #onConnect    = null;    // optional (index, name) => void
+  #state        = new Map(); // gamepad index → { buttons: Float32Array, axes: Float32Array, id: string, mapping: string, declaration: object }
+  #onConnect    = null;    // optional (index, name, mapping) => void
   #onDisconnect = null;    // optional (index) => void
 
   /**
    * @param {import('../lumen-client.mjs').LumenClient} client
-   * @param {{ onConnect?: (index: number, name: string) => void,
+   * @param {{ onConnect?: (index: number, name: string, mapping: string) => void,
    *           onDisconnect?: (index: number) => void }} [callbacks]
    */
   constructor(client, { onConnect = null, onDisconnect = null } = {}) {
@@ -160,19 +183,44 @@ export class GamepadController {
     const gamepads = navigator.getGamepads();
     for (const gp of gamepads) {
       if (!gp || !this.#state.has(gp.index)) continue;
-      const { buttons, axes } = buildMappingDeclaration(gp);
+      const state = this.#state.get(gp.index);
       this.#client.sendInput({
         type:    'gamepad_connected',
         index:   gp.index,
         name:    gp.id,
         mapping: gp.mapping,
-        buttons,
-        axes,
+        buttons: state.declaration.buttons,
+        axes:    state.declaration.axes,
       });
     }
     if (this.#rafHandle === null) {
       this.#startPoll();
     }
+  }
+
+  /**
+   * Apply a user-defined mapping declaration for a non-standard gamepad.
+   *
+   * Saves the declaration to localStorage (keyed by gamepad id) so it is
+   * automatically applied on the next connection.  Re-sends `gamepad_connected`
+   * so the Rust side drops the old (absent) device and creates a new one.
+   *
+   * @param {number} index - Gamepad slot index.
+   * @param {{ buttons: Array, axes: Array }} declaration - Capability declaration from the mapping wizard.
+   */
+  applyMapping(index, declaration) {
+    const state = this.#state.get(index);
+    if (!state) return;
+    state.declaration = declaration;
+    saveMappingToStorage(state.id, declaration);
+    this.#client.sendInput({
+      type:    'gamepad_connected',
+      index,
+      name:    state.id,
+      mapping: state.mapping,
+      buttons: declaration.buttons,
+      axes:    declaration.axes,
+    });
   }
 
   // ── private helpers ──────────────────────────────────────────────────────────
@@ -213,20 +261,30 @@ export class GamepadController {
   #handleConnected(e) {
     const gp    = e.gamepad;
     const index = gp.index;
+
+    // For non-standard controllers, check localStorage for a previously saved mapping.
+    let declaration = buildMappingDeclaration(gp);
+    if (gp.mapping !== 'standard') {
+      const saved = loadMappingFromStorage(gp.id);
+      if (saved) declaration = saved;
+    }
+
     this.#state.set(index, {
-      buttons: new Float32Array(gp.buttons.length),
-      axes:    new Float32Array(gp.axes.length),
+      buttons:     new Float32Array(gp.buttons.length),
+      axes:        new Float32Array(gp.axes.length),
+      id:          gp.id,
+      mapping:     gp.mapping,
+      declaration,
     });
-    const { buttons, axes } = buildMappingDeclaration(gp);
     this.#client.sendInput({
       type:    'gamepad_connected',
       index,
       name:    gp.id,
       mapping: gp.mapping,
-      buttons,
-      axes,
+      buttons: declaration.buttons,
+      axes:    declaration.axes,
     });
-    this.#onConnect?.(index, gp.id);
+    this.#onConnect?.(index, gp.id, gp.mapping);
     if (this.#rafHandle === null) {
       this.#startPoll();
     }

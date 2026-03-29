@@ -5,6 +5,13 @@
  * hidden <textarea> to summon the native on-screen keyboard on mobile devices.
  * Keyboard events from the textarea are forwarded to the compositor.
  *
+ * Also renders a modifier/special-key overlay that floats above the on-screen
+ * keyboard whenever it is open.  Modifier buttons (Ctrl, Alt, Shift, Super)
+ * are sticky: they latch on until the next non-modifier key press, at which
+ * point the whole chord is sent atomically and modifiers reset.  Special-key
+ * buttons (Tab, Esc, F1–F5) send their key immediately (with any latched
+ * modifiers applied).
+ *
  * Only shown on touch-capable devices and only while connected.
  *
  * Key lookup order:
@@ -74,16 +81,48 @@ const CHAR_MAP = (() => {
 
 const SHIFT_SC = 42; // KEY_LEFTSHIFT evdev scancode
 
+// Modifier key definitions for the overlay bar.
+const MODIFIERS = [
+  { label: 'Shift', sc: 42  },
+  { label: 'Ctrl',  sc: 29  },
+  { label: 'Alt',   sc: 56  },
+  { label: 'Super', sc: 125 },
+];
+
+// Special (non-modifier) key definitions for the overlay bar.
+const SPECIAL_KEYS = [
+  { label: 'Tab', sc: 15 },
+  { label: 'Esc', sc: 1  },
+  { label: 'F1',  sc: 59 },
+  { label: 'F2',  sc: 60 },
+  { label: 'F3',  sc: 61 },
+  { label: 'F4',  sc: 62 },
+  { label: 'F5',  sc: 63 },
+];
+
 const LS_POS_KEY = 'lumen.keyboardBtnPos';
 
 export class FloatingKeyboard {
   #client;
   #btn     = null;   // floating <button> element
   #input   = null;   // hidden <textarea> element
+  #overlay = null;   // modifier/special-key overlay bar
   #visible = false;  // whether the button is currently shown
 
   /** Scancodes of keys currently held by this module (for release-all on blur). */
   #heldKeys = new Set();
+
+  /**
+   * Scancodes of modifier keys currently latched via the overlay.
+   * Cleared automatically after the first non-modifier key press/chord.
+   */
+  #activeModifiers = new Set();
+
+  /** Map from modifier scancode → overlay button element (for visual state). */
+  #modBtns = new Map();
+
+  /** setTimeout handle used to defer blur-triggered cleanup (see #bindKeyboardEvents). */
+  #blurTimer = null;
 
   /**
    * @param {import('../lumen-client.mjs').LumenClient} client
@@ -102,7 +141,9 @@ export class FloatingKeyboard {
   /** Hide the keyboard button (call when disconnected). */
   hide() {
     this.#visible = false;
+    clearTimeout(this.#blurTimer);
     this.#btn.style.display = 'none';
+    this.#overlay.style.display = 'none';
     this.#releaseAll();
     if (document.activeElement === this.#input) this.#input.blur();
   }
@@ -111,11 +152,17 @@ export class FloatingKeyboard {
 
   #buildDOM() {
     // Hidden textarea that receives actual keyboard input.
+    // autocomplete="new-password" is the most effective cross-browser trick to
+    // suppress the soft keyboard suggestion/autocorrect bar on Android and iOS.
     const ta = document.createElement('textarea');
-    ta.setAttribute('autocomplete',    'off');
+    ta.setAttribute('autocomplete',    'new-password');
     ta.setAttribute('autocorrect',     'off');
     ta.setAttribute('autocapitalize',  'none');
     ta.setAttribute('spellcheck',      'false');
+    ta.setAttribute('inputmode',       'text');
+    ta.setAttribute('data-gramm',              'false');
+    ta.setAttribute('data-gramm_editor',       'false');
+    ta.setAttribute('data-enable-grammarly',   'false');
     ta.setAttribute('aria-hidden',     'true');
     ta.setAttribute('tabindex',        '-1');
     ta.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0;';
@@ -131,12 +178,112 @@ export class FloatingKeyboard {
     document.body.appendChild(btn);
     this.#btn = btn;
 
+    // Modifier / special-key overlay bar.
+    this.#buildOverlay();
+
     this.#restorePosition();
     this.#bindDrag();
     this.#bindKeyboardEvents();
   }
 
-  // ── position persistence ──────────────────────────────────────────────────────
+  // ── modifier overlay ──────────────────────────────────────────────────────────
+
+  #buildOverlay() {
+    const bar = document.createElement('div');
+    bar.id = 'keyboard-overlay';
+    bar.style.display = 'none';
+
+    // Modifier toggle buttons.
+    for (const { label, sc } of MODIFIERS) {
+      const b = document.createElement('button');
+      b.className   = 'kb-mod-btn';
+      b.textContent = label;
+      b.tabIndex    = -1;
+      b.dataset.sc  = sc;
+      b.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.#toggleModifier(sc, b);
+        // Return focus to the textarea so the keyboard stays open.
+        this.#input.focus({ preventScroll: true });
+      });
+      bar.appendChild(b);
+      this.#modBtns.set(sc, b);
+    }
+
+    // Divider.
+    const sep = document.createElement('span');
+    sep.className = 'kb-overlay-sep';
+    bar.appendChild(sep);
+
+    // Special key buttons.
+    for (const { label, sc } of SPECIAL_KEYS) {
+      const b = document.createElement('button');
+      b.className   = 'kb-special-btn';
+      b.textContent = label;
+      b.tabIndex    = -1;
+      b.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.#sendChord(sc);
+        // Return focus to the textarea so the keyboard stays open.
+        this.#input.focus({ preventScroll: true });
+      });
+      bar.appendChild(b);
+    }
+
+    document.body.appendChild(bar);
+    this.#overlay = bar;
+
+    // Reposition overlay whenever the visual viewport changes (keyboard open/close).
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', () => this.#repositionOverlay());
+      window.visualViewport.addEventListener('scroll', () => this.#repositionOverlay());
+    }
+  }
+
+  /** Pin the overlay to the top edge of the on-screen keyboard gap. */
+  #repositionOverlay() {
+    if (!window.visualViewport) return;
+    const vv = window.visualViewport;
+    const bottom = Math.max(0, window.innerHeight - (vv.offsetTop + vv.height));
+    this.#overlay.style.bottom = `${bottom}px`;
+  }
+
+  /** Toggle a modifier button on/off. */
+  #toggleModifier(sc, btn) {
+    if (this.#activeModifiers.has(sc)) {
+      this.#activeModifiers.delete(sc);
+      btn.classList.remove('active');
+    } else {
+      this.#activeModifiers.add(sc);
+      btn.classList.add('active');
+    }
+  }
+
+  /**
+   * Send a chord: keydown for each latched modifier, then keydown+keyup for sc,
+   * then keyup for each modifier in reverse.  Clears all latched modifiers after.
+   * @param {number} sc  Evdev scancode for the non-modifier key.
+   */
+  #sendChord(sc) {
+    const mods = [...this.#activeModifiers];
+    for (const m of mods)         this.#sendKey(m, 1);
+    this.#sendKey(sc, 1);
+    this.#sendKey(sc, 0);
+    for (const m of [...mods].reverse()) this.#sendKey(m, 0);
+    this.#clearModifiers();
+  }
+
+  /** Reset all latched modifiers and update button visuals. */
+  #clearModifiers() {
+    for (const sc of this.#activeModifiers) {
+      this.#modBtns.get(sc)?.classList.remove('active');
+    }
+    this.#activeModifiers.clear();
+  }
+
+  // ── position persistence ───────────────────────────────────────────────────────
 
   #restorePosition() {
     try {
@@ -247,6 +394,15 @@ export class FloatingKeyboard {
   #bindKeyboardEvents() {
     const ta = this.#input;
 
+    ta.addEventListener('focus', () => {
+      // Cancel any pending blur-triggered cleanup (e.g. focus returned from
+      // an overlay button tap).
+      clearTimeout(this.#blurTimer);
+      if (!this.#visible) return;
+      this.#repositionOverlay();
+      this.#overlay.style.display = '';
+    });
+
     ta.addEventListener('keydown', (e) => {
       e.preventDefault();
       if (e.repeat) return;
@@ -270,7 +426,11 @@ export class FloatingKeyboard {
       for (const ch of data) {
         const entry = CHAR_MAP.get(ch);
         if (!entry) continue;
-        if (entry.shift) {
+        if (this.#activeModifiers.size > 0) {
+          // Modifier chord: ignore the entry.shift flag — the overlay modifiers
+          // take precedence.  Send the bare scancode inside the modifier wrap.
+          this.#sendChord(entry.sc);
+        } else if (entry.shift) {
           this.#sendKey(SHIFT_SC, 1);
           this.#sendKey(entry.sc, 1);
           this.#sendKey(entry.sc, 0);
@@ -284,7 +444,17 @@ export class FloatingKeyboard {
       ta.value = '';
     });
 
-    ta.addEventListener('blur', () => this.#releaseAll());
+    ta.addEventListener('blur', () => {
+      // Defer cleanup so that a button tap (which briefly steals focus and then
+      // calls ta.focus() to return it) cancels this timer via the focus handler
+      // above.  e.relatedTarget is unreliable on mobile so we don't use it.
+      this.#blurTimer = setTimeout(() => {
+        if (document.activeElement === ta) return; // focus already returned
+        this.#overlay.style.display = 'none';
+        this.#clearModifiers();
+        this.#releaseAll();
+      }, 0);
+    });
   }
 
   /** Resolve a KeyboardEvent to a scancode, or null if unknown. */
@@ -299,16 +469,23 @@ export class FloatingKeyboard {
     return entry ? entry.sc : null;
   }
 
-  /** Send key-down, tracking shift if the CHAR_MAP entry requires it. */
+  /** Send key-down, applying chord if overlay modifiers are latched. */
   #pressKey(sc, key) {
+    if (this.#activeModifiers.size > 0) {
+      // Overlay modifiers are latched — send as chord and consume them.
+      // Ignore any CHAR_MAP shift requirement; overlay takes precedence.
+      this.#sendChord(sc);
+      return;
+    }
     const entry = CHAR_MAP.get(key);
     if (entry?.shift) this.#sendKey(SHIFT_SC, 1);
     this.#sendKey(sc, 1);
     this.#heldKeys.add(sc);
   }
 
-  /** Send key-up, releasing shift if needed. */
+  /** Send key-up, releasing shift if needed (only when not using chord path). */
   #releaseKey(sc, key) {
+    if (!this.#heldKeys.has(sc)) return; // chord path already sent release
     this.#sendKey(sc, 0);
     this.#heldKeys.delete(sc);
     const entry = CHAR_MAP.get(key);

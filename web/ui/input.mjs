@@ -68,6 +68,10 @@ export class InputHandler {
     const onUp         = (e) => this.#handlePointerUp(e);
     const onMenu       = (e) => e.preventDefault();
     const onWheel      = (e) => this.#handleWheel(e);
+    // Prevent Chrome from treating mouse buttons 3/4 (back/forward) as
+    // browser navigation. Must be on 'mousedown' — pointerdown preventDefault
+    // is insufficient to block Chrome's navigation gesture for these buttons.
+    const onAuxDown    = (e) => { if (e.button >= 3) e.preventDefault(); };
     // Release all held keys when the browser window loses focus so the
     // compositor never gets stuck thinking a key (e.g. Super) is held down.
     const onBlur       = () => this.#releaseAllKeys();
@@ -79,16 +83,17 @@ export class InputHandler {
     target.addEventListener('pointerdown',  onDown);
     target.addEventListener('pointerup',    onUp);
     target.addEventListener('contextmenu',  onMenu);
+    target.addEventListener('mousedown',    onAuxDown);
     target.addEventListener('wheel',        onWheel, { passive: false });
     window.addEventListener('blur',         onBlur);
     document.addEventListener('visibilitychange', onVisChange);
 
-    this.#handlers = { video, target, onKeyDown, onKeyUp, onMove, onDown, onUp, onMenu, onWheel, onBlur, onVisChange };
+    this.#handlers = { video, target, onKeyDown, onKeyUp, onMove, onDown, onUp, onMenu, onAuxDown, onWheel, onBlur, onVisChange };
   }
 
   /** Detach all input event listeners. */
   unbind() {
-    const { video, target, onKeyDown, onKeyUp, onMove, onDown, onUp, onMenu, onWheel, onBlur, onVisChange } = this.#handlers;
+    const { video, target, onKeyDown, onKeyUp, onMove, onDown, onUp, onMenu, onAuxDown, onWheel, onBlur, onVisChange } = this.#handlers;
     if (!video) return;
     this.#releaseAllKeys();
     video.removeEventListener('keydown', onKeyDown);
@@ -97,6 +102,7 @@ export class InputHandler {
     target.removeEventListener('pointerdown',  onDown);
     target.removeEventListener('pointerup',    onUp);
     target.removeEventListener('contextmenu',  onMenu);
+    target.removeEventListener('mousedown',    onAuxDown);
     target.removeEventListener('wheel',        onWheel);
     window.removeEventListener('blur',         onBlur);
     document.removeEventListener('visibilitychange', onVisChange);

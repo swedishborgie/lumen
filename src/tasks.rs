@@ -46,8 +46,22 @@ pub fn clipboard_event_to_json(ev: &lumen_compositor::ClipboardEvent) -> Option<
 /// Spawn the compositor on a dedicated thread.
 pub fn spawn_compositor(mut compositor: lumen_compositor::Compositor) {
     std::thread::spawn(move || {
-        if let Err(e) = compositor.run() {
-            tracing::error!("Compositor: {e:#}");
+        let result = std::panic::catch_unwind(
+            std::panic::AssertUnwindSafe(|| compositor.run()),
+        );
+        match result {
+            Ok(Ok(())) => {
+                // Normal shutdown: Stop command was received and the event loop
+                // exited cleanly. Main will call std::process::exit(0) shortly.
+            }
+            Ok(Err(e)) => {
+                tracing::error!("Compositor crashed: {e:#}; exiting so systemd can restart");
+                std::process::exit(1);
+            }
+            Err(_) => {
+                tracing::error!("Compositor panicked; exiting so systemd can restart");
+                std::process::exit(1);
+            }
         }
     });
 }

@@ -71,7 +71,11 @@ export class InputHandler {
     // Prevent Chrome from treating mouse buttons 3/4 (back/forward) as
     // browser navigation. Must be on 'mousedown' — pointerdown preventDefault
     // is insufficient to block Chrome's navigation gesture for these buttons.
+    // auxclick and mouseup are also suppressed because Chrome App mode triggers
+    // navigation on those events rather than (or in addition to) mousedown.
     const onAuxDown    = (e) => { if (e.button >= 3) e.preventDefault(); };
+    const onAuxUp      = (e) => { if (e.button >= 3) e.preventDefault(); };
+    const onAuxClick   = (e) => { if (e.button >= 3) e.preventDefault(); };
     // Release all held keys when the browser window loses focus so the
     // compositor never gets stuck thinking a key (e.g. Super) is held down.
     const onBlur       = () => this.#releaseAllKeys();
@@ -84,16 +88,18 @@ export class InputHandler {
     target.addEventListener('pointerup',    onUp);
     target.addEventListener('contextmenu',  onMenu);
     target.addEventListener('mousedown',    onAuxDown);
+    target.addEventListener('mouseup',      onAuxUp);
+    target.addEventListener('auxclick',     onAuxClick);
     target.addEventListener('wheel',        onWheel, { passive: false });
     window.addEventListener('blur',         onBlur);
     document.addEventListener('visibilitychange', onVisChange);
 
-    this.#handlers = { video, target, onKeyDown, onKeyUp, onMove, onDown, onUp, onMenu, onAuxDown, onWheel, onBlur, onVisChange };
+    this.#handlers = { video, target, onKeyDown, onKeyUp, onMove, onDown, onUp, onMenu, onAuxDown, onAuxUp, onAuxClick, onWheel, onBlur, onVisChange };
   }
 
   /** Detach all input event listeners. */
   unbind() {
-    const { video, target, onKeyDown, onKeyUp, onMove, onDown, onUp, onMenu, onAuxDown, onWheel, onBlur, onVisChange } = this.#handlers;
+    const { video, target, onKeyDown, onKeyUp, onMove, onDown, onUp, onMenu, onAuxDown, onAuxUp, onAuxClick, onWheel, onBlur, onVisChange } = this.#handlers;
     if (!video) return;
     this.#releaseAllKeys();
     video.removeEventListener('keydown', onKeyDown);
@@ -103,6 +109,8 @@ export class InputHandler {
     target.removeEventListener('pointerup',    onUp);
     target.removeEventListener('contextmenu',  onMenu);
     target.removeEventListener('mousedown',    onAuxDown);
+    target.removeEventListener('mouseup',      onAuxUp);
+    target.removeEventListener('auxclick',     onAuxClick);
     target.removeEventListener('wheel',        onWheel);
     window.removeEventListener('blur',         onBlur);
     document.removeEventListener('visibilitychange', onVisChange);

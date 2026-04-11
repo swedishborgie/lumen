@@ -2010,6 +2010,7 @@ dependencies = [
  "libc",
  "lumen-compositor",
  "rayon",
+ "serde",
  "thiserror 2.0.18",
  "tokio",
  "tracing",

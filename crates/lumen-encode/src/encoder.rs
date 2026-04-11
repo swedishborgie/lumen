@@ -5,6 +5,7 @@ use anyhow::Result;
 use bytes::Bytes;
 
 use lumen_compositor::CapturedFrame;
+use crate::codec::VideoCodec;
 
 /// Configuration for the video encoder.
 #[derive(Debug, Clone)]
@@ -20,6 +21,9 @@ pub struct EncoderConfig {
     /// VA-API DRM render node. `None` triggers auto-detection.
     /// Use `Some(PathBuf::from(""))` to force software encoding.
     pub render_node: Option<PathBuf>,
+    /// Requested video codec. Hardware encoders support all variants;
+    /// the software (x264) encoder only supports `VideoCodec::H264`.
+    pub codec: VideoCodec,
     /// CUDA device index for NVENC encoding (e.g. `"0"` for the first GPU).
     ///
     /// Only meaningful when the `nvenc` feature is enabled.  `None` disables
@@ -39,20 +43,25 @@ impl Default for EncoderConfig {
             bitrate_kbps: 4000,
             max_bitrate_kbps: 8000,
             render_node: None,
+            codec: VideoCodec::H264,
             #[cfg(feature = "nvenc")]
             cuda_device: Some("0".to_string()),
         }
     }
 }
 
-/// An encoded H.264 frame (one or more NAL units in Annex-B format).
+/// An encoded video frame (one or more NAL/OBU units in the codec's bitstream format).
 #[derive(Debug, Clone)]
 pub struct EncodedFrame {
-    /// Raw H.264 Annex-B byte stream (NAL units with 0x00 0x00 0x00 0x01 start codes).
+    /// Raw compressed bitstream bytes.
+    /// - H.264/H.265: Annex-B byte stream (NAL units with 0x00 0x00 0x00 0x01 start codes).
+    /// - VP9/AV1: raw codec bitstream bytes.
     pub data: Bytes,
     /// Presentation timestamp in milliseconds.
     pub pts_ms: u64,
     pub is_keyframe: bool,
+    /// The codec used to produce this frame.
+    pub codec: VideoCodec,
     /// Wall-clock instant at which the source frame was captured by the compositor.
     ///
     /// Must be passed as the `instant` argument to `writer.write()` in `push_video`
@@ -63,7 +72,7 @@ pub struct EncodedFrame {
     pub captured_at: Instant,
 }
 
-/// Abstraction over hardware and software H.264 encoders.
+/// Abstraction over hardware and software video encoders.
 pub trait VideoEncoder: Send {
     /// Encode a captured frame. Returns `None` when the encoder is buffering.
     fn encode(&mut self, frame: CapturedFrame) -> Result<Option<EncodedFrame>>;
@@ -80,9 +89,9 @@ pub trait VideoEncoder: Send {
 /// Probe whether VA-API hardware encoding is available for the given config.
 ///
 /// Returns `true` if a `VaapiEncoder` can be successfully initialised on the
-/// render node specified in `config`.  Use this before starting the compositor
-/// so that the rendering path (GPU DMA-BUF vs CPU RGBA) can be chosen to match
-/// the encoder that will actually be used.
+/// render node specified in `config` for the codec in `config.codec`.  Use
+/// this before starting the compositor so that the rendering path (GPU DMA-BUF
+/// vs CPU RGBA) can be chosen to match the encoder that will actually be used.
 pub fn probe_vaapi(config: &EncoderConfig) -> bool {
     if config
         .render_node
@@ -94,6 +103,33 @@ pub fn probe_vaapi(config: &EncoderConfig) -> bool {
     } else {
         false
     }
+}
+
+/// Probe all VA-API codecs that can be successfully initialised on the render
+/// node specified in `config`.  Returns a list of supported [`VideoCodec`]
+/// variants, always starting with H264 (if available).
+///
+/// The returned list is used to populate the `/api/config` capabilities.
+pub fn probe_supported_vaapi_codecs(config: &EncoderConfig) -> Vec<VideoCodec> {
+    if !config
+        .render_node
+        .as_deref()
+        .map(|p| !p.as_os_str().is_empty())
+        .unwrap_or(false)
+    {
+        return vec![];
+    }
+
+    let candidates = [VideoCodec::H264, VideoCodec::H265, VideoCodec::Vp9, VideoCodec::Av1];
+    candidates
+        .iter()
+        .filter(|&&codec| {
+            let mut probe_cfg = config.clone();
+            probe_cfg.codec = codec;
+            crate::vaapi::VaapiEncoder::new(&probe_cfg).is_ok()
+        })
+        .copied()
+        .collect()
 }
 
 /// Probe whether NVENC hardware encoding is available for the given config.
@@ -112,10 +148,13 @@ pub fn probe_nvenc(config: &EncoderConfig) -> bool {
 
 /// Auto-select the best available encoder backend.
 ///
+/// For hardware paths the codec in `config.codec` is attempted first; if
+/// unavailable it falls back to H264 (hardware) then x264 (software).
+///
 /// Probe order (when features are active):
 ///   1. NVENC  — when `nvenc` feature is enabled and `config.cuda_device` is set.
 ///   2. VA-API — when `config.render_node` is a non-empty path.
-///   3. x264   — always available software fallback.
+///   3. x264   — always available software fallback (H264 only).
 pub fn create_encoder(config: &EncoderConfig) -> Result<Box<dyn VideoEncoder>> {
     // NVENC path: only when feature is enabled and a CUDA device is configured.
     #[cfg(feature = "nvenc")]
@@ -135,11 +174,27 @@ pub fn create_encoder(config: &EncoderConfig) -> Result<Box<dyn VideoEncoder>> {
     if config.render_node.as_deref().map(|p| !p.as_os_str().is_empty()).unwrap_or(false) {
         match crate::vaapi::VaapiEncoder::new(config) {
             Ok(enc) => {
-                tracing::info!("Using VA-API hardware encoder");
+                tracing::info!("Using VA-API hardware encoder ({})", config.codec);
                 return Ok(Box::new(enc));
             }
             Err(e) => {
-                tracing::warn!("VA-API encoder unavailable ({}), falling back to x264", e);
+                tracing::warn!("VA-API encoder unavailable for {} ({})", config.codec, e);
+                // If the preferred codec failed and it wasn't H264, retry with H264.
+                if config.codec != VideoCodec::H264 {
+                    let mut fallback = config.clone();
+                    fallback.codec = VideoCodec::H264;
+                    match crate::vaapi::VaapiEncoder::new(&fallback) {
+                        Ok(enc) => {
+                            tracing::info!("Falling back to VA-API H264 encoder");
+                            return Ok(Box::new(enc));
+                        }
+                        Err(e2) => {
+                            tracing::warn!("VA-API H264 fallback also unavailable ({}), falling back to x264", e2);
+                        }
+                    }
+                } else {
+                    tracing::warn!("Falling back to x264 software encoder");
+                }
             }
         }
     }

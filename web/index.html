@@ -57,6 +57,25 @@
         </div>
       </div>
     </div>
+    <div id="stream-settings-section">
+      <div class="tray-label">Stream<i class="help-icon" title="Configure the video codec and frame rate. Changes apply on the next connection. Codec and FPS controls are disabled while connected.">ⓘ</i></div>
+      <div class="tray-row">
+        <span class="tray-label">Codec</span>
+        <select id="stream-codec-select">
+          <option value="h264" selected>H.264</option>
+        </select>
+      </div>
+      <div class="tray-row">
+        <span class="tray-label">Frame Rate</span>
+        <select id="stream-fps-select">
+          <option value="15">15 fps</option>
+          <option value="30" selected>30 fps</option>
+          <option value="60">60 fps</option>
+          <option value="custom">Custom…</option>
+        </select>
+        <input type="number" id="stream-fps-custom" min="1" max="240" style="display:none;width:4em" placeholder="FPS">
+      </div>
+    </div>
     <div id="clipboard-section">
       <div class="tray-label">Clipboard<i class="help-icon" title="Paste text here to send it to the compositor clipboard. Updates automatically when the compositor clipboard changes.">ⓘ</i></div>
       <textarea id="clipboard-input" placeholder="Paste or type here to send to compositor. Updated automatically when compositor clipboard changes." rows="5" spellcheck="false"></textarea>

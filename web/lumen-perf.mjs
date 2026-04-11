@@ -20,7 +20,7 @@ const HISTORY = 120;
 const OVERLAY_W = 220;
 
 /** Height of the text-header panel in CSS pixels. */
-const HEADER_H = 70;
+const HEADER_H = 86;
 
 /** Height of each graph panel in CSS pixels. */
 const GRAPH_H = 50;
@@ -205,6 +205,7 @@ export class PerformanceMonitor {
     const lines = [
       `Lumen Metrics — ${new Date().toISOString()}`,
       `Resolution: ${res}  Decoder: ${snap?.decoderImpl ?? '—'}`,
+      `Codec: ${this.#client.capabilities?.currentCodec?.toUpperCase() ?? '—'}  Target FPS: ${this.#client.capabilities?.fps ?? '—'}`,
       ``,
       `--- WebRTC (client-side) ---`,
       `Bitrate:          ${f(last(this.#bitrate), ' KB/s')}`,
@@ -476,7 +477,8 @@ export class PerformanceMonitor {
     ctx.fillText('decoder', cx, y + 14);
     ctx.fillText('resolution', cx, y + 30);
     ctx.fillText('pkts total', cx, y + 46);
-    ctx.fillText('ram', cx, y + 62);
+    ctx.fillText('stream', cx, y + 62);
+    ctx.fillText('ram', cx, y + 78);
 
     ctx.font      = '11px monospace';
     ctx.fillStyle = C.value;
@@ -496,6 +498,14 @@ export class PerformanceMonitor {
     const pktsTotal = snap?.videoPackets != null ? snap.videoPackets.toLocaleString() : '—';
     ctx.fillText(pktsTotal, rx, y + 46);
 
+    // Codec + target FPS from server capabilities.
+    const caps   = this.#client.capabilities;
+    const codec  = caps?.currentCodec?.toUpperCase() ?? '—';
+    const fps    = caps?.fps != null ? `${caps.fps} fps` : '—';
+    ctx.fillStyle = C.fps;
+    ctx.fillText(`${codec} · ${fps}`, rx, y + 62);
+    ctx.fillStyle = C.value;
+
     // RAM from server metrics.
     const srvSys   = this.#latestSrvMetrics?.system ?? {};
     const memUsed  = srvSys.mem_used_mb  ?? null;
@@ -504,7 +514,7 @@ export class PerformanceMonitor {
       ? `${memUsed}/${memTotal} MB`
       : '—';
     ctx.fillStyle = C.cpu;
-    ctx.fillText(ramStr, rx, y + 62);
+    ctx.fillText(ramStr, rx, y + 78);
 
     ctx.textAlign = 'left';
   }

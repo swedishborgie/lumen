@@ -131,6 +131,12 @@ pub enum InputEvent {
         /// Normalised value in the range −1.0 to 1.0.
         value: f32,
     },
+
+    /// Request a change to the compositor's target frame rate.
+    ///
+    /// This is handled at the compositor event loop level (updating the output
+    /// refresh rate and frame interval) and is never injected into the Smithay seat.
+    SetTargetFps(f64),
 }
 
 /// Evdev capability declaration for a single gamepad button.
@@ -189,6 +195,8 @@ pub fn inject_input(state: &mut AppState, event: InputEvent) {
         | InputEvent::GamepadDisconnected { .. }
         | InputEvent::GamepadButton { .. }
         | InputEvent::GamepadAxis { .. } => {}
+        // SetTargetFps is handled at the compositor event loop level, not here.
+        InputEvent::SetTargetFps(_) => {}
     }
 }
 

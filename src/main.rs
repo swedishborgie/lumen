@@ -42,6 +42,32 @@ async fn main() -> Result<()> {
     // ── GPU detection ─────────────────────────────────────────────────────────
     let effective_dri_node = hardware::detect_and_probe_gpu(&args);
 
+    // ── Codec capabilities ────────────────────────────────────────────────────
+    // Probe which VA-API codecs are available at startup.
+    let probe_config = lumen_encode::EncoderConfig {
+        width: args.width,
+        height: args.height,
+        fps: args.fps,
+        bitrate_kbps: args.video_bitrate_kbps,
+        max_bitrate_kbps: args.max_bitrate_kbps.unwrap_or(args.video_bitrate_kbps * 2),
+        render_node: effective_dri_node.clone(),
+        ..Default::default()
+    };
+    let supported_codecs: Vec<String> = if effective_dri_node.is_some() {
+        lumen_encode::probe_supported_vaapi_codecs(&probe_config)
+            .iter()
+            .map(|c| c.to_string())
+            .collect()
+    } else {
+        vec!["h264".to_string()]
+    };
+    tracing::info!("Supported codecs: {:?}", supported_codecs);
+    let initial_capabilities = lumen_web::ServerCapabilities {
+        supported_codecs: supported_codecs.clone(),
+        current_codec: "h264".to_string(),
+        fps: args.fps,
+    };
+
     // ── Compositor ────────────────────────────────────────────────────────────
     // Set up a channel so the compositor can notify us when its Wayland socket
     // is ready — used by the --launch task below.
@@ -108,6 +134,16 @@ async fn main() -> Result<()> {
     // Encoder metrics watch channel: encoder writes latest metrics, signaling layer reads.
     let (encoder_metrics_tx, encoder_metrics_rx) =
         tokio::sync::watch::channel(lumen_web::metrics::EncoderMetrics::default());
+    // Codec + FPS watch channels: web layer writes, encoder task and compositor read.
+    let (codec_tx, codec_rx) =
+        tokio::sync::watch::channel::<String>("h264".to_string());
+    let codec_tx = Arc::new(codec_tx);
+    let (fps_tx, fps_rx) =
+        tokio::sync::watch::channel::<f64>(args.fps);
+    let fps_tx = Arc::new(fps_tx);
+    // Capabilities watch: updated by capabilities_updater task, read by config_handler.
+    let (capabilities_tx, capabilities_rx) =
+        tokio::sync::watch::channel(initial_capabilities);
 
     // ── Shutdown signal ───────────────────────────────────────────────────────
     // When --launch is used, the child exiting triggers a graceful shutdown of
@@ -125,6 +161,14 @@ async fn main() -> Result<()> {
         enc_resize_rx,
         peer_count,
         Some(encoder_metrics_tx),
+        codec_rx.clone(),
+        fps_rx.clone(),
+    );
+    tasks::spawn_fps_bridge(fps_rx.clone(), compositor_input_tx.clone());
+    tasks::spawn_capabilities_updater(
+        codec_rx,
+        fps_rx,
+        capabilities_tx,
     );
     tasks::spawn_gamepad_manager(gamepad_rx, haptic_tx);
     let _shutdown_keep_alive = tasks::spawn_launch_task(
@@ -168,6 +212,9 @@ async fn main() -> Result<()> {
         system_metrics_rx,
         tls_cert: args.tls_cert,
         tls_key: args.tls_key,
+        capabilities_rx,
+        codec_tx,
+        fps_tx,
     })
     .run()
     .await

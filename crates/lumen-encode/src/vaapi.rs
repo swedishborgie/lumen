@@ -91,6 +91,7 @@ pub struct VaapiEncoder {
     fps: f64,
     bitrate_kbps: u32,
     max_bitrate_kbps: u32,
+    codec: crate::codec::VideoCodec,
 }
 
 // SAFETY: raw pointers are only accessed from the single encoder task thread.
@@ -165,13 +166,20 @@ impl VaapiEncoder {
             }
 
             // ----------------------------------------------------------------
-            // 3. Find h264_vaapi encoder and allocate codec context
+            // 3. Find VA-API encoder for the requested codec
             // ----------------------------------------------------------------
-            let codec = avcodec_find_encoder_by_name(c"h264_vaapi".as_ptr());
+            let vaapi_codec_name = match config.codec {
+                crate::codec::VideoCodec::H264 => c"h264_vaapi",
+                crate::codec::VideoCodec::H265 => c"hevc_vaapi",
+                crate::codec::VideoCodec::Vp9  => c"vp9_vaapi",
+                crate::codec::VideoCodec::Av1  => c"av1_vaapi",
+            };
+            let codec = avcodec_find_encoder_by_name(vaapi_codec_name.as_ptr());
             if codec.is_null() {
                 av_buffer_unref(&mut hw_device_ctx);
                 if !drm_device_ctx.is_null() { av_buffer_unref(&mut drm_device_ctx); }
-                bail!("h264_vaapi codec not found — is ffmpeg built with VA-API support?");
+                bail!("{} codec not found — is ffmpeg built with VA-API support?",
+                    vaapi_codec_name.to_str().unwrap_or("?"));
             }
 
             let codec_ctx = avcodec_alloc_context3(codec);
@@ -193,7 +201,7 @@ impl VaapiEncoder {
             (*codec_ctx).hw_device_ctx = av_buffer_ref(hw_device_ctx);
 
             // ----------------------------------------------------------------
-            // 4. Encoder hw_frames_ctx — NV12 VAAPI pool
+            // 4. Encoder hw_frames_ctx — NV12 VAAPI pool (suitable for all supported codecs)
             // ----------------------------------------------------------------
             let hw_frames_ref = av_hwframe_ctx_alloc(hw_device_ctx);
             if hw_frames_ref.is_null() {
@@ -225,8 +233,17 @@ impl VaapiEncoder {
             // ----------------------------------------------------------------
             (*codec_ctx).flags |= AV_CODEC_FLAG2_LOCAL_HEADER;
             let mut opts: *mut AVDictionary = std::ptr::null_mut();
-            av_dict_set(&mut opts, c"profile".as_ptr(), c"high".as_ptr(), 0);
-            av_dict_set(&mut opts, c"level".as_ptr(), c"4.1".as_ptr(), 0);
+            // H264 and H265 accept profile/level; VP9 and AV1 do not.
+            match config.codec {
+                crate::codec::VideoCodec::H264 => {
+                    av_dict_set(&mut opts, c"profile".as_ptr(), c"high".as_ptr(), 0);
+                    av_dict_set(&mut opts, c"level".as_ptr(), c"4.1".as_ptr(), 0);
+                }
+                crate::codec::VideoCodec::H265 => {
+                    av_dict_set(&mut opts, c"profile".as_ptr(), c"main".as_ptr(), 0);
+                }
+                crate::codec::VideoCodec::Vp9 | crate::codec::VideoCodec::Av1 => {}
+            }
             av_dict_set(&mut opts, c"rc_mode".as_ptr(), c"VBR".as_ptr(), 0);
             // Limit the encoder's internal async pipeline to 1 frame. The default
             // depth (typically 2–4) causes the encoder to buffer several frames
@@ -266,7 +283,7 @@ impl VaapiEncoder {
                     (std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), false)
                 };
 
-            tracing::info!("VA-API encoder initialised on {}", render_node);
+            tracing::info!("VA-API {} encoder initialised on {}", config.codec, render_node);
 
             Ok(Self {
                 codec_ctx,
@@ -286,6 +303,7 @@ impl VaapiEncoder {
                 fps: config.fps,
                 bitrate_kbps: config.bitrate_kbps,
                 max_bitrate_kbps: config.max_bitrate_kbps,
+                codec: config.codec,
             })
         }
     }
@@ -395,6 +413,7 @@ impl VaapiEncoder {
             data: Bytes::copy_from_slice(data),
             pts_ms,
             is_keyframe,
+            codec: self.codec,
             captured_at: frame_captured_at,
         }))
     }
@@ -447,6 +466,9 @@ impl VideoEncoder for VaapiEncoder {
     }
 
     fn resize(&mut self, width: u32, height: u32) -> anyhow::Result<()> {
+        if width as i32 == self.width && height as i32 == self.height {
+            return Ok(());
+        }
         let w = width as i32;
         let h = height as i32;
 
@@ -471,9 +493,16 @@ impl VideoEncoder for VaapiEncoder {
             }
 
             // --- Rebuild codec context ---
-            let codec = avcodec_find_encoder_by_name(c"h264_vaapi".as_ptr());
+            let vaapi_codec_name = match self.codec {
+                crate::codec::VideoCodec::H264 => c"h264_vaapi",
+                crate::codec::VideoCodec::H265 => c"hevc_vaapi",
+                crate::codec::VideoCodec::Vp9  => c"vp9_vaapi",
+                crate::codec::VideoCodec::Av1  => c"av1_vaapi",
+            };
+            let codec = avcodec_find_encoder_by_name(vaapi_codec_name.as_ptr());
             if codec.is_null() {
-                anyhow::bail!("h264_vaapi codec not found during resize");
+                anyhow::bail!("{} codec not found during resize",
+                    vaapi_codec_name.to_str().unwrap_or("?"));
             }
             let codec_ctx = avcodec_alloc_context3(codec);
             if codec_ctx.is_null() {
@@ -514,8 +543,16 @@ impl VideoEncoder for VaapiEncoder {
 
             (*codec_ctx).flags |= AV_CODEC_FLAG2_LOCAL_HEADER;
             let mut opts: *mut AVDictionary = std::ptr::null_mut();
-            av_dict_set(&mut opts, c"profile".as_ptr(), c"high".as_ptr(), 0);
-            av_dict_set(&mut opts, c"level".as_ptr(), c"4.1".as_ptr(), 0);
+            match self.codec {
+                crate::codec::VideoCodec::H264 => {
+                    av_dict_set(&mut opts, c"profile".as_ptr(), c"high".as_ptr(), 0);
+                    av_dict_set(&mut opts, c"level".as_ptr(), c"4.1".as_ptr(), 0);
+                }
+                crate::codec::VideoCodec::H265 => {
+                    av_dict_set(&mut opts, c"profile".as_ptr(), c"main".as_ptr(), 0);
+                }
+                crate::codec::VideoCodec::Vp9 | crate::codec::VideoCodec::Av1 => {}
+            }
             av_dict_set(&mut opts, c"rc_mode".as_ptr(), c"VBR".as_ptr(), 0);
             av_dict_set(&mut opts, c"async_depth".as_ptr(), c"1".as_ptr(), 0);
             let ret = avcodec_open2(codec_ctx, codec, &mut opts);

@@ -39,6 +39,12 @@ pub struct SignalingState {
     pub encoder_metrics_rx: Option<tokio::sync::watch::Receiver<EncoderMetrics>>,
     /// Latest system metrics (CPU, RAM).
     pub system_metrics_rx: Option<tokio::sync::watch::Receiver<SystemMetrics>>,
+    /// Current server capabilities (supported codecs, active codec, fps).
+    pub capabilities_rx: tokio::sync::watch::Receiver<crate::types::ServerCapabilities>,
+    /// Sender for codec change requests from the browser (codec name string).
+    pub codec_tx: Arc<tokio::sync::watch::Sender<String>>,
+    /// Sender for FPS change requests from the browser.
+    pub fps_tx: Arc<tokio::sync::watch::Sender<f64>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -50,6 +56,17 @@ enum ClientMessage {
     Resize { width: u32, height: u32 },
     /// Subscribe or unsubscribe from server-side metrics streaming.
     MetricsSubscription { enabled: bool },
+    /// Request a server-wide codec or FPS change.
+    ///
+    /// The server validates the request against supported capabilities and
+    /// applies the change if valid.  All existing sessions will need to
+    /// reconnect to receive the new codec.
+    RequestSettings {
+        #[serde(default)]
+        codec: Option<String>,
+        #[serde(default)]
+        fps: Option<f64>,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -59,6 +76,8 @@ enum ServerMessage {
     Error { message: String },
     /// Server-side metrics snapshot, pushed ~1 Hz to subscribed clients.
     Metrics(ServerMetrics),
+    /// Confirmation that the requested settings were applied.
+    SettingsApplied { codec: String, fps: f64 },
 }
 
 pub async fn ws_handler(
@@ -68,13 +87,21 @@ pub async fn ws_handler(
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
-/// Returns the ICE server list (and any future client-side configuration)
-/// as a JSON object: `{ "iceServers": [...], "hostname": "..." }`.
+/// Returns the ICE server list and server capabilities as a JSON object.
 pub async fn config_handler(
     State(state): State<SignalingState>,
 ) -> axum::response::Json<serde_json::Value> {
     let ice = serde_json::to_value(&state.ice_servers).unwrap_or(serde_json::json!([]));
-    axum::response::Json(serde_json::json!({ "iceServers": ice, "hostname": state.hostname }))
+    let caps = state.capabilities_rx.borrow().clone();
+    axum::response::Json(serde_json::json!({
+        "iceServers": ice,
+        "hostname": state.hostname,
+        "capabilities": {
+            "codecs": caps.supported_codecs,
+            "currentCodec": caps.current_codec,
+            "fps": caps.fps,
+        }
+    }))
 }
 
 /// Returns a dynamically generated PWA manifest with the hostname injected
@@ -188,6 +215,45 @@ async fn handle_socket(mut socket: WebSocket, state: SignalingState) {
                             && (state.encoder_metrics_rx.is_some()
                                 || state.system_metrics_rx.is_some());
                         tracing::debug!(metrics_subscribed, "Metrics subscription changed");
+                    }
+                    ClientMessage::RequestSettings { codec, fps } => {
+                        let caps = state.capabilities_rx.borrow().clone();
+                        let mut applied_codec = caps.current_codec.clone();
+                        let mut applied_fps = caps.fps;
+                        let mut err: Option<String> = None;
+
+                        if let Some(ref c) = codec {
+                            if caps.supported_codecs.contains(c) {
+                                let _ = state.codec_tx.send(c.clone());
+                                applied_codec = c.clone();
+                            } else {
+                                err = Some(format!(
+                                    "Unsupported codec '{}'; supported: {}",
+                                    c,
+                                    caps.supported_codecs.join(", ")
+                                ));
+                            }
+                        }
+                        if let Some(f) = fps {
+                            if f >= 1.0 && f <= 240.0 {
+                                let _ = state.fps_tx.send(f);
+                                applied_fps = f;
+                            } else {
+                                err = Some(format!("FPS must be between 1 and 240, got {f}"));
+                            }
+                        }
+
+                        if let Some(msg) = err {
+                            send_error(&mut socket, &msg).await;
+                        } else {
+                            let resp = ServerMessage::SettingsApplied {
+                                codec: applied_codec,
+                                fps: applied_fps,
+                            };
+                            let _ = socket
+                                .send(Message::Text(serde_json::to_string(&resp).unwrap().into()))
+                                .await;
+                        }
                     }
                 }
             }

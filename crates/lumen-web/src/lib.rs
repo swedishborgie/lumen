@@ -12,4 +12,4 @@ pub mod signaling;
 pub mod types;
 
 pub use server::WebServer;
-pub use types::{AuthConfig, IceServerConfig, WebServerConfig};
+pub use types::{AuthConfig, IceServerConfig, ServerCapabilities, WebServerConfig};

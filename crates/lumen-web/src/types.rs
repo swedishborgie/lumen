@@ -55,6 +55,28 @@ pub enum AuthConfig {
     },
 }
 
+/// Server capabilities reported to the client via `/api/config`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ServerCapabilities {
+    /// List of supported video codec names (e.g. `["h264", "vp9"]`).
+    pub supported_codecs: Vec<String>,
+    /// Currently active video codec name.
+    pub current_codec: String,
+    /// Currently active target frame rate.
+    pub fps: f64,
+}
+
+impl Default for ServerCapabilities {
+    fn default() -> Self {
+        Self {
+            supported_codecs: vec!["h264".to_string()],
+            current_codec: "h264".to_string(),
+            fps: 30.0,
+        }
+    }
+}
+
+
 /// Configuration for the HTTP + WebSocket server.
 pub struct WebServerConfig {
     pub bind_addr: SocketAddr,
@@ -89,4 +111,12 @@ pub struct WebServerConfig {
     /// Path to the PEM-encoded TLS private key. Must be provided together with
     /// `tls_cert`.
     pub tls_key: Option<PathBuf>,
+    /// Watch channel carrying current server capabilities (codecs, fps).
+    /// Updated by `main.rs` when codec or FPS changes.
+    pub capabilities_rx: tokio::sync::watch::Receiver<ServerCapabilities>,
+    /// Sender for codec change requests (from browser → encoder task).
+    /// Sends the codec name as a lowercase string (e.g. `"h264"`, `"vp9"`).
+    pub codec_tx: Arc<tokio::sync::watch::Sender<String>>,
+    /// Sender for FPS change requests (from browser → encoder task + compositor).
+    pub fps_tx: Arc<tokio::sync::watch::Sender<f64>>,
 }

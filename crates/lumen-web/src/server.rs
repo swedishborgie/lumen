@@ -32,6 +32,9 @@ impl WebServer {
             hostname: self.config.hostname.clone(),
             encoder_metrics_rx: self.config.encoder_metrics_rx.clone(),
             system_metrics_rx: self.config.system_metrics_rx.clone(),
+            capabilities_rx: self.config.capabilities_rx.clone(),
+            codec_tx: self.config.codec_tx.clone(),
+            fps_tx: self.config.fps_tx.clone(),
         };
 
         let signaling_router = Router::new()

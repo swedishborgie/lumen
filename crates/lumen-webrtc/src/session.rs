@@ -11,7 +11,7 @@ use str0m::{
     change::SdpOffer,
     channel::ChannelId,
     format::{Codec, PayloadParams},
-    media::{Frequency, MediaKind, MediaTime, Mid},
+    media::{Frequency, MediaKind, MediaTime, Mid, Pt},
     net::{Protocol, Receive},
     Candidate, Event, Input, IceConnectionState, Output, Rtc,
 };
@@ -79,7 +79,17 @@ impl WebRtcSession {
             probe.local_addr()?.ip()
         };
 
-        let mut rtc = Rtc::new(Instant::now());
+        // Build RTC with H265 configured at level 6.2 (level_id=186, the maximum).
+        // str0m's default H265 uses level 5.2 (level_id=156), but Chrome offers
+        // H265 at level 6.0 (level_id=180). The matching logic rejects offers whose
+        // level exceeds the configured level, so we set the maximum to accept any offer.
+        let mut rtc_config = Rtc::builder();
+        {
+            let cc = rtc_config.codec_config();
+            cc.enable_h265(false); // remove the default level-5.2 entry
+            cc.add_h265(Pt::new_with_value(102), Some(Pt::new_with_value(103)), 1, 0, 186); // Main, Main tier, Level 6.2
+        }
+        let mut rtc = rtc_config.build(Instant::now());
 
         let loopback: std::net::IpAddr = "127.0.0.1".parse().unwrap();
         let loopback_addr = std::net::SocketAddr::new(loopback, port);
@@ -273,10 +283,29 @@ impl WebRtcSession {
         let rtp_time = MediaTime::new(pts_90k, Frequency::NINETY_KHZ);
         let writer = self.rtc.writer(mid)
             .ok_or_else(|| anyhow!("No video writer for {:?}", mid))?;
+        let target_codec = match frame.codec {
+            lumen_encode::VideoCodec::H264 => Codec::H264,
+            lumen_encode::VideoCodec::H265 => Codec::H265,
+            lumen_encode::VideoCodec::Vp9  => Codec::Vp9,
+            lumen_encode::VideoCodec::Av1  => Codec::Av1,
+        };
         let pt = writer.payload_params()
-            .find(|p| matches!(p.spec().codec, Codec::H264))
-            .map(PayloadParams::pt)
-            .ok_or_else(|| anyhow!("No H264 PT negotiated"))?;
+            .find(|p| p.spec().codec == target_codec)
+            .map(PayloadParams::pt);
+        let pt = match pt {
+            Some(p) => p,
+            None => {
+                // The peer negotiated a different codec — skip this frame.
+                // This can happen briefly after a codec change while the peer
+                // is reconnecting with the new codec.
+                tracing::debug!(
+                    codec = ?frame.codec,
+                    "No PT negotiated for {:?}; dropping frame (peer codec mismatch)",
+                    frame.codec
+                );
+                return Ok(());
+            }
+        };
         let result = writer.write(pt, frame.captured_at, rtp_time, frame.data.to_vec())
             .map_err(|e| anyhow!("Video write error: {:?}", e));
         if result.is_ok() {

@@ -84,9 +84,12 @@ pub fn spawn_encoder(
     enc_resize_rx: std::sync::mpsc::Receiver<(u32, u32)>,
     peer_count: Arc<AtomicUsize>,
     metrics_tx: Option<tokio::sync::watch::Sender<lumen_web::metrics::EncoderMetrics>>,
+    mut codec_rx: tokio::sync::watch::Receiver<String>,
+    mut fps_rx: tokio::sync::watch::Receiver<f64>,
 ) {
     tokio::task::spawn_blocking(move || {
-        let mut encoder = match lumen_encode::create_encoder(&encoder_config) {
+        let mut current_config = encoder_config.clone();
+        let mut encoder = match lumen_encode::create_encoder(&current_config) {
             Ok(e) => e,
             Err(e) => { tracing::error!("Encoder init: {e:#}"); return; }
         };
@@ -95,7 +98,7 @@ pub fn spawn_encoder(
         let mut dropped_count: u64 = 0;
         let mut encoder_width = encoder_config.width;
         let mut encoder_height = encoder_config.height;
-        let frame_interval = std::time::Duration::from_secs_f64(1.0 / encoder_config.fps);
+        let mut frame_interval = std::time::Duration::from_secs_f64(1.0 / encoder_config.fps);
         loop {
             // Check for a pending resize before blocking on the next frame.
             match enc_resize_rx.try_recv() {
@@ -108,6 +111,35 @@ pub fn spawn_encoder(
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+            }
+
+            // Check for codec or FPS changes; reinitialize the encoder if needed.
+            let codec_changed = codec_rx.has_changed().unwrap_or(false);
+            let fps_changed = fps_rx.has_changed().unwrap_or(false);
+            if codec_changed || fps_changed {
+                if codec_changed {
+                    let codec_str = codec_rx.borrow_and_update().clone();
+                    match codec_str.parse::<lumen_encode::VideoCodec>() {
+                        Ok(c) => current_config.codec = c,
+                        Err(_) => tracing::warn!("Unknown codec '{}'; ignoring", codec_str),
+                    }
+                }
+                if fps_changed {
+                    current_config.fps = *fps_rx.borrow_and_update();
+                    frame_interval = std::time::Duration::from_secs_f64(1.0 / current_config.fps.max(1.0));
+                }
+                tracing::info!(
+                    codec = %current_config.codec,
+                    fps = current_config.fps,
+                    "Encoder settings changed; reinitializing"
+                );
+                current_config.width = encoder_width;
+                current_config.height = encoder_height;
+                match lumen_encode::create_encoder(&current_config) {
+                    Ok(e) => encoder = e,
+                    Err(e) => tracing::error!("Encoder reinit failed: {e:#}"),
+                }
+                keyframe_flag.store(true, Ordering::Relaxed);
             }
 
             let frame = match frame_rx.blocking_recv() {
@@ -167,6 +199,54 @@ pub fn spawn_encoder(
                 Ok(None) => {}
                 Err(e) => tracing::warn!("Encode error: {e:#}"),
             }
+        }
+    });
+}
+
+/// Spawn a task that watches for FPS changes and forwards them to the compositor.
+///
+/// When the FPS watch channel changes, sends a `SetTargetFps` input event to
+/// the compositor via its calloop input sender.
+pub fn spawn_fps_bridge(
+    mut fps_rx: tokio::sync::watch::Receiver<f64>,
+    compositor_input_tx: lumen_compositor::InputSender,
+) {
+    tokio::spawn(async move {
+        loop {
+            if fps_rx.changed().await.is_err() {
+                break;
+            }
+            let fps = *fps_rx.borrow_and_update();
+            compositor_input_tx.send(lumen_compositor::InputEvent::SetTargetFps(fps));
+        }
+    });
+}
+
+/// Spawn a task that keeps the capabilities watch channel up to date.
+///
+/// Watches `codec_rx` and `fps_rx` for changes and updates the
+/// `capabilities_tx` whenever either changes.
+pub fn spawn_capabilities_updater(
+    mut codec_rx: tokio::sync::watch::Receiver<String>,
+    mut fps_rx: tokio::sync::watch::Receiver<f64>,
+    capabilities_tx: tokio::sync::watch::Sender<lumen_web::ServerCapabilities>,
+) {
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                result = codec_rx.changed() => {
+                    if result.is_err() { break; }
+                }
+                result = fps_rx.changed() => {
+                    if result.is_err() { break; }
+                }
+            }
+            let codec = codec_rx.borrow().clone();
+            let fps = *fps_rx.borrow();
+            capabilities_tx.send_modify(|caps| {
+                caps.current_codec = codec;
+                caps.fps = fps;
+            });
         }
     });
 }

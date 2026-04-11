@@ -173,6 +173,7 @@ impl VideoEncoder for SoftwareEncoder {
             data: Bytes::from(data),
             pts_ms: frame.pts_ms,
             is_keyframe,
+            codec: crate::codec::VideoCodec::H264,
             captured_at: frame.captured_at,
         }))
     }
@@ -198,6 +199,9 @@ impl VideoEncoder for SoftwareEncoder {
     }
 
     fn resize(&mut self, width: u32, height: u32) -> anyhow::Result<()> {
+        if width == self.width && height == self.height {
+            return Ok(());
+        }
         // Close the current encoder and reinitialize with new dimensions.
         // Bitrate and fps are preserved; we need them for the new encoder params.
         unsafe {

@@ -75,6 +75,17 @@ const log = logger.forSubsystem('client');
 //                    BTN_SIDE=275, BTN_EXTRA=276
 export const BTN_CODES = [272, 274, 273, 275, 276];
 
+/** Maps Lumen codec names to WebRTC MIME types for setCodecPreferences(). */
+function codecNameToMime(codec) {
+  switch (codec?.toLowerCase()) {
+    case 'h264': return 'video/H264';
+    case 'h265': return 'video/H265';
+    case 'vp9':  return 'video/VP9';
+    case 'av1':  return 'video/AV1';
+    default:     return null;
+  }
+}
+
 export class LumenClient extends EventTarget {
   #pc          = null;
   #ws          = null;
@@ -83,14 +94,21 @@ export class LumenClient extends EventTarget {
   #sessionId   = null;
   #state       = 'idle';
   #onmetrics   = null;  // callback(metricsPayload) invoked when server pushes metrics
+  #capabilities = null; // capabilities from /api/config
 
-  get stream()       { return this.#stream; }
-  get state()        { return this.#state; }
-  get sessionId()    { return this.#sessionId; }
-  get dcReadyState() { return this.#dc?.readyState ?? 'null'; }
+  get stream()        { return this.#stream; }
+  get state()         { return this.#state; }
+  get sessionId()     { return this.#sessionId; }
+  get dcReadyState()  { return this.#dc?.readyState ?? 'null'; }
+  /** @returns {{ codecs: string[], currentCodec: string, fps: number }|null} */
+  get capabilities()  { return this.#capabilities; }
 
-  /** Connect to the Lumen server.  signalUrl defaults to the current host. */
-  async connect(signalUrl) {
+  /**
+   * Connect to the Lumen server.
+   * @param {string} [signalUrl] - WebSocket URL; defaults to current host.
+   * @param {{ codec?: string, fps?: number }} [options] - Preferred stream settings.
+   */
+  async connect(signalUrl, options = {}) {
     if (this.#state !== 'idle') return;
     this.#setState('connecting');
     this.#setStatus('Opening signaling channel\u2026');
@@ -137,6 +155,11 @@ export class LumenClient extends EventTarget {
       }
       if (cfg.hostname) {
         document.title = `${cfg.hostname} - Lumen`;
+      }
+      if (cfg.capabilities) {
+        this.#capabilities = cfg.capabilities;
+        log.info('ice-config', 'Server capabilities:', cfg.capabilities);
+        this.dispatchEvent(new CustomEvent('capabilitieschanged', { detail: cfg.capabilities }));
       }
     } catch (e) {
       log.warn('ice-config', 'Could not fetch /api/config; using default STUN:', e);
@@ -207,9 +230,30 @@ export class LumenClient extends EventTarget {
     };
 
     log.debug('transceiver', 'Adding video transceiver (recvonly)');
-    this.#pc.addTransceiver('video', { direction: 'recvonly' });
+    const videoTransceiver = this.#pc.addTransceiver('video', { direction: 'recvonly' });
     log.debug('transceiver', 'Adding audio transceiver (recvonly)');
     this.#pc.addTransceiver('audio', { direction: 'recvonly' });
+
+    // Apply codec preference if requested and the browser API is available.
+    const preferredCodec = options.codec ?? this.#capabilities?.currentCodec;
+    if (preferredCodec && videoTransceiver.setCodecPreferences) {
+      try {
+        const allCodecs = RTCRtpReceiver.getCapabilities('video')?.codecs ?? [];
+        const mimeTarget = codecNameToMime(preferredCodec);
+        if (mimeTarget) {
+          const preferred = allCodecs.filter(c => c.mimeType.toLowerCase() === mimeTarget.toLowerCase());
+          const rest = allCodecs.filter(c => c.mimeType.toLowerCase() !== mimeTarget.toLowerCase());
+          if (preferred.length > 0) {
+            videoTransceiver.setCodecPreferences([...preferred, ...rest]);
+            log.info('transceiver', `Codec preference set to ${preferredCodec}`);
+          } else {
+            log.warn('transceiver', `Preferred codec ${preferredCodec} not supported by browser; using browser default`);
+          }
+        }
+      } catch (e) {
+        log.warn('transceiver', 'setCodecPreferences failed:', e);
+      }
+    }
 
     log.debug('data-channel', "Creating data channel 'input'");
     this.#dc = this.#pc.createDataChannel('input');
@@ -242,6 +286,19 @@ export class LumenClient extends EventTarget {
     await this.#pc.setLocalDescription(offer);
     log.verbose('offer', 'Local SDP:\n' + offer.sdp);
 
+    // Send settings request before the offer if the client has a preference
+    // that differs from the current server settings.
+    const wantCodec = options.codec;
+    const wantFps   = options.fps;
+    if ((wantCodec && wantCodec !== this.#capabilities?.currentCodec) ||
+        (wantFps   && wantFps   !== this.#capabilities?.fps)) {
+      const payload = { type: 'request_settings' };
+      if (wantCodec) payload.codec = wantCodec;
+      if (wantFps)   payload.fps   = wantFps;
+      log.info('settings', 'Sending settings request:', payload);
+      this.#ws.send(JSON.stringify(payload));
+    }
+
     this.#ws.onmessage = async (evt) => {
       const msg = JSON.parse(evt.data);
       if (msg.type === 'answer') {
@@ -261,6 +318,13 @@ export class LumenClient extends EventTarget {
         this.#setStatus(`Server error: ${msg.message}`);
       } else if (msg.type === 'metrics') {
         this.#onmetrics?.(msg);
+      } else if (msg.type === 'settings_applied') {
+        log.info('settings', `Settings applied: codec=${msg.codec} fps=${msg.fps}`);
+        if (this.#capabilities) {
+          this.#capabilities.currentCodec = msg.codec;
+          this.#capabilities.fps = msg.fps;
+        }
+        this.dispatchEvent(new CustomEvent('settingsapplied', { detail: { codec: msg.codec, fps: msg.fps } }));
       }
     };
 
@@ -311,6 +375,20 @@ export class LumenClient extends EventTarget {
   sendResize(width, height) {
     if (this.#ws?.readyState === WebSocket.OPEN) {
       this.#ws.send(JSON.stringify({ type: 'resize', width, height }));
+    }
+  }
+
+  /**
+   * Request a server-wide codec or FPS change via the signaling WebSocket.
+   * The server responds with a `settings_applied` message on success.
+   * @param {{ codec?: string, fps?: number }} settings
+   */
+  sendRequestSettings({ codec, fps } = {}) {
+    if (this.#ws?.readyState === WebSocket.OPEN) {
+      const payload = { type: 'request_settings' };
+      if (codec !== undefined) payload.codec = codec;
+      if (fps   !== undefined) payload.fps   = fps;
+      this.#ws.send(JSON.stringify(payload));
     }
   }
 

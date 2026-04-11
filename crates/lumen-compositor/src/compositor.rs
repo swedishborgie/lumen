@@ -305,7 +305,11 @@ impl Compositor {
                         stop_flag2.store(true, std::sync::atomic::Ordering::Relaxed);
                     }
                     CalloopEvent::Msg(CompositorCommand::Input(ev)) => {
-                        crate::input::inject_input(state, ev);
+                        if let InputEvent::SetTargetFps(fps) = ev {
+                            crate::compositor::apply_set_target_fps(state, fps);
+                        } else {
+                            crate::input::inject_input(state, ev);
+                        }
                     }
                     CalloopEvent::Msg(CompositorCommand::Resize(w, h)) => {
                         crate::compositor::apply_resize(state, w, h);
@@ -344,7 +348,6 @@ impl Compositor {
         // -----------------------------------------------------------------------
         // Frame timer
         // -----------------------------------------------------------------------
-        let frame_interval = Duration::from_secs_f64(1.0 / target_fps);
         event_loop.handle()
             .insert_source(Timer::immediate(), move |_, _, state| {
                 let t0 = Instant::now();
@@ -381,6 +384,7 @@ impl Compositor {
 
                 let spent = t0.elapsed();
                 if has_peers {
+                    let frame_interval = Duration::from_secs_f64(1.0 / state.target_fps.max(1.0));
                     TimeoutAction::ToDuration(frame_interval.saturating_sub(spent))
                 } else {
                     // No peers — sleep for 1 second between timer ticks instead of
@@ -517,6 +521,39 @@ pub(crate) fn apply_clipboard_write(state: &mut AppState, text: String) {
     // Forward to the inner compositor so apps running inside it can paste.
     if let Some(ref tx) = state.bridge_write_tx {
         let _ = tx.try_send(text);
+    }
+}
+
+/// Update the compositor's target frame rate.
+///
+/// Called from the calloop event loop when a `SetTargetFps` input event arrives.
+/// Updates `AppState::target_fps` and the Wayland output's refresh rate so that
+/// clients (e.g. screen-content sources) know the new rate. The frame timer
+/// already reads `state.target_fps` each tick, so it picks up the new rate
+/// automatically with no further changes needed.
+pub(crate) fn apply_set_target_fps(state: &mut AppState, fps: f64) {
+    let fps = fps.clamp(1.0, 240.0);
+    if (state.target_fps - fps).abs() < 0.001 {
+        return; // no-op
+    }
+    tracing::info!("Compositor target FPS: {} → {}", state.target_fps, fps);
+    state.target_fps = fps;
+
+    if let Some(output) = state.outputs.first() {
+        #[allow(clippy::cast_possible_truncation)]
+        let refresh_mhz = (fps * 1000.0).round() as i32;
+        let current_mode = output.current_mode().unwrap_or(OutputMode {
+            size: (state.width, state.height).into(),
+            refresh: refresh_mhz,
+        });
+        let new_mode = OutputMode { size: current_mode.size, refresh: refresh_mhz };
+        output.change_current_state(
+            Some(new_mode),
+            None,
+            None,
+            None,
+        );
+        output.set_preferred(new_mode);
     }
 }
 

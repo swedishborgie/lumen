@@ -145,6 +145,7 @@ export class LumenUI {
     this.#bindSplashEvents();
     this.#bindPerfToggle();
     this.#bindDebugToggle();
+    this.#bindStreamSettings();
   }
 
   // ── client event bindings ────────────────────────────────────────────────────
@@ -253,7 +254,7 @@ export class LumenUI {
       } else {
         this.#cancelReconnect();
         this.#reconnectAttempt = 0;
-        this.#client.connect();
+        this.#client.connect(undefined, this.#getStreamSettingsOptions());
       }
     });
   }
@@ -290,7 +291,7 @@ export class LumenUI {
       // unreachable), so by the time the timer fires the server may be back up
       // but the session is expired.  This second probe catches that case.
       if (await this.#probeAuth()) {
-        this.#client.connect();
+        this.#client.connect(undefined, this.#getStreamSettingsOptions());
       }
     }, delay);
 
@@ -722,5 +723,122 @@ export class LumenUI {
       this.#audioUnlocked = false;
     });
     this.#audioUnlocked = true;
+  }
+
+  // ── stream settings ───────────────────────────────────────────────────────────
+
+  /** Returns current stream settings preferences from localStorage. */
+  #getStreamSettingsOptions() {
+    const codec = localStorage.getItem('lumen.codec') || undefined;
+    const fpsRaw = localStorage.getItem('lumen.fps');
+    const fps = fpsRaw ? parseFloat(fpsRaw) : undefined;
+    return { codec, fps };
+  }
+
+  /** Populate codec select with server capabilities intersected with browser support. */
+  #populateCodecSelect(codecSelect, serverCodecs) {
+    const browserCodecs = RTCRtpReceiver.getCapabilities?.('video')?.codecs ?? [];
+    const browserMimes = new Set(browserCodecs.map(c => c.mimeType.toLowerCase()));
+    const mimeMap = { h264: 'video/h264', h265: 'video/h265', vp9: 'video/vp9', av1: 'video/av1' };
+    const labelMap = { h264: 'H.264', h265: 'H.265 (HEVC)', vp9: 'VP9', av1: 'AV1' };
+
+    // Only show codecs both the server supports AND the browser can decode.
+    const supported = serverCodecs.filter(c => {
+      const mime = mimeMap[c.toLowerCase()];
+      return mime && browserMimes.has(mime);
+    });
+
+    // If the intersection is empty (e.g. API unavailable), fall back to H.264 only.
+    const toShow = supported.length > 0 ? supported : ['h264'];
+
+    codecSelect.innerHTML = '';
+    for (const codec of toShow) {
+      const opt = document.createElement('option');
+      opt.value = codec;
+      opt.textContent = labelMap[codec.toLowerCase()] ?? codec.toUpperCase();
+      codecSelect.appendChild(opt);
+    }
+  }
+
+  #bindStreamSettings() {
+    const codecSelect   = document.getElementById('stream-codec-select');
+    const fpsSelect     = document.getElementById('stream-fps-select');
+    const fpsCustom     = document.getElementById('stream-fps-custom');
+    const section       = document.getElementById('stream-settings-section');
+    if (!codecSelect || !fpsSelect) return;
+
+    // Restore saved preferences.
+    const savedCodec = localStorage.getItem('lumen.codec');
+    const savedFps   = localStorage.getItem('lumen.fps');
+
+    if (savedFps) {
+      const presets = Array.from(fpsSelect.options).map(o => o.value);
+      if (presets.includes(savedFps)) {
+        fpsSelect.value = savedFps;
+      } else {
+        fpsSelect.value = 'custom';
+        fpsCustom.style.display = '';
+        fpsCustom.value = savedFps;
+      }
+    }
+
+    // Populate codec select once capabilities are available.
+    const applyCapabilities = () => {
+      const caps = this.#client.capabilities;
+      if (!caps) return;
+      this.#populateCodecSelect(codecSelect, caps.codecs ?? ['h264']);
+      // Apply saved codec preference or fall back to server current.
+      const target = savedCodec ?? caps.currentCodec;
+      if (target) {
+        const opt = Array.from(codecSelect.options).find(o => o.value === target);
+        if (opt) codecSelect.value = target;
+      }
+      // Reflect current server FPS in the select if no saved preference.
+      if (!savedFps && caps.fps) {
+        const fpsStr = String(caps.fps);
+        const opt = Array.from(fpsSelect.options).find(o => o.value === fpsStr);
+        if (opt) fpsSelect.value = fpsStr;
+      }
+    };
+
+    // Populate (or repopulate) codec select whenever capabilities arrive.
+    // capabilitieschanged fires on every connect after /api/config is fetched.
+    // settingsapplied fires when the server acknowledges a codec/fps change.
+    this.#client.addEventListener('capabilitieschanged', applyCapabilities);
+    this.#client.addEventListener('settingsapplied', applyCapabilities);
+    // Also try immediately in case this is a re-bind after a page navigation.
+    applyCapabilities();
+
+    // Disable controls while connected.
+    const updateDisabled = () => {
+      const isConnected = this.#client.state === 'connected';
+      codecSelect.disabled = isConnected;
+      fpsSelect.disabled   = isConnected;
+      fpsCustom.disabled   = isConnected;
+      if (section) section.classList.toggle('settings-disabled', isConnected);
+    };
+    this.#client.addEventListener('statechange', updateDisabled);
+    updateDisabled();
+
+    // Persist codec selection.
+    codecSelect.addEventListener('change', () => {
+      localStorage.setItem('lumen.codec', codecSelect.value);
+    });
+
+    // FPS select: show/hide custom input.
+    fpsSelect.addEventListener('change', () => {
+      const isCustom = fpsSelect.value === 'custom';
+      fpsCustom.style.display = isCustom ? '' : 'none';
+      if (!isCustom) {
+        localStorage.setItem('lumen.fps', fpsSelect.value);
+      }
+    });
+
+    fpsCustom.addEventListener('change', () => {
+      const v = parseFloat(fpsCustom.value);
+      if (v >= 1 && v <= 240) {
+        localStorage.setItem('lumen.fps', String(v));
+      }
+    });
   }
 }

@@ -10,6 +10,7 @@
 
 use std::collections::VecDeque;
 use std::ffi::CString;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
@@ -22,6 +23,17 @@ use crate::encoder::{EncodedFrame, VideoEncoder};
 
 // DRM fourcc for ARGB8888 ('A','R','2','4' in little-endian = [B,G,R,A] bytes)
 const DRM_FORMAT_ARGB8888: u32 = u32::from_le_bytes(*b"AR24");
+
+static NEXT_ENCODER_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Converts a negative ffmpeg error code to a human-readable string.
+unsafe fn av_err_string(ret: i32) -> String {
+    let mut buf = [0i8; 64];
+    av_strerror(ret, buf.as_mut_ptr(), buf.len());
+    std::ffi::CStr::from_ptr(buf.as_ptr())
+        .to_string_lossy()
+        .into_owned()
+}
 
 /// Safety wrapper that calls av_frame_free on drop.
 struct AvFramePtr(*mut AVFrame);
@@ -60,6 +72,8 @@ impl Drop for AvPacketPtr {
 }
 
 pub struct VaapiEncoder {
+    /// Unique ID for correlating log messages across creation, encode errors, and drop.
+    encoder_id: u64,
     codec_ctx: *mut AVCodecContext,
     hw_device_ctx: *mut AVBufferRef,      // VAAPI device (derived from DRM when possible)
     hw_frames_ctx: *mut AVBufferRef,      // VAAPI NV12 frames pool for the encoder
@@ -71,6 +85,14 @@ pub struct VaapiEncoder {
     filter_buffersrc: *mut AVFilterContext,
     filter_buffersink: *mut AVFilterContext,
     dmabuf_path_ok: bool,
+
+    /// Frames pushed to the filter graph buffersrc but not yet drained from buffersink.
+    ///
+    /// Under normal operation this stays at 0 or 1 (one frame in the hwmap pipeline).
+    /// If this grows after suspend/resume it indicates the VA-API device is lost and
+    /// frames are accumulating in the filter graph, holding GBM buffer references and
+    /// causing the observed shmem leak.
+    filter_src_depth: i64,
 
     /// Set by `request_keyframe()`; consumed in `encode_from_dmabuf()` to force
     /// an IDR on the current frame by setting `pict_type = AV_PICTURE_TYPE_I`.
@@ -283,9 +305,19 @@ impl VaapiEncoder {
                     (std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), false)
                 };
 
-            tracing::info!("VA-API {} encoder initialised on {}", config.codec, render_node);
+            let id = NEXT_ENCODER_ID.fetch_add(1, Ordering::Relaxed);
+            tracing::info!(
+                encoder_id = id,
+                codec = %config.codec,
+                width = w,
+                height = h,
+                render_node = %render_node,
+                dmabuf_path_ok,
+                "VA-API encoder created",
+            );
 
             Ok(Self {
+                encoder_id: id,
                 codec_ctx,
                 hw_device_ctx,
                 hw_frames_ctx,
@@ -295,6 +327,7 @@ impl VaapiEncoder {
                 filter_buffersrc,
                 filter_buffersink,
                 dmabuf_path_ok,
+                filter_src_depth: 0,
                 force_keyframe: false,
                 width: w,
                 height: h,
@@ -361,13 +394,44 @@ impl VaapiEncoder {
         let ret = av_buffersrc_add_frame_flags(
             self.filter_buffersrc, f, AV_BUFFERSRC_FLAG_KEEP_REF as i32,
         );
-        if ret < 0 { bail!("av_buffersrc_add_frame_flags failed: {}", ret); }
+        if ret < 0 {
+            tracing::error!(
+                encoder_id = self.encoder_id,
+                frame_index = self.frame_index,
+                ret,
+                error = %av_err_string(ret),
+                filter_src_depth = self.filter_src_depth,
+                "av_buffersrc_add_frame_flags failed",
+            );
+            bail!("av_buffersrc_add_frame_flags failed: {} ({})", ret, av_err_string(ret));
+        }
+        self.filter_src_depth += 1;
+        if self.filter_src_depth > 5 {
+            tracing::warn!(
+                encoder_id = self.encoder_id,
+                filter_src_depth = self.filter_src_depth,
+                "filter graph input queue depth is growing — VA-API device may be \
+                 lost after suspend/resume; GBM buffers are being held by filter graph refs"
+            );
+        }
 
         // Receive the resulting VAAPI NV12 frame.
         let mut nv12_frame = AvFramePtr::alloc()?;
         let ret = av_buffersink_get_frame(self.filter_buffersink, nv12_frame.as_mut());
         if ret == AVERROR(EAGAIN) { return Ok(None); }
-        if ret < 0 { bail!("av_buffersink_get_frame failed: {}", ret); }
+        if ret < 0 {
+            tracing::error!(
+                encoder_id = self.encoder_id,
+                frame_index = self.frame_index,
+                ret,
+                error = %av_err_string(ret),
+                filter_src_depth = self.filter_src_depth,
+                "av_buffersink_get_frame failed — VA-API device may be lost \
+                 (suspend/resume?); frame is stuck in filter graph holding a GBM buffer ref"
+            );
+            bail!("av_buffersink_get_frame failed: {} ({})", ret, av_err_string(ret));
+        }
+        self.filter_src_depth -= 1;
 
         // Force an IDR if one was requested (e.g. browser sent a PLI/FIR).
         // Must be set on the VAAPI frame going to avcodec_send_frame, not the
@@ -390,7 +454,14 @@ impl VaapiEncoder {
     ) -> Result<Option<EncodedFrame>> {
         let ret = avcodec_send_frame(self.codec_ctx, hw_frame.as_mut());
         if ret < 0 && ret != AVERROR(EAGAIN) {
-            bail!("avcodec_send_frame failed: {}", ret);
+            tracing::error!(
+                encoder_id = self.encoder_id,
+                frame_index = self.frame_index,
+                ret,
+                error = %av_err_string(ret),
+                "avcodec_send_frame failed",
+            );
+            bail!("avcodec_send_frame failed: {} ({})", ret, av_err_string(ret));
         }
         // Record capture instant so we can attach it to the output packet,
         // regardless of how many frames the encoder holds internally.
@@ -399,7 +470,16 @@ impl VaapiEncoder {
         let mut pkt = AvPacketPtr::alloc()?;
         let ret = avcodec_receive_packet(self.codec_ctx, pkt.as_mut());
         if ret == AVERROR(EAGAIN) || ret == AVERROR_EOF { return Ok(None); }
-        if ret < 0 { bail!("avcodec_receive_packet failed: {}", ret); }
+        if ret < 0 {
+            tracing::error!(
+                encoder_id = self.encoder_id,
+                frame_index = self.frame_index,
+                ret,
+                error = %av_err_string(ret),
+                "avcodec_receive_packet failed",
+            );
+            bail!("avcodec_receive_packet failed: {} ({})", ret, av_err_string(ret));
+        }
 
         let p = &*pkt.as_mut();
         let data = std::slice::from_raw_parts(p.data, p.size as usize);
@@ -421,6 +501,22 @@ impl VaapiEncoder {
 
 impl Drop for VaapiEncoder {
     fn drop(&mut self) {
+        if self.filter_src_depth > 0 {
+            tracing::warn!(
+                encoder_id = self.encoder_id,
+                filter_src_depth = self.filter_src_depth,
+                frames_encoded = self.frame_index,
+                "VA-API encoder dropped with frames still held in filter graph — \
+                 this indicates frames were added to buffersrc but never drained from \
+                 buffersink (VA-API device lost after suspend/resume?)"
+            );
+        } else {
+            tracing::info!(
+                encoder_id = self.encoder_id,
+                frames_encoded = self.frame_index,
+                "VA-API encoder dropped cleanly",
+            );
+        }
         unsafe {
             if !self.filter_graph.is_null() { avfilter_graph_free(&mut self.filter_graph); }
             if !self.codec_ctx.is_null() { avcodec_free_context(&mut (self.codec_ctx as *mut _)); }

@@ -3,6 +3,7 @@ use std::sync::{atomic::AtomicUsize, Arc};
 use std::time::Instant;
 use bytes::Bytes;
 use smithay::backend::allocator::dmabuf::Dmabuf;
+use tokio::sync::oneshot;
 
 /// Configuration for the Wayland compositor.
 #[derive(Debug)]
@@ -31,6 +32,10 @@ pub struct CompositorConfig {
     /// Use this to trigger actions (e.g. launching a client) that require the
     /// socket to exist before they start.
     pub socket_name_tx: Option<std::sync::mpsc::SyncSender<String>>,
+    /// When `Some`, the compositor will send on this channel if all
+    /// compositor-bound clients (nested compositors like kwin) disconnect,
+    /// after a grace period. Used by `--exit-on-compositor-loss`.
+    pub fatal_client_shutdown_tx: Option<oneshot::Sender<()>>,
 }
 
 impl Default for CompositorConfig {
@@ -44,6 +49,7 @@ impl Default for CompositorConfig {
             inner_display: None,
             peer_count: None,
             socket_name_tx: None,
+            fatal_client_shutdown_tx: None,
         }
     }
 }

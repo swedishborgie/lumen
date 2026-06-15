@@ -1,5 +1,7 @@
+use std::collections::HashSet;
 use std::fs::File;
-use std::sync::{mpsc::SyncSender, Arc};
+use std::sync::{mpsc::SyncSender, Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Instant;
 
 use gbm::{BufferObject, Device as RawGbmDevice};
@@ -151,15 +153,169 @@ pub struct AppState {
     pub cursor_pos: Point<f64, Logical>,
 }
 
+/// Shared state across all `ClientState` instances for tracking
+/// compositor clients (nested compositors like kwin) and triggering
+/// a fatal exit if all of them disconnect.
+#[derive(Clone)]
+pub struct CompositorClientTracker {
+    /// Number of connected clients that have created compositor surfaces.
+    count: Arc<AtomicUsize>,
+    /// Set of client IDs that have been counted (i.e. created at least one
+    /// compositor surface).  Protected by a mutex.
+    tracked: Arc<Mutex<HashSet<smithay::reexports::wayland_server::backend::ClientId>>>,
+    /// `oneshot::Sender` to fire when all compositor clients are lost after
+    /// the grace period has elapsed.
+    shutdown_tx: Arc<Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
+    /// Handle to the grace-period timer thread.  `Some` means the timer
+    /// is active (waiting to fire); `None` means no timer is running.
+    timer_thread: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
+    /// Whether the timer is currently active (used for lock-free cancel checks).
+    timer_active: Arc<AtomicBool>,
+    /// Grace period in milliseconds.
+    grace_ms: u64,
+}
+
+impl CompositorClientTracker {
+    /// Create a new tracker.  `shutdown_tx` is `None` when the feature is disabled.
+    pub fn new(
+        shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+        grace_ms: u64,
+    ) -> Self {
+        Self {
+            count: Arc::new(AtomicUsize::new(0)),
+            tracked: Arc::new(Mutex::new(HashSet::new())),
+            shutdown_tx: Arc::new(Mutex::new(shutdown_tx)),
+            timer_thread: Arc::new(Mutex::new(None)),
+            timer_active: Arc::new(AtomicBool::new(false)),
+            grace_ms,
+        }
+    }
+
+    /// Called when a client creates its first compositor surface.
+    /// Increments the count; if a grace timer was active, cancels it.
+    pub fn client_created_surface(
+        &self,
+        client_id: smithay::reexports::wayland_server::backend::ClientId,
+    ) {
+        // Cancel any in-flight grace timer before incrementing.
+        self.cancel_timer();
+
+        let mut tracked = self.tracked.lock().unwrap();
+        if tracked.insert(client_id) {
+            self.count.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Called when a client disconnects.
+    /// If the client was tracked, decrements the count.  When the count
+    /// reaches zero, starts the grace-period timer.
+    pub fn client_disconnected(
+        &self,
+        client_id: smithay::reexports::wayland_server::backend::ClientId,
+    ) {
+        let mut tracked = self.tracked.lock().unwrap();
+        if tracked.remove(&client_id) {
+            let prev = self.count.fetch_sub(1, Ordering::Relaxed);
+            assert!(prev > 0, "compositor client count underflow");
+            if prev == 1 {
+                // This was the last compositor client — start the grace timer.
+                drop(tracked);
+                self.start_grace_timer();
+            }
+        }
+    }
+
+    /// Start a background thread that sleeps for `grace_ms`, then sends
+    /// on the shutdown channel and exits.  Can be cancelled via `cancel_timer()`.
+    fn start_grace_timer(&self) {
+        tracing::warn!(
+            grace_ms = self.grace_ms,
+            "All compositor clients disconnected — starting {}ms grace period before fatal exit",
+            self.grace_ms,
+        );
+
+        self.timer_active.store(true, Ordering::Relaxed);
+
+        let shutdown_tx = {
+            let mut tx = self.shutdown_tx.lock().unwrap();
+            tx.take()
+        };
+
+        if shutdown_tx.is_none() {
+            // Feature was disabled or already fired.
+            self.timer_active.store(false, Ordering::Relaxed);
+            return;
+        }
+
+        let grace_ms = self.grace_ms;
+        let timer_active = Arc::clone(&self.timer_active);
+        let thread = std::thread::Builder::new()
+            .name("compositor-grace-timer".into())
+            .spawn(move || {
+                // Sleep in 100ms steps so we can respond to cancel quickly.
+                let steps = grace_ms / 100;
+                let remainder = grace_ms % 100;
+                for _ in 0..steps {
+                    if !timer_active.load(Ordering::Relaxed) {
+                        tracing::debug!("compositor grace timer cancelled — new client connected");
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                if remainder > 0 {
+                    if !timer_active.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(remainder));
+                }
+                // Grace period elapsed — no new compositor client appeared.
+                tracing::error!(
+                    "Grace period elapsed with no compositor clients — exiting so systemd can restart"
+                );
+                if let Some(tx) = shutdown_tx {
+                    let _ = tx.send(());
+                }
+            })
+            .expect("Failed to spawn grace timer thread");
+
+        *self.timer_thread.lock().unwrap() = Some(thread);
+    }
+
+    /// Cancel the grace-period timer (called when a new compositor client appears).
+    fn cancel_timer(&self) {
+        if self.timer_active.compare_exchange(
+            true,
+            false,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        )
+        .is_ok()
+        {
+            // We successfully cancelled — the timer thread will notice and exit
+            // on its next 100ms check.  Join it when it's ready.
+            if let Some(thread) = self.timer_thread.lock().unwrap().take() {
+                let _ = thread.join();
+            }
+        }
+    }
+}
+
 /// Per-client data stored by the Wayland server.
-#[derive(Default)]
 pub struct ClientState {
     pub compositor_client_state: smithay::wayland::compositor::CompositorClientState,
+    /// Shared tracker for fatal-exit-on-compositor-loss.
+    pub tracker: CompositorClientTracker,
 }
 
 impl smithay::reexports::wayland_server::backend::ClientData for ClientState {
-    fn initialized(&self, client_id: smithay::reexports::wayland_server::backend::ClientId) {
+    fn initialized(
+        &self,
+        client_id: smithay::reexports::wayland_server::backend::ClientId,
+    ) {
         tracing::info!("Wayland client connected: {:?}", client_id);
+        // If a grace timer is active, a new client connecting might become
+        // a compositor client.  We don't cancel the timer here — we wait
+        // for `client_created_surface` which is the definitive signal.
     }
     fn disconnected(
         &self,
@@ -167,6 +323,7 @@ impl smithay::reexports::wayland_server::backend::ClientData for ClientState {
         reason: smithay::reexports::wayland_server::backend::DisconnectReason,
     ) {
         tracing::info!("Wayland client disconnected: {:?} reason={:?}", client_id, reason);
+        self.tracker.client_disconnected(client_id);
     }
 }
 

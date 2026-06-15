@@ -221,6 +221,13 @@ pub struct Args {
     #[arg(long, env = "LUMEN_LAUNCH")]
     pub launch: Option<String>,
 
+    /// Exit lumen if the nested compositor (kwin, labwc, etc.) crashes and all
+    /// compositor clients disconnect.  A 5-second grace period allows a new
+    /// compositor to connect before lumen exits.  Enabled by default when
+    /// `--desktop` or `--launch` is set; disable with `false`.
+    #[arg(long, env = "LUMEN_EXIT_ON_COMPOSITOR_LOSS")]
+    pub exit_on_compositor_loss: Option<bool>,
+
     // ── TLS ───────────────────────────────────────────────────────────────────
     /// Path to a PEM-encoded TLS certificate chain. When both `--tls-cert` and
     /// `--tls-key` are provided the server binds an HTTPS endpoint instead of
@@ -243,6 +250,17 @@ impl Args {
             (Some(preset), None) => Some((preset.default_launch_cmd().to_string(), preset.env_vars())),
             (None, Some(cmd)) => Some((cmd.clone(), &[])),
             (None, None) => None,
+        }
+    }
+
+    /// Resolve whether `--exit-on-compositor-loss` is enabled.
+    ///
+    /// Defaults to `true` when `--desktop` or `--launch` is set (nested
+    /// compositor mode), and `false` otherwise.
+    pub fn effective_exit_on_compositor_loss(&self) -> bool {
+        match self.exit_on_compositor_loss {
+            Some(val) => val,
+            None => self.effective_launch().is_some(), // true when launching a nested compositor
         }
     }
 }

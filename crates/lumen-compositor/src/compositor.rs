@@ -57,7 +57,7 @@ use tokio::sync::broadcast;
 
 use crate::input::InputEvent;
 use crate::render::render_and_capture;
-use crate::state::{AppState, ClientState, CompositorCommand};
+use crate::state::{AppState, ClientState, CompositorClientTracker, CompositorCommand};
 use crate::types::{CapturedFrame, CompositorConfig, CursorEvent, ClipboardEvent};
 
 /// A cheaply-cloneable handle for sending input events into the compositor.
@@ -263,7 +263,13 @@ impl Compositor {
                 Generic::new(display, Interest::READ, Mode::Level),
                 |_, display, state| {
                     // Safety: we don't drop the display inside this callback.
-                    unsafe { display.get_mut().dispatch_clients(state).unwrap(); }
+                    // Dispatch errors (e.g. a client sending an oversized Wayland message
+                    // after a suspend/resume cycle) cause wayland-server to disconnect that
+                    // specific client internally. We must not unwrap — that would panic the
+                    // entire compositor thread and kill all clients.
+                    if let Err(e) = unsafe { display.get_mut().dispatch_clients(state) } {
+                        tracing::error!(%e, "Wayland dispatch error (bad client disconnected)");
+                    }
                     Ok(PostAction::Continue)
                 },
             )
@@ -283,14 +289,27 @@ impl Compositor {
         // SAFETY: setenv is not thread-safe in general, but we do it once before
         // any other threads can observe WAYLAND_DISPLAY.
         std::env::set_var("WAYLAND_DISPLAY", &socket_name);
+        let tracker = CompositorClientTracker::new(
+            self.config.fatal_client_shutdown_tx.take(),
+            5_000, // 5 second grace period
+        );
+        let tracker_clone = tracker.clone();
+
         event_loop.handle()
-            .insert_source(socket_source, |client_stream, _, state| {
+            .insert_source(socket_source, move |client_stream, _, state| {
                 tracing::info!("New Wayland client connected");
-                if let Err(e) = state.dh.insert_client(client_stream, Arc::new(ClientState::default())) {
+                let client_state = ClientState {
+                    compositor_client_state: smithay::wayland::compositor::CompositorClientState::default(),
+                    tracker: tracker_clone.clone(),
+                };
+                if let Err(e) = state.dh.insert_client(client_stream, Arc::new(client_state)) {
                     tracing::error!("Failed to add Wayland client: {:?}", e);
                 }
             })
             .expect("Failed to insert Wayland socket source");
+        // Keep the original tracker alive (it's cloned per-client but the
+        // sender is taken on first use).
+        let _tracker = tracker;
 
         // -----------------------------------------------------------------------
         // Command channel (stop signal)

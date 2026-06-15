@@ -215,11 +215,11 @@ impl WebRtcSession {
 
         // Spawn receiver task: relay_conn → channel (bridges async recv to sync session loop).
         let (recv_tx, recv_rx) =
-            mpsc::channel::<(Vec<u8>, std::net::SocketAddr)>(64);
+            mpsc::channel::<(Vec<u8>, std::net::SocketAddr)>(1024);
         {
             let conn = relay_conn.clone();
             tokio::spawn(async move {
-                let mut buf = vec![0u8; 4096];
+                let mut buf = vec![0u8; 65535];
                 loop {
                     match conn.recv_from(&mut buf).await {
                         Ok((n, src)) => {
@@ -228,7 +228,7 @@ impl WebRtcSession {
                             }
                         }
                         Err(e) => {
-                            tracing::debug!("TURN relay recv error: {e}");
+                            tracing::warn!("TURN relay recv error: {e}");
                             break;
                         }
                     }
@@ -238,12 +238,14 @@ impl WebRtcSession {
 
         // Spawn sender task: channel → relay_conn (bridges sync session loop to async send).
         let (send_tx, mut send_rx) =
-            mpsc::channel::<(Vec<u8>, std::net::SocketAddr)>(64);
+            mpsc::channel::<(Vec<u8>, std::net::SocketAddr)>(1024);
         {
             let conn = relay_conn;
             tokio::spawn(async move {
                 while let Some((data, dest)) = send_rx.recv().await {
-                    let _ = conn.send_to(&data, dest).await;
+                    if let Err(e) = conn.send_to(&data, dest).await {
+                        tracing::warn!("TURN relay send error: {e}");
+                    }
                 }
             });
         }
@@ -442,7 +444,13 @@ impl WebRtcSession {
                     // seen arriving via the relay socket (relay-relay ICE pair).
                     if self.relay_sourced_peers.contains(&t.destination) {
                         if let Some(ref tx) = self.relay_send_tx {
-                            let _ = tx.try_send((t.contents.to_vec(), t.destination));
+                            if tx.try_send((t.contents.to_vec(), t.destination)).is_err() {
+                                tracing::warn!(
+                                    destination = %t.destination,
+                                    len = t.contents.len(),
+                                    "TURN relay send channel full — packet dropped"
+                                );
+                            }
                             continue;
                         }
                     }

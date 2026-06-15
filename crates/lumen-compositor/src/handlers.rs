@@ -16,7 +16,7 @@ use smithay::{
     },
     reexports::wayland_server::{
         protocol::{wl_buffer::WlBuffer, wl_surface::WlSurface},
-        Client,
+        Client, Resource,
     },
     utils::{Logical, Point, Serial},
     wayland::{
@@ -67,6 +67,18 @@ impl CompositorHandler for AppState {
     }
     fn client_compositor_state<'a>(&self, client: &'a Client) -> &'a CompositorClientState {
         &client.get_data::<ClientState>().unwrap().compositor_client_state
+    }
+    fn new_surface(&mut self, surface: &WlSurface) {
+        // Track this client as a compositor client (nested compositor like kwin).
+        // This is the signal that a real compositor (not a plain Wayland app)
+        // has connected — useful for the fatal-exit-on-compositor-loss feature.
+        if let Some(client) = surface.client() {
+            if let Some(client_state) = client.get_data::<ClientState>() {
+                client_state
+                    .tracker
+                    .client_created_surface(client.id());
+            }
+        }
     }
     fn commit(&mut self, surface: &WlSurface) {
         on_commit_buffer_handler::<Self>(surface);

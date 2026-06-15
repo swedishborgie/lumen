@@ -68,6 +68,22 @@ async fn main() -> Result<()> {
         fps: args.fps,
     };
 
+    // ── Shutdown signal ───────────────────────────────────────────────────────
+    // Two independent shutdown triggers: (1) the --launch child process exits,
+    // and (2) the compositor detects all nested compositor clients have been
+    // lost.  We race both via tokio::select! and forward the winner to a
+    // combined channel that the web server listens on.
+    let (launch_shutdown_tx, launch_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let (fatal_shutdown_tx, fatal_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let (combined_shutdown_tx, combined_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = launch_shutdown_rx => {},
+            _ = fatal_shutdown_rx => {},
+        }
+        let _ = combined_shutdown_tx.send(());
+    });
+
     // ── Compositor ────────────────────────────────────────────────────────────
     // Set up a channel so the compositor can notify us when its Wayland socket
     // is ready — used by the --launch task below.
@@ -79,6 +95,12 @@ async fn main() -> Result<()> {
         Some(args.inner_display.clone())
     };
 
+    let fatal_client_shutdown_tx = if args.effective_exit_on_compositor_loss() {
+        Some(fatal_shutdown_tx)
+    } else {
+        None
+    };
+
     let compositor = lumen_compositor::Compositor::new(lumen_compositor::CompositorConfig {
         width: args.width,
         height: args.height,
@@ -87,6 +109,7 @@ async fn main() -> Result<()> {
         inner_display,
         peer_count: Some(peer_count.clone()),
         socket_name_tx: Some(socket_name_tx),
+        fatal_client_shutdown_tx,
         ..Default::default()
     })?;
     let frame_rx = compositor.frame_receiver();
@@ -145,11 +168,6 @@ async fn main() -> Result<()> {
     let (capabilities_tx, capabilities_rx) =
         tokio::sync::watch::channel(initial_capabilities);
 
-    // ── Shutdown signal ───────────────────────────────────────────────────────
-    // When --launch is used, the child exiting triggers a graceful shutdown of
-    // the web server. Without --launch, the server runs until interrupted.
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-
     // ── Spawn tasks ───────────────────────────────────────────────────────────
     tasks::spawn_compositor(compositor);
     tasks::spawn_audio(audio_capture);
@@ -174,7 +192,7 @@ async fn main() -> Result<()> {
     let _shutdown_keep_alive = tasks::spawn_launch_task(
         args.effective_launch(),
         socket_name_rx,
-        shutdown_tx,
+        launch_shutdown_tx,
     );
     tasks::spawn_input_forwarder(input_rx, compositor_input_tx.clone(), gamepad_tx);
     tasks::spawn_haptic_fanout(haptic_rx, session_manager.clone());
@@ -207,7 +225,7 @@ async fn main() -> Result<()> {
         auth,
         ice_servers: turn_setup.ice_servers,
         hostname: args.hostname,
-        shutdown_signal: Some(shutdown_rx),
+        shutdown_signal: Some(combined_shutdown_rx),
         encoder_metrics_rx: Some(encoder_metrics_rx),
         system_metrics_rx,
         tls_cert: args.tls_cert,

@@ -143,8 +143,8 @@ RUN dnf install -y \
     libinput-devel libevdev-devel systemd-devel \
     # Audio
     pipewire-devel opus-devel \
-    # Video
-    x264-devel libva-devel \
+    # Video (x264-devel omitted; built from source below for bindgen compatibility)
+    libva-devel \
     # FFmpeg
     ffmpeg-devel \
     # Auth / TLS
@@ -153,6 +153,17 @@ RUN dnf install -y \
 
 RUN rustup-init -y --default-toolchain stable --profile minimal
 ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Build x264 from source — RPMFusion's x264-devel produces headers whose
+# struct layout is incompatible with x264-sys 0.2.x (bindgen treats
+# x264_param_t as an opaque 1-byte type, causing a size assertion failure).
+# Building from the VideoLAN stable branch gives the expected layout.
+RUN git clone --depth 1 https://code.videolan.org/videolan/x264.git /tmp/x264 \
+    && cd /tmp/x264 \
+    && ./configure --enable-shared --disable-cli --prefix=/usr --libdir=/usr/lib64 \
+    && make -j"$(nproc)" install \
+    && ldconfig \
+    && rm -rf /tmp/x264
 
 RUN cargo install cargo-chef --locked --version 0.1.77
 RUN cargo install cargo-generate-rpm --locked

@@ -266,6 +266,10 @@ in
             LUMEN_AUTH = cfg.auth;
             LUMEN_LOG_OUTPUT = "journald";
             LUMEN_SYSLOG_IDENTIFIER = "lumen@%i";
+            # Smithay dlopen()s libEGL/libGLESv2 at runtime. On NixOS the
+            # graphics drivers are assembled in /run/opengl-driver/lib, which
+            # is not on the default loader search path for a system service.
+            LD_LIBRARY_PATH = "/run/opengl-driver/lib";
           }
           // optionalAttrs (cfg.desktop != "none") { LUMEN_DESKTOP = cfg.desktop; }
           // optionalAttrs (cfg.launch != null) { LUMEN_LAUNCH = cfg.launch; }

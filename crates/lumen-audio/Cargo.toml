@@ -5,10 +5,10 @@ edition = "2021"
 
 [dependencies]
 # PipeWire
-pipewire = "0.9"
+pipewire = "0.10"
 
 # Opus codec
-opus = "0.3"
+opus = "0.4"
 
 # Async channel to deliver encoded packets
 tokio   = { workspace = true }

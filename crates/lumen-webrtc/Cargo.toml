@@ -9,7 +9,7 @@ lumen-encode     = { path = "../lumen-encode" }
 lumen-audio      = { path = "../lumen-audio" }
 
 # WebRTC
-str0m = "0.16"
+str0m = "0.24"
 
 # TURN client for relay candidates in container environments
 turn        = "0.17"

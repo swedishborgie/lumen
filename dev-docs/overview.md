@@ -65,7 +65,7 @@ lumen/
 | Rust (latest stable)                             | Build toolchain                  |
 | `libx264` dev headers                            | Software H.264 encoding fallback |
 | `libva`, `libdrm` dev headers                    | VA-API hardware encoding         |
-| `libopus` dev headers                            | Opus audio codec                 |
+| `cmake`, `make`                                  | Build the vendored Opus audio codec |
 | PipeWire                                         | Audio capture                    |
 | Wayland development libraries (`libwayland-dev`) | Compositor foundation            |
 

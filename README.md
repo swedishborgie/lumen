@@ -102,7 +102,8 @@ See [`docker/README.md`](docker/README.md) for full GPU passthrough, gamepad, an
 - Rust (latest stable)
 - PipeWire
 - VA-API compatible drivers (optional, for hardware acceleration)
-- Native library development headers: `libx264`, `libva`, `libopus`, `libpipewire`, `libwayland`, `libxkbcommon`, `libpixman`, `libinput`, `libpam`, `libssl`, and FFmpeg
+- Build tools: `cmake` and `make` (used to build the vendored Opus library)
+- Native library development headers: `libx264`, `libva`, `libpipewire`, `libwayland`, `libxkbcommon`, `libpixman`, `libinput`, `libpam`, `libssl`, and FFmpeg
 
 See [`docs/for-developers.md`](docs/for-developers.md) for the full per-distro package list.
 

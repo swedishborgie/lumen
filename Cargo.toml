@@ -33,7 +33,7 @@ missing_panics_doc        = "allow"
 must_use_candidate        = "allow"
 
 [workspace.dependencies]
-base64 = "0.22"
+base64 = "0.23"
 bytes = "1"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
@@ -77,7 +77,7 @@ base64           = { workspace = true }
 serde_json       = { workspace = true }
 clap             = { version = "4", features = ["derive", "env"] }
 hostname         = "0.4"
-rand             = "0.9"
+rand             = "0.10"
 rustls           = { version = "0.23", features = ["ring"], default-features = false }
 
 [build-dependencies]

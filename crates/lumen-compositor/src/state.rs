@@ -343,6 +343,6 @@ pub(crate) fn create_dmabuf_from_bo(bo: &BufferObject<()>) -> Dmabuf {
         modifier,
         DmabufFlags::empty(),
     );
-    builder.add_plane(fd, 0, 0, stride);
+    builder.add_plane(fd, 0, stride);
     builder.build().expect("Failed to build dmabuf")
 }

@@ -61,6 +61,13 @@ let
     ${lib.optionalString (cfg.desktop == "kde") ''
       export KDE_SESSION_UID=$(${pkgs.coreutils}/bin/id -u)
     ''}
+    # Smithay dlopen()s libEGL/libGLESv2 at runtime. NixOS assembles the
+    # graphics drivers in /run/opengl-driver/lib, which is not on the default
+    # loader search path. This must be prepended *here* rather than set via
+    # the unit's Environment=: `PAMName=login` runs pam_env, which overwrites
+    # LD_LIBRARY_PATH from /etc/set-environment after systemd applies the
+    # unit environment.
+    export LD_LIBRARY_PATH="/run/opengl-driver/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     exec ${cfg.package}/bin/lumen
   '';
 in
@@ -266,10 +273,6 @@ in
             LUMEN_AUTH = cfg.auth;
             LUMEN_LOG_OUTPUT = "journald";
             LUMEN_SYSLOG_IDENTIFIER = "lumen@%i";
-            # Smithay dlopen()s libEGL/libGLESv2 at runtime. On NixOS the
-            # graphics drivers are assembled in /run/opengl-driver/lib, which
-            # is not on the default loader search path for a system service.
-            LD_LIBRARY_PATH = "/run/opengl-driver/lib";
           }
           // optionalAttrs (cfg.desktop != "none") { LUMEN_DESKTOP = cfg.desktop; }
           // optionalAttrs (cfg.launch != null) { LUMEN_LAUNCH = cfg.launch; }

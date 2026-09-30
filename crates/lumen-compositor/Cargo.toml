@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 # Wayland / Smithay compositor
-smithay = { git = "https://github.com/Smithay/smithay", rev = "5816a1b40e52d06c5638368beb684f3663012857", default-features = false, features = [
+smithay = { git = "https://github.com/Smithay/smithay", rev = "118e34ffc9b99854a2230c4805e1f37dc9029edb", default-features = false, features = [
     "backend_drm",
     "backend_egl",
     "backend_gbm",

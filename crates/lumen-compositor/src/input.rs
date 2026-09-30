@@ -1,5 +1,5 @@
 use smithay::{
-    backend::input::{Axis, AxisSource, ButtonState, KeyState},
+    backend::input::{Axis, AxisSource, ButtonState, InputTime, KeyState},
     desktop::WindowSurfaceType,
     input::{
         keyboard::{FilterResult, Keycode},
@@ -166,7 +166,7 @@ pub struct AxisMapping {
 /// currently focused Wayland surface.
 pub fn inject_input(state: &mut AppState, event: InputEvent) {
     let serial = SERIAL_COUNTER.next_serial();
-    let time = current_time_ms();
+    let time = InputTime::now();
 
     match event {
         InputEvent::KeyboardKey { scancode, state: key_state } => {
@@ -200,7 +200,7 @@ pub fn inject_input(state: &mut AppState, event: InputEvent) {
     }
 }
 
-fn inject_key(state: &mut AppState, serial: Serial, time: u32, scancode: u32, key_state: u32) {
+fn inject_key(state: &mut AppState, serial: Serial, time: InputTime, scancode: u32, key_state: u32) {
     let keyboard = state.seat.get_keyboard().unwrap();
 
     // XKB keycodes are evdev scancode + 8.
@@ -229,7 +229,7 @@ fn inject_key(state: &mut AppState, serial: Serial, time: u32, scancode: u32, ke
     );
 }
 
-fn inject_pointer_motion(state: &mut AppState, serial: Serial, time: u32, x: f64, y: f64) {
+fn inject_pointer_motion(state: &mut AppState, serial: Serial, time: InputTime, x: f64, y: f64) {
     let pointer = state.seat.get_pointer().unwrap();
     let location = Point::from((x, y));
 
@@ -256,7 +256,7 @@ fn inject_pointer_motion(state: &mut AppState, serial: Serial, time: u32, x: f64
 /// Delivers both a `zwp_relative_pointer_v1` event (which games consume for
 /// camera / aim control) and a `wl_pointer.motion` at the updated absolute
 /// position (for surface-focus bookkeeping and non-relative-aware clients).
-fn inject_pointer_motion_relative(state: &mut AppState, serial: Serial, time: u32, dx: f64, dy: f64) {
+fn inject_pointer_motion_relative(state: &mut AppState, serial: Serial, time: InputTime, dx: f64, dy: f64) {
     let pointer = state.seat.get_pointer().unwrap();
 
     // Advance the virtual cursor position and clamp to the output bounds so
@@ -272,15 +272,13 @@ fn inject_pointer_motion_relative(state: &mut AppState, serial: Serial, time: u3
 
     // Deliver the relative motion event — this is what fullscreen games (e.g.
     // Steam games using SDL) rely on for mouse-look / camera control.
-    // `utime` is a microsecond timestamp as required by the protocol.
-    let utime = current_time_ms() as u64 * 1000;
     pointer.relative_motion(
         state,
         focus.clone(),
         &RelativeMotionEvent {
             delta: Point::from((dx, dy)),
             delta_unaccel: Point::from((dx, dy)),
-            utime,
+            time,
         },
     );
 
@@ -291,7 +289,7 @@ fn inject_pointer_motion_relative(state: &mut AppState, serial: Serial, time: u3
     pointer.frame(state);
 }
 
-fn inject_pointer_button(state: &mut AppState, serial: Serial, time: u32, btn: u32, btn_state: u32) {
+fn inject_pointer_button(state: &mut AppState, serial: Serial, time: InputTime, btn: u32, btn_state: u32) {
     // On press, set keyboard focus to the topmost window's surface.  This is needed for
     // wl_data_device::set_selection (copy) to work when the user copies via right-click
     // menu without any prior keyboard interaction.  We focus the toplevel (not the popup)
@@ -314,7 +312,7 @@ fn inject_pointer_button(state: &mut AppState, serial: Serial, time: u32, btn: u
 
 fn inject_pointer_axis(
     state: &mut AppState,
-    time: u32,
+    time: InputTime,
     x: f64,
     y: f64,
     source: Option<String>,
@@ -344,14 +342,4 @@ fn inject_pointer_axis(
     }
     pointer.axis(state, frame);
     pointer.frame(state);
-}
-
-fn current_time_ms() -> u32 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    // Wrapping cast is intentional: Wayland timestamps are u32 milliseconds.
-    #[allow(clippy::cast_possible_truncation)]
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u32)
-        .unwrap_or(0)
 }

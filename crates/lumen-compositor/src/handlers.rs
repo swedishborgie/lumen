@@ -2,13 +2,6 @@
 
 use smithay::{
     backend::renderer::utils::on_commit_buffer_handler,
-    delegate_compositor, delegate_cursor_shape, delegate_data_device, delegate_dmabuf,
-    delegate_fractional_scale, delegate_layer_shell, delegate_output,
-    delegate_pointer_constraints, delegate_pointer_warp, delegate_presentation,
-    delegate_primary_selection, delegate_relative_pointer, delegate_seat, delegate_shm,
-    delegate_single_pixel_buffer, delegate_viewporter, delegate_virtual_keyboard_manager,
-    delegate_xdg_activation, delegate_xdg_decoration, delegate_xdg_shell, delegate_data_control,
-    delegate_foreign_toplevel_list,
     desktop::Window,
     input::{
         pointer::{CursorIcon, CursorImageStatus},
@@ -105,7 +98,6 @@ impl CompositorHandler for AppState {
         }
     }
 }
-delegate_compositor!(AppState);
 
 // ---------------------------------------------------------------------------
 // SHM
@@ -117,7 +109,6 @@ impl BufferHandler for AppState {
 impl ShmHandler for AppState {
     fn shm_state(&self) -> &ShmState { &self.shm_state }
 }
-delegate_shm!(AppState);
 
 // ---------------------------------------------------------------------------
 // DMABUF
@@ -136,7 +127,6 @@ impl DmabufHandler for AppState {
         }
     }
 }
-delegate_dmabuf!(AppState);
 
 // ---------------------------------------------------------------------------
 // Seat — use WlSurface directly as focus target (no X11, no decoration SSD)
@@ -203,7 +193,6 @@ impl SeatHandler for AppState {
         self.current_cursor_icon = Some(image);
     }
 }
-delegate_seat!(AppState);
 
 // ---------------------------------------------------------------------------
 // XDG Shell
@@ -232,7 +221,6 @@ impl XdgShellHandler for AppState {
         surface.send_repositioned(token);
     }
 }
-delegate_xdg_shell!(AppState);
 
 // ---------------------------------------------------------------------------
 // WLR Layer shell
@@ -243,14 +231,12 @@ impl WlrLayerShellHandler for AppState {
     fn new_layer_surface(&mut self, _surface: WlrLayerSurface, _output: Option<smithay::reexports::wayland_server::protocol::wl_output::WlOutput>, _layer: WlrLayer, _namespace: String) {}
     fn layer_destroyed(&mut self, _surface: WlrLayerSurface) {}
 }
-delegate_layer_shell!(AppState);
 
 // ---------------------------------------------------------------------------
 // Output / Selection / Clipboard
 // ---------------------------------------------------------------------------
 
 impl OutputHandler for AppState {}
-delegate_output!(AppState);
 
 impl SelectionHandler for AppState {
     type SelectionUserData = ();
@@ -343,22 +329,14 @@ impl DataDeviceHandler for AppState {
     fn data_device_state(&mut self) -> &mut DataDeviceState { &mut self.data_device_state }
 }
 impl WaylandDndGrabHandler for AppState {}
-delegate_data_device!(AppState);
 
 impl PrimarySelectionHandler for AppState {
     fn primary_selection_state(&mut self) -> &mut PrimarySelectionState { &mut self.primary_selection_state }
 }
-delegate_primary_selection!(AppState);
 
 impl DataControlHandler for AppState {
     fn data_control_state(&mut self) -> &mut DataControlState { &mut self.data_control_state }
 }
-delegate_data_control!(AppState);
-
-// ---------------------------------------------------------------------------
-// Virtual keyboard
-// ---------------------------------------------------------------------------
-delegate_virtual_keyboard_manager!(AppState);
 
 // ---------------------------------------------------------------------------
 // Fractional scale / viewporter / presentation / single-pixel-buffer
@@ -371,10 +349,6 @@ impl FractionalScaleHandler for AppState {
         });
     }
 }
-delegate_fractional_scale!(AppState);
-delegate_viewporter!(AppState);
-delegate_presentation!(AppState);
-delegate_single_pixel_buffer!(AppState);
 
 // ---------------------------------------------------------------------------
 // Foreign toplevel list / XDG decoration / XDG activation
@@ -383,7 +357,6 @@ delegate_single_pixel_buffer!(AppState);
 impl ForeignToplevelListHandler for AppState {
     fn foreign_toplevel_list_state(&mut self) -> &mut ForeignToplevelListState { &mut self.foreign_toplevel_list }
 }
-delegate_foreign_toplevel_list!(AppState);
 
 impl XdgDecorationHandler for AppState {
     fn new_decoration(&mut self, toplevel: ToplevelSurface) {
@@ -393,14 +366,12 @@ impl XdgDecorationHandler for AppState {
     fn request_mode(&mut self, _t: ToplevelSurface, _m: smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode) {}
     fn unset_mode(&mut self, _t: ToplevelSurface) {}
 }
-delegate_xdg_decoration!(AppState);
 
 impl XdgActivationHandler for AppState {
     fn activation_state(&mut self) -> &mut XdgActivationState { &mut self.xdg_activation_state }
     fn token_created(&mut self, _token: XdgActivationToken, _data: XdgActivationTokenData) -> bool { true }
     fn request_activation(&mut self, _token: XdgActivationToken, _data: XdgActivationTokenData, _surface: WlSurface) {}
 }
-delegate_xdg_activation!(AppState);
 
 // ---------------------------------------------------------------------------
 // Pointer constraints / warp / relative pointer
@@ -420,17 +391,16 @@ impl PointerConstraintsHandler for AppState {
     }
     fn cursor_position_hint(&mut self, _surface: &WlSurface, _pointer: &PointerHandle<Self>, _location: Point<f64, Logical>) {}
 }
-delegate_pointer_constraints!(AppState);
 
 impl PointerWarpHandler for AppState {}
-delegate_pointer_warp!(AppState);
-delegate_relative_pointer!(AppState);
 
 // ---------------------------------------------------------------------------
 // wp_cursor_shape_manager_v1
 // ---------------------------------------------------------------------------
 
-impl smithay::wayland::tablet_manager::TabletSeatHandler for AppState {
+impl smithay::input::tablet::TabletSeatHandler for AppState {
+    type ToolFocus = WlSurface;
+
     fn tablet_tool_image(
         &mut self,
         _tool: &smithay::backend::input::TabletToolDescriptor,
@@ -439,7 +409,11 @@ impl smithay::wayland::tablet_manager::TabletSeatHandler for AppState {
         // Tablet cursor shape changes are not forwarded; tablet support is not enabled.
     }
 }
-delegate_cursor_shape!(AppState);
+
+// Implement wayland-server's `Dispatch`/`GlobalDispatch` for every protocol via
+// Smithay's `Dispatch2` traits. This single call replaces the per-protocol
+// `delegate_*!` macros that Smithay removed in favour of `delegate_dispatch2!`.
+smithay::delegate_dispatch2!(AppState);
 
 // ---------------------------------------------------------------------------
 // Helpers

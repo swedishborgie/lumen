@@ -381,6 +381,7 @@ impl NvencEncoder {
             data: Bytes::copy_from_slice(data),
             pts_ms,
             is_keyframe,
+            codec: crate::codec::VideoCodec::H264,
             captured_at: frame_captured_at,
         }))
     }

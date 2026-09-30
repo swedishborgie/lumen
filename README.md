@@ -79,6 +79,29 @@ sudo systemctl start lumen@<username>
 
 See [`pkgs/README.md`](pkgs/README.md) for the full build, configuration, and service management guide.
 
+### On NixOS (flake)
+
+The repository is a flake that builds Lumen and ships a NixOS module. Add it as
+an input and import the module:
+
+```nix
+inputs.lumen.url = "github:swedishborgie/lumen";
+inputs.lumen.inputs.nixpkgs.follows = "nixpkgs";
+
+modules = [
+  lumen.nixosModules.lumen
+  ({ ... }: {
+    services.lumen.enable = true;
+    services.lumen.users = [ "alice" ];
+  })
+];
+```
+
+This installs Lumen system-wide and provides a `lumen@<username>` systemd
+template service. See
+[`docs/getting-started/nixos.md`](docs/getting-started/nixos.md) for the full
+option reference, secrets handling, and the development shell.
+
 ### From a container (Podman / Docker)
 
 Pre-built images are available on the GitHub Container Registry:

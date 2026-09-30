@@ -19,8 +19,8 @@ pkgs.mkShell {
     # Cargo fetches smithay from git
     git
 
-    # Lumen's native library dependencies
-    ffmpeg
+    # Lumen's native library dependencies (FFmpeg 7: see nix/package.nix)
+    ffmpeg_7
     x264
     linux-pam
     pipewire

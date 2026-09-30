@@ -438,7 +438,7 @@ impl VaapiEncoder {
         // DRM_PRIME input frame — the filter graph does not propagate pict_type.
         if self.force_keyframe {
             (*nv12_frame.as_mut()).pict_type = AVPictureType::AV_PICTURE_TYPE_I;
-            (*nv12_frame.as_mut()).key_frame = 1;
+            (*nv12_frame.as_mut()).flags |= AV_FRAME_FLAG_KEY;
             self.force_keyframe = false;
         }
 

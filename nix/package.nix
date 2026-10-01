@@ -17,11 +17,7 @@
   cmake,
   nasm,
   clang,
-  # Pinned to FFmpeg 7: FFmpeg 8 requires a non-NULL hw_frames_ctx on the
-  # buffer source filter, which breaks Lumen's DMA-BUF -> VA-API zero-copy
-  # pipeline ("avfilter_graph_create_filter (buffer) failed: -22"). The distro
-  # packages build against FFmpeg <=7 for the same reason.
-  ffmpeg_7,
+  ffmpeg,
   x264,
   linux-pam,
   pipewire,
@@ -85,7 +81,7 @@ let
     ];
 
     buildInputs = [
-      ffmpeg_7
+      ffmpeg
       x264
       linux-pam
       pipewire

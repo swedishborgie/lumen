@@ -731,32 +731,49 @@ unsafe fn init_dmabuf_pipeline(
         bail!("avfilter_graph_alloc failed");
     }
 
-    // buffer source: pix_fmt=DRM_PRIME, carries hw_frames_ctx set via parameters.
-    let buffersrc_args = CString::new(format!(
-        "video_size={}x{}:pix_fmt={}:time_base=1/1000:frame_rate={}/1",
-        w, h, AVPixelFormat::AV_PIX_FMT_DRM_PRIME as i32, fps as i32,
-    )).expect("CString");
-    let mut src_ctx: *mut AVFilterContext = std::ptr::null_mut();
-    let ret = avfilter_graph_create_filter(
-        &mut src_ctx,
+    // buffer source.  Allocate the filter first, supply every parameter
+    // (including the DRM hw_frames_ctx), and only then run its init.
+    //
+    // FFmpeg 8 validates in init_video() — which runs at filter-creation time —
+    // that a hardware pix_fmt has a non-NULL hw_frames_ctx, so
+    // av_buffersrc_parameters_set() must be called *before* init, not after.
+    // This is the ordering the ffmpeg CLI uses and it also works on FFmpeg 6/7.
+    let src_ctx = avfilter_graph_alloc_filter(
+        graph,
         avfilter_get_by_name(c"buffer".as_ptr()),
         c"in".as_ptr(),
-        buffersrc_args.as_ptr(),
-        std::ptr::null_mut(),
-        graph,
     );
+    if src_ctx.is_null() {
+        avfilter_graph_free(&mut (graph as *mut _));
+        av_buffer_unref(&mut (drm_frames_ref as *mut _));
+        bail!("avfilter_graph_alloc_filter (buffer) failed");
+    }
+
+    let params = av_buffersrc_parameters_alloc();
+    if params.is_null() {
+        avfilter_graph_free(&mut (graph as *mut _));
+        av_buffer_unref(&mut (drm_frames_ref as *mut _));
+        bail!("av_buffersrc_parameters_alloc failed");
+    }
+    (*params).format = AVPixelFormat::AV_PIX_FMT_DRM_PRIME as i32;
+    (*params).width = w;
+    (*params).height = h;
+    (*params).time_base = AVRational { num: 1, den: 1000 };
+    (*params).frame_rate = AVRational { num: fps as i32, den: 1 };
+    (*params).hw_frames_ctx = av_buffer_ref(drm_frames_ref);
+    let ret = av_buffersrc_parameters_set(src_ctx, params);
+    av_free(params as *mut c_void);
     if ret < 0 {
         avfilter_graph_free(&mut (graph as *mut _));
         av_buffer_unref(&mut (drm_frames_ref as *mut _));
-        bail!("avfilter_graph_create_filter (buffer) failed: {}", ret);
+        bail!("av_buffersrc_parameters_set (buffer) failed: {}", ret);
     }
 
-    // Tell buffersrc about the DRM hw_frames_ctx so downstream filters see it.
-    let params = av_buffersrc_parameters_alloc();
-    if !params.is_null() {
-        (*params).hw_frames_ctx = av_buffer_ref(drm_frames_ref);
-        av_buffersrc_parameters_set(src_ctx, params);
-        av_free(params as *mut c_void);
+    let ret = avfilter_init_dict(src_ctx, std::ptr::null_mut());
+    if ret < 0 {
+        avfilter_graph_free(&mut (graph as *mut _));
+        av_buffer_unref(&mut (drm_frames_ref as *mut _));
+        bail!("avfilter_init_dict (buffer) failed: {}", ret);
     }
 
     // hwmap: DRM_PRIME → VAAPI.  hw_device_ctx tells it the target device.

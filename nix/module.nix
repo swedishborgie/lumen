@@ -4,6 +4,7 @@
 # template service (mirroring the .deb/.rpm packaging). Personalisation and
 # secrets stay out of this module: feed them through `environment` and
 # `environmentFile` (typically a sops-nix secret).
+{ crane }:
 {
   config,
   lib,
@@ -77,8 +78,9 @@ in
 
     package = mkOption {
       type = types.package;
-      default = pkgs.callPackage ./package.nix { };
-      defaultText = literalExpression "pkgs.callPackage ./package.nix { }";
+      default = pkgs.callPackage ./package.nix {
+        craneLib = crane.mkLib pkgs;
+      };
       description = "The Lumen package to install and run.";
     };
 

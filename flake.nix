@@ -3,10 +3,18 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
+    # crane intentionally has no nixpkgs input; it binds to whatever pkgs
+    # instance is passed to `crane.mkLib`.
+    crane.url = "github:ipetkov/crane";
   };
 
   outputs =
-    { self, nixpkgs, ... }:
+    {
+      self,
+      nixpkgs,
+      crane,
+      ...
+    }:
     let
       systems = [
         "x86_64-linux"
@@ -21,17 +29,23 @@
           pkgs = nixpkgs.legacyPackages.${system};
         in
         {
-          lumen = pkgs.callPackage ./nix/package.nix { };
+          lumen = pkgs.callPackage ./nix/package.nix {
+            craneLib = crane.mkLib pkgs;
+          };
           default = self.packages.${system}.lumen;
         }
       );
 
       overlays.default = final: prev: {
-        lumen = prev.callPackage ./nix/package.nix { };
+        lumen = prev.callPackage ./nix/package.nix {
+          craneLib = crane.mkLib prev;
+        };
       };
 
       nixosModules = {
-        lumen = import ./nix/module.nix;
+        # Close over `crane` so the module can build the package with the
+        # consumer's pkgs without requiring them to add the input themselves.
+        lumen = import ./nix/module.nix { inherit crane; };
         default = self.nixosModules.lumen;
       };
 

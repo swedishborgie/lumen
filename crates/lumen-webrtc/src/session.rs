@@ -20,6 +20,32 @@ use webrtc_util::conn::Conn;
 
 use crate::types::SessionConfig;
 
+/// Owns the internal relay and its bridge tasks for exactly one session.
+struct TurnRelay {
+    client: Option<turn::client::Client>,
+    conn: Arc<dyn Conn + Send + Sync>,
+    tasks: Vec<tokio::task::JoinHandle<()>>,
+}
+
+impl Drop for TurnRelay {
+    fn drop(&mut self) {
+        for task in &self.tasks {
+            task.abort();
+        }
+        if let Some(client) = self.client.take() {
+            let conn = self.conn.clone();
+            if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+                runtime.spawn(async move {
+                    // Stop allocation refresh and explicitly release the relay port
+                    // before stopping the TURN client's receive loop.
+                    let _ = conn.close().await;
+                    let _ = client.close().await;
+                });
+            }
+        }
+    }
+}
+
 /// A single WebRTC peer session backed by `str0m`.
 pub struct WebRtcSession {
     rtc: Rtc,
@@ -55,10 +81,8 @@ pub struct WebRtcSession {
     relay_recv_rx: Option<mpsc::Receiver<(Vec<u8>, std::net::SocketAddr)>>,
     /// Channel to send outbound packets through the TURN relay.
     relay_send_tx: Option<mpsc::Sender<(Vec<u8>, std::net::SocketAddr)>>,
-    /// Remote addresses seen via the relay — responses must go back through it.
-    relay_sourced_peers: HashSet<std::net::SocketAddr>,
-    /// Keep the TURN client alive so its allocation is periodically refreshed.
-    _turn_client: Option<turn::client::Client>,
+    /// Own the allocation and bridge tasks until session teardown.
+    _turn_relay: Option<TurnRelay>,
 }
 
 impl WebRtcSession {
@@ -71,9 +95,11 @@ impl WebRtcSession {
         let port = socket.local_addr()?.port();
         let socket = Arc::new(socket);
 
-        // Discover the real outbound IP by connecting a probe socket — this
-        // never sends any data but causes the OS to select a source address.
-        let outbound_ip = {
+        // Explicit bindings (including SSH loopback) need no public-route probe.
+        // For wildcard bindings, discover the outbound IP without sending packets.
+        let outbound_ip = if !config.bind_addr.ip().is_unspecified() {
+            config.bind_addr.ip()
+        } else {
             let probe = UdpSocket::bind("0.0.0.0:0")?;
             probe.connect("8.8.8.8:80")?;
             probe.local_addr()?.ip()
@@ -111,7 +137,7 @@ impl WebRtcSession {
         }
 
         // ── TURN relay candidate ─────────────────────────────────────────────
-        let (relay_addr, relay_recv_rx, relay_send_tx, _turn_client) =
+        let (relay_addr, relay_recv_rx, relay_send_tx, _turn_relay) =
             if let Some(ref tc) = config.turn {
                 match Self::setup_turn_relay(tc, &mut rtc, &mut local_candidates).await {
                     Ok(r) => r,
@@ -152,8 +178,7 @@ impl WebRtcSession {
                 relay_addr,
                 relay_recv_rx,
                 relay_send_tx,
-                relay_sourced_peers: HashSet::new(),
-                _turn_client,
+                _turn_relay,
             },
             answer_str,
         ))
@@ -168,13 +193,18 @@ impl WebRtcSession {
         Option<std::net::SocketAddr>,
         Option<mpsc::Receiver<(Vec<u8>, std::net::SocketAddr)>>,
         Option<mpsc::Sender<(Vec<u8>, std::net::SocketAddr)>>,
-        Option<turn::client::Client>,
+        Option<TurnRelay>,
     )> {
         use turn::client::{Client, ClientConfig};
 
-        // Bind a dedicated socket on loopback to talk to the co-located TURN server.
+        // Keep the internal TURN transport local, respecting an explicit listener IP.
+        let bind_ip = if tc.server_addr.ip().is_loopback() {
+            std::net::Ipv4Addr::LOCALHOST
+        } else {
+            std::net::Ipv4Addr::UNSPECIFIED
+        };
         let turn_conn = Arc::new(
-            tokio::net::UdpSocket::bind("127.0.0.1:0")
+            tokio::net::UdpSocket::bind(std::net::SocketAddr::new(bind_ip.into(), 0))
                 .await
                 .context("Failed to bind TURN client socket")?,
         );
@@ -198,8 +228,18 @@ impl WebRtcSession {
 
         // allocate() returns `impl Conn`; wrap in Arc so it can be shared
         // between the recv task and send task.
-        let relay_conn: Arc<dyn Conn + Send + Sync> =
-            Arc::new(client.allocate().await.context("TURN allocation failed")?);
+        let relay_conn: Arc<dyn Conn + Send + Sync> = match client.allocate().await {
+            Ok(conn) => Arc::new(conn),
+            Err(error) => {
+                let _ = client.close().await;
+                return Err(error).context("TURN allocation failed");
+            }
+        };
+        let mut relay = TurnRelay {
+            client: Some(client),
+            conn: relay_conn.clone(),
+            tasks: Vec::new(),
+        };
 
         let relay_addr = relay_conn.local_addr().context("TURN relay local_addr")?;
 
@@ -218,7 +258,7 @@ impl WebRtcSession {
             mpsc::channel::<(Vec<u8>, std::net::SocketAddr)>(1024);
         {
             let conn = relay_conn.clone();
-            tokio::spawn(async move {
+            relay.tasks.push(tokio::spawn(async move {
                 let mut buf = vec![0u8; 65535];
                 loop {
                     match conn.recv_from(&mut buf).await {
@@ -233,7 +273,7 @@ impl WebRtcSession {
                         }
                     }
                 }
-            });
+            }));
         }
 
         // Spawn sender task: channel → relay_conn (bridges sync session loop to async send).
@@ -241,16 +281,16 @@ impl WebRtcSession {
             mpsc::channel::<(Vec<u8>, std::net::SocketAddr)>(1024);
         {
             let conn = relay_conn;
-            tokio::spawn(async move {
+            relay.tasks.push(tokio::spawn(async move {
                 while let Some((data, dest)) = send_rx.recv().await {
                     if let Err(e) = conn.send_to(&data, dest).await {
                         tracing::warn!("TURN relay send error: {e}");
                     }
                 }
-            });
+            }));
         }
 
-        Ok((Some(relay_addr), Some(recv_rx), Some(send_tx), Some(client)))
+        Ok((Some(relay_addr), Some(recv_rx), Some(send_tx), Some(relay)))
     }
 
     /// Returns a shareable handle to the video-ready notifier.
@@ -399,7 +439,6 @@ impl WebRtcSession {
             (&mut self.relay_recv_rx, self.relay_addr)
         {
             while let Ok((data, source_addr)) = relay_rx.try_recv() {
-                self.relay_sourced_peers.insert(source_addr);
                 let recv = Receive {
                     proto: Protocol::Udp,
                     source: source_addr,
@@ -440,9 +479,9 @@ impl WebRtcSession {
         loop {
             match self.rtc.poll_output() {
                 Ok(Output::Transmit(t)) => {
-                    // Route through TURN relay if this destination was previously
-                    // seen arriving via the relay socket (relay-relay ICE pair).
-                    if self.relay_sourced_peers.contains(&t.destination) {
+                    // The selected local candidate determines the transport, including
+                    // connectivity checks sent before any response has arrived.
+                    if self.relay_addr == Some(t.source) {
                         if let Some(ref tx) = self.relay_send_tx {
                             if tx.try_send((t.contents.to_vec(), t.destination)).is_err() {
                                 tracing::warn!(

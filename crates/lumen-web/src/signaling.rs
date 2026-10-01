@@ -32,6 +32,8 @@ pub struct SignalingState {
     pub resize_tx: mpsc::Sender<(u32, u32)>,
     /// ICE server configuration served to the browser via `/api/config`.
     pub ice_servers: Vec<crate::types::IceServerConfig>,
+    /// Restrict the browser to TURN relay candidates, used for SSH forwarding.
+    pub ice_relay_only: bool,
     /// Hostname served to the browser via `/api/config` and the PWA manifest.
     pub hostname: String,
     /// Latest encoder metrics. `None` if the encoder has not started yet or
@@ -95,6 +97,7 @@ pub async fn config_handler(
     let caps = state.capabilities_rx.borrow().clone();
     axum::response::Json(serde_json::json!({
         "iceServers": ice,
+        "iceTransportPolicy": if state.ice_relay_only { "relay" } else { "all" },
         "hostname": state.hostname,
         "capabilities": {
             "codecs": caps.supported_codecs,

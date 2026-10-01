@@ -168,13 +168,29 @@ All options can be set via command-line flags or environment variables.
 | `--ice-servers`        | `LUMEN_ICE_SERVERS`        | `stun:stun.l.google.com:19302` | Comma-separated ICE/STUN server URLs                                                                     |
 | `--launch`             | `LUMEN_LAUNCH`             |                                | Shell command to launch as a Wayland client once the compositor is ready (e.g. `labwc`, `sway`)          |
 
+#### SSH-only access
+
+Use `--ssh --bind-addr 127.0.0.1:8080 --ssh-turn-port 13478` to carry WebRTC through TURN/TCP. Forward HTTP and TURN with:
+
+```sh
+ssh -N -o ExitOnForwardFailure=yes \
+  -L 127.0.0.1:8080:127.0.0.1:8080 \
+  -L 127.0.0.1:13478:127.0.0.1:3478 user@remote-host
+```
+
+Open `http://127.0.0.1:8080`. Keep your normal authentication and desktop launch options. UDP stays inside the remote host or container. See [SSH forwarding](dev-docs/ssh-forwarding.md) for settings, container deployment, and verification.
+
 #### TURN Server
 
 Lumen includes an embedded TURN server to relay WebRTC traffic across NAT. It is enabled by default on port 3478.
 
 | Flag                 | Env                      | Default            | Description                                          |
 | -------------------- | ------------------------ | ------------------ | ---------------------------------------------------- |
-| `--turn-port`        | `LUMEN_TURN_PORT`        | `3478`             | UDP port for the TURN server (set to `0` to disable) |
+| `--ssh` | `LUMEN_SSH` | `false` | Use relay-only TURN/TCP through SSH |
+| `--ssh-turn-port` | `LUMEN_SSH_TURN_PORT` | TURN port | Local forwarded TURN port |
+| `--turn-tcp` | `LUMEN_TURN_TCP` | `false` | Enable and advertise TCP TURN |
+| `--turn-bind-ip` | `LUMEN_TURN_BIND_IP` | Mode-dependent | TURN listener and relay socket bind IP |
+| `--turn-port`        | `LUMEN_TURN_PORT`        | `3478`             | TURN port, UDP and optionally TCP (set to `0` to disable) |
 | `--turn-external-ip` | `LUMEN_TURN_EXTERNAL_IP` | _(auto-detected)_  | Public IP to advertise as the TURN relay address     |
 | `--turn-username`    | `LUMEN_TURN_USERNAME`    | _(auto-generated)_ | TURN username                                        |
 | `--turn-password`    | `LUMEN_TURN_PASSWORD`    | _(auto-generated)_ | TURN password                                        |

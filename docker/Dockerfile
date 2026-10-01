@@ -311,6 +311,8 @@ RUN chown -R user:user /home/user
 # 50000-50010/udp: TURN relay data range
 EXPOSE 8080
 EXPOSE 3478/udp
+# Optional TURN/TCP listener, enabled by --ssh or --turn-tcp
+EXPOSE 3478/tcp
 
 USER user
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

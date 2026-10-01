@@ -244,3 +244,7 @@ sequenceDiagram
 | Keyframe flag       | `Arc<AtomicBool>`             | Encoder loop, web server/drive tasks       |
 | Last cursor JSON    | `Arc<Mutex<Option<Vec<u8>>>>` | Cursor fan-out, per-session drive tasks    |
 | Last clipboard JSON | `Arc<Mutex<Option<Vec<u8>>>>` | Clipboard fan-out, per-session drive tasks |
+
+## SSH forwarding
+
+`--ssh` enables relay-only TURN/TCP through SSH. `--ssh-turn-port` selects the client-side forwarded TURN port, `--turn-tcp` enables TCP independently, and `--turn-bind-ip` controls TURN listener and relay binding. See [SSH forwarding](../ssh-forwarding.md) for defaults, environment variables, and deployment commands.

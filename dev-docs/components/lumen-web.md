@@ -322,3 +322,7 @@ A deduplication check in the compositor prevents the clipboard from echoing back
 | `cookie` 0.18       | Session cookie encoding/decoding for OAuth2 mode                                                                            |
 | `uuid` 1.x          | Session token generation for OAuth2 mode                                                                                    |
 | `tokio`             | Async runtime                                                                                                               |
+
+## ICE policy
+
+`/api/config` includes `iceTransportPolicy`, either `all` for normal access or `relay` for SSH mode. The browser passes this policy and the supplied ICE servers to `RTCPeerConnection`. An empty server list is honored; failed or invalid configuration stops connection setup instead of falling back to public STUN. TURN credentials remain behind the existing API authentication.

@@ -35,7 +35,8 @@ async fn main() -> Result<()> {
     // Created early so peer_count can be passed to the compositor and audio.
     let session_manager = lumen_webrtc::SessionManager::new(lumen_webrtc::SessionConfig {
         turn: turn_setup.client_config,
-        bind_addr: "0.0.0.0:0".parse()?,
+        bind_addr: if args.ssh { "127.0.0.1:0" } else { "0.0.0.0:0" }
+            .parse()?,
     });
     let peer_count = session_manager.peer_count();
 
@@ -224,6 +225,7 @@ async fn main() -> Result<()> {
         resize_tx,
         auth,
         ice_servers: turn_setup.ice_servers,
+        ice_relay_only: args.ssh,
         hostname: args.hostname,
         shutdown_signal: Some(combined_shutdown_rx),
         encoder_metrics_rx: Some(encoder_metrics_rx),

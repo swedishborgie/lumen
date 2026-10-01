@@ -128,3 +128,7 @@ Lumen uses `tracing` with `RUST_LOG`-style filtering:
 ```bash
 RUST_LOG=lumen=info,lumen_compositor=debug cargo run --release
 ```
+
+## SSH forwarding
+
+`--ssh` enables relay-only TURN/TCP through SSH. `--ssh-turn-port` selects the client-side forwarded TURN port, `--turn-tcp` enables TCP independently, and `--turn-bind-ip` controls TURN listener and relay binding. See [SSH forwarding](./ssh-forwarding.md) for defaults, environment variables, and deployment commands.

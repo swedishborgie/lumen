@@ -29,6 +29,7 @@ impl WebServer {
             last_clipboard_json: self.config.last_clipboard_json.clone(),
             resize_tx: self.config.resize_tx.clone(),
             ice_servers: self.config.ice_servers.clone(),
+            ice_relay_only: self.config.ice_relay_only,
             hostname: self.config.hostname.clone(),
             encoder_metrics_rx: self.config.encoder_metrics_rx.clone(),
             system_metrics_rx: self.config.system_metrics_rx.clone(),

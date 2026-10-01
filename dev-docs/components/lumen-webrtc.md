@@ -189,3 +189,11 @@ The data channel (named `"input"`) carries JSON messages in both directions.
 - **Lock-free peer count**: `peer_count()` returns an `Arc<AtomicUsize>` that is incremented/decremented as sessions are created and destroyed. The encoder polls this to skip encoding when no peers are connected.
 - **`drain_input_events()`**: The drive loop buffers input events received on the data channel. The input forwarding task calls `drain_input_events()` on each drive iteration and forwards them to the compositor, decoupling WebRTC event processing from compositor thread coordination.
 - **str0m is sync**: `str0m`'s `Rtc` type is not async. The UDP socket is set to non-blocking mode, and `drive()` uses `tokio::net::UdpSocket` in a non-blocking fashion to integrate cleanly with the Tokio runtime.
+
+## SSH transport
+
+With `--ssh`, session UDP sockets bind to loopback, avoiding public-route probing. The browser uses relay-only ICE and reaches the embedded TURN server through forwarded TCP. Lumen's internal TURN client and relay candidates remain UDP. Outbound str0m transmissions use the selected local source address to choose between the relay and host socket, including the first ICE connectivity check.
+
+A session-owned relay guard aborts the bridge tasks, stops allocation refresh, and closes the internal TURN client when the session ends or SDP negotiation fails. This prevents reconnects from retaining relay ports.
+
+See [SSH forwarding](../ssh-forwarding.md) for deployment and verification.

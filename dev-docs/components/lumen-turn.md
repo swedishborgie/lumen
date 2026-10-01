@@ -8,7 +8,7 @@ Both the browser and the lumen WebRTC session connect to this server as TURN cli
 
 ## Responsibilities
 
-- Start a UDP TURN/STUN server bound to a configurable port
+- Start a UDP TURN/STUN server and an optional TCP listener on the same port
 - Authenticate TURN clients with a single static username/password pair
 - Allocate relay ports from a configurable range for each TURN allocation
 - Advertise a configurable external IP as the relay address
@@ -24,7 +24,7 @@ pub struct TurnServer {
 }
 
 impl TurnServer {
-    pub async fn start(config: TurnServerConfig) -> Result<Self>;
+    pub async fn start(config: TurnServerConfig) -> Result<Self, TurnError>;
 
     /// Returns the TURN URL to advertise to browsers.
     /// `host` is the hostname or IP the browser uses to reach this machine.
@@ -38,6 +38,8 @@ Keep the returned `TurnServer` alive for the duration of the process. Dropping i
 
 ```rust
 pub struct TurnServerConfig {
+    pub bind_ip: IpAddr,       // Default: 0.0.0.0; SSH mode uses loopback
+    pub tcp: bool,             // Default: false; SSH mode enables it
     pub listen_port: u16,       // Default: 3478
     pub external_ip: IpAddr,    // Relay address advertised to peers; default: 127.0.0.1
     pub min_relay_port: u16,    // Default: 50000
@@ -77,3 +79,11 @@ Both sides — lumen's WebRTC session and the browser — allocate a relay addre
 - **Static auth**: Only one username/password pair is accepted. The `StaticAuthHandler` implementation computes the HMAC-MD5 key at startup and rejects any other username.
 - **Relay range**: The default range (50000–50010) supports up to ~5 simultaneous relay allocations. Widen `min_relay_port`/`max_relay_port` for environments with many concurrent users.
 - **Disable with `--turn-port 0`**: Setting the port to zero skips TURN startup entirely; lumen falls back to the `--ice-servers` list for ICE negotiation.
+
+## TCP and SSH forwarding
+
+`tcp.rs` frames STUN and ChannelData messages over accepted Tokio TCP streams. Each stream has its own `Conn` adapter and TURN server instance, isolating allocation state from other streams and UDP clients. The existing TURN library handles authentication, relay allocation, permissions, and refresh. EOF, framing errors, timeouts, and server shutdown release connection tasks and allocations.
+
+The adapter consumes ChannelData alignment padding, serializes concurrent writes, bounds message sizes to the library's 1,500-byte buffer, and limits active connections to 128. It does not implement RFC 6062 TCP relay allocations: relay sockets remain UDP. Library startup errors use `TurnError`.
+
+With SSH mode, only the HTTP and TURN TCP ports need forwarding. UDP traffic stays in the remote network namespace. The browser URL uses the client's forwarded port, independently of the relay address. See [SSH forwarding](../ssh-forwarding.md) for commands, defaults, and limitations.

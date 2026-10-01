@@ -2,6 +2,8 @@
 
 This directory contains technical documentation for the Lumen project — a Wayland-based compositor that streams desktop sessions to web browsers over WebRTC.
 
+See [SSH forwarding](./ssh-forwarding.md) for access over TCP-only SSH tunnels.
+
 ## Contents
 
 | Document                                            | Description                                                                                     |

@@ -223,3 +223,7 @@ flowchart TD
 ```
 
 The GPU path avoids any CPU memory copy: the compositor renders into a GPU-allocated DMA-BUF, the FFmpeg filter graph maps that buffer directly into the VA-API encoder pipeline, and H.264 NAL units come out the other side.
+
+## SSH transport
+
+In SSH mode, the browser reaches HTTP/WebSocket signaling and the embedded TURN TCP listener through two local SSH forwards. TURN relays media and data-channel datagrams to Lumen using UDP inside the remote network namespace. Rendering and encoding follow the same GPU or software paths. See [SSH forwarding](./ssh-forwarding.md).

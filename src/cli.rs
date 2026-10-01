@@ -147,11 +147,23 @@ pub struct Args {
     pub ice_servers: String,
 
     // ── TURN server ───────────────────────────────────────────────────────────
-    /// UDP port for the embedded TURN server. Set to 0 to disable.
+    /// Use only TURN/TCP through SSH forwarding. Keeps relay traffic on the remote host.
+    #[arg(long, env = "LUMEN_SSH")]
+    pub ssh: bool,
+    /// Local SSH-forwarded TURN port seen by the browser. Defaults to --turn-port.
+    #[arg(long, env = "LUMEN_SSH_TURN_PORT", requires = "ssh", value_parser = clap::value_parser!(u16).range(1..))]
+    pub ssh_turn_port: Option<u16>,
+    /// Enable a TCP TURN listener alongside UDP. Implied by --ssh.
+    #[arg(long, env = "LUMEN_TURN_TCP")]
+    pub turn_tcp: bool,
+    /// TURN listener bind IP. Defaults to 127.0.0.1 with --ssh, otherwise 0.0.0.0.
+    #[arg(long, env = "LUMEN_TURN_BIND_IP")]
+    pub turn_bind_ip: Option<std::net::IpAddr>,
+    /// Embedded TURN port, UDP and optionally TCP. Set to 0 to disable.
     #[arg(long, env = "LUMEN_TURN_PORT", default_value_t = 3478)]
     pub turn_port: u16,
     /// External/public IP of this machine, used as the TURN relay address.
-    /// When not set, lumen auto-detects the outbound IP using a routing probe.
+    /// With --ssh, defaults to loopback. Otherwise auto-detects the outbound IP.
     /// Falls back to 127.0.0.1 (localhost-only) if detection fails.
     #[arg(long, env = "LUMEN_TURN_EXTERNAL_IP")]
     pub turn_external_ip: Option<std::net::IpAddr>,

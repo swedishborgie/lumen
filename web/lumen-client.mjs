@@ -10,6 +10,24 @@
  *   track         — { detail: MediaStreamTrack }
  */
 
+/** Validate server-provided ICE settings without an implicit public STUN fallback. */
+export function peerConnectionConfig(cfg) {
+  if (!cfg || !Array.isArray(cfg.iceServers)) {
+    throw new Error('Server returned invalid ICE configuration');
+  }
+  const policy = cfg.iceTransportPolicy ?? 'all';
+  if (policy !== 'all' && policy !== 'relay') {
+    throw new Error('Server returned invalid ICE transport policy');
+  }
+  if (policy === 'relay' && !cfg.iceServers.some(server => {
+    const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
+    return urls.some(url => typeof url === 'string' && /^turns?:/.test(url));
+  })) {
+    throw new Error('Relay-only mode requires a TURN server');
+  }
+  return { iceServers: cfg.iceServers, iceTransportPolicy: policy, bundlePolicy: 'max-bundle' };
+}
+
 // Maps DOM KeyboardEvent.code (physical key, locale-independent) →
 // Linux evdev scancode.  The compositor adds +8 to convert to XKB keycodes.
 export const KEY_MAP = {
@@ -142,17 +160,14 @@ export class LumenClient extends EventTarget {
     // Fetch ICE server configuration from the server (includes TURN credentials
     // when the embedded TURN server is enabled).
     this.#setStatus('Fetching ICE configuration\u2026');
-    let iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
+    let rtcConfig;
     log.debug('ice-config', 'Fetching ICE server config from /api/config');
     try {
-      const cfg = await fetch('/api/config').then(r => r.json());
-      if (Array.isArray(cfg.iceServers) && cfg.iceServers.length > 0) {
-        iceServers = cfg.iceServers;
-        log.info('ice-config', `Using ${iceServers.length} ICE server(s) from server config`);
-        log.verbose('ice-config', 'ICE servers:', iceServers);
-      } else {
-        log.warn('ice-config', 'Server config contained no ICE servers; using default STUN');
-      }
+      const response = await fetch('/api/config');
+      if (!response.ok) throw new Error(`ICE configuration request failed (${response.status})`);
+      const cfg = await response.json();
+      rtcConfig = peerConnectionConfig(cfg);
+      log.info('ice-config', `Using ${rtcConfig.iceServers.length} ICE server(s), policy ${rtcConfig.iceTransportPolicy}`);
       if (cfg.hostname) {
         document.title = `${cfg.hostname} - Lumen`;
       }
@@ -162,16 +177,15 @@ export class LumenClient extends EventTarget {
         this.dispatchEvent(new CustomEvent('capabilitieschanged', { detail: cfg.capabilities }));
       }
     } catch (e) {
-      log.warn('ice-config', 'Could not fetch /api/config; using default STUN:', e);
-      console.warn('Could not fetch /api/config, using default ICE servers:', e);
+      log.error('ice-config', 'Could not load ICE configuration:', e);
+      this.disconnect();
+      this.#setStatus(`Connection failed: ${e.message}`);
+      return;
     }
 
     this.#setStatus('Setting up peer connection\u2026');
-    log.info('peer-connection', `Creating RTCPeerConnection (bundlePolicy: max-bundle, ${iceServers.length} ICE server(s))`);
-    this.#pc = new RTCPeerConnection({
-      iceServers,
-      bundlePolicy: 'max-bundle',
-    });
+    log.info('peer-connection', `Creating RTCPeerConnection (policy: ${rtcConfig.iceTransportPolicy})`);
+    this.#pc = new RTCPeerConnection(rtcConfig);
 
     this.#stream = new MediaStream();
 

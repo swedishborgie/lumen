@@ -95,6 +95,8 @@ pub struct WebServerConfig {
     pub auth: AuthConfig,
     /// ICE server list sent to the browser via `/api/config`.
     pub ice_servers: Vec<IceServerConfig>,
+    /// Restrict the browser to TURN relay candidates, used for SSH forwarding.
+    pub ice_relay_only: bool,
     /// Hostname shown in the browser tab title and PWA app name.
     pub hostname: String,
     /// Optional graceful-shutdown signal. When the sender is dropped or sends,

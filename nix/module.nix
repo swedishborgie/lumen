@@ -207,6 +207,26 @@ in
       description = "Open the Lumen signalling, TURN and relay ports in the firewall.";
     };
 
+    restart = mkOption {
+      type = types.enum [
+        "no"
+        "on-success"
+        "on-failure"
+        "on-abnormal"
+        "on-abort"
+        "on-watchdog"
+        "always"
+      ];
+      default = "always";
+      description = ''
+        systemd `Restart=` policy for the `lumen@<user>` units. The default
+        is `always` rather than `on-failure` because Lumen treats the exit of
+        the nested desktop (the `--launch` child) as a *clean* shutdown and
+        exits 0; with `on-failure` systemd would never restart it, leaving
+        the headless host unreachable.
+      '';
+    };
+
     extraAfter = mkOption {
       type = types.listOf types.str;
       default = [ ];
@@ -292,7 +312,7 @@ in
             # XDG_RUNTIME_DIR via systemd-logind and applies PAM limits.
             PAMName = "login";
             ExecStart = "${lumenLauncher}";
-            Restart = "on-failure";
+            Restart = cfg.restart;
             RestartSec = "5s";
             StandardOutput = "journal";
             StandardError = "journal";

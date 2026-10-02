@@ -113,6 +113,7 @@ ones to options and forwards everything else through `environment`.
 | `services.lumen.extraGroups`            | `[ ]`             | Extra groups for every configured user.                      |
 | `services.lumen.uinput.enable`          | `true`            | Enable `hardware.uinput` and add the `uinput` group.         |
 | `services.lumen.openFirewall`           | `false`           | Open 8080/TCP, 3478/UDP and 50000–50010/UDP.                 |
+| `services.lumen.restart`                | `always`          | systemd `Restart=` policy. `always` (not `on-failure`) because Lumen exits 0 when the nested desktop exits. |
 | `services.lumen.extraAfter`             | `[ ]`             | Additional units to order instances after.                   |
 | `services.lumen.extraWants`             | `[ ]`             | Additional units instances should softly depend on.          |
 

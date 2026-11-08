@@ -241,6 +241,14 @@ async fn main() -> Result<()> {
     .map_err(|e| {
         tracing::error!("Web server error: {e:#}");
         e
+    })
+    .inspect_err(|_e| {
+        // A web-server failure is fatal: the browser endpoint is what makes
+        // the machine reachable, and the compositor is a plain std::thread
+        // that would otherwise outlive main() and leave a live-but-dead
+        // process that systemd's Restart= never sees.  Exit non-zero
+        // immediately (skipping the Result unwinding) so the unit restarts.
+        std::process::exit(1);
     })?;
 
     // The web server has shut down (either via graceful shutdown signal or

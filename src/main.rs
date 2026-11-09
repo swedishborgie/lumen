@@ -37,6 +37,11 @@ async fn main() -> Result<()> {
         turn: turn_setup.client_config,
         bind_addr: if args.ssh { "127.0.0.1:0" } else { "0.0.0.0:0" }
             .parse()?,
+        extra_candidate_ips: args
+            .extra_candidate_ips
+            .split(',')
+            .filter_map(|s| s.trim().parse().ok())
+            .collect(),
     });
     let peer_count = session_manager.peer_count();
 

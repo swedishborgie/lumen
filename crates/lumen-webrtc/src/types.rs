@@ -33,6 +33,10 @@ pub struct SessionConfig {
     /// Optional TURN client configuration.  When `Some`, each session
     /// allocates a TURN relay candidate in addition to host candidates.
     pub turn: Option<TurnClientConfig>,
+    /// Extra local IPs to advertise as additional ICE host candidates on
+    /// the session's UDP port (e.g. a tailnet address when the auto-detected
+    /// outbound IP only covers the local LAN).
+    pub extra_candidate_ips: Vec<IpAddr>,
 }
 
 impl Default for SessionConfig {
@@ -40,6 +44,7 @@ impl Default for SessionConfig {
         Self {
             bind_addr: "0.0.0.0:0".parse().unwrap(),
             turn: None,
+            extra_candidate_ips: Vec::new(),
         }
     }
 }

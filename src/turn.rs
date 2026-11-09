@@ -224,6 +224,51 @@ mod tests {
         assert!(Args::try_parse_from(["lumen", "--ssh-turn-port", "13478"]).is_err());
         assert!(Args::try_parse_from(["lumen", "--ssh", "--ssh-turn-port", "0"]).is_err());
     }
+    /// Minimal data-channel-only SDP offer for session-creation tests.
+    fn test_offer() -> String {
+        ["v=0", "o=- 1 1 IN IP4 127.0.0.1", "s=-", "t=0 0",
+            "a=group:BUNDLE 0", "m=application 9 UDP/DTLS/SCTP webrtc-datachannel",
+            "c=IN IP4 0.0.0.0", "a=mid:0", "a=ice-ufrag:test",
+            "a=ice-pwd:012345678901234567890123",
+            "a=fingerprint:sha-256 01:01:01:01:01:01:01:01:01:01:01:01:01:01:01:01:01:01:01:01:01:01:01:01:01:01",
+            "a=setup:actpass", "a=sctp-port:5000", "", ].join("\r\n")
+    }
+
+    #[tokio::test]
+    async fn extra_candidate_ips_become_host_candidates() -> anyhow::Result<()> {
+        let tailnet: std::net::IpAddr = "100.64.0.19".parse()?;
+        let config = lumen_webrtc::SessionConfig {
+            bind_addr: "0.0.0.0:0".parse()?,
+            extra_candidate_ips: vec![tailnet, "127.0.0.1".parse()?, tailnet],
+            turn: None,
+        };
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            lumen_webrtc::WebRtcSession::new(config, &test_offer()),
+        )
+        .await?;
+        let (session, answer) = result?;
+        let addrs = session.local_candidate_addrs();
+        let port = addrs.iter().find(|a| a.ip().is_loopback()).unwrap().port();
+        anyhow::ensure!(
+            addrs.iter().any(|a| *a == std::net::SocketAddr::new(tailnet, port)),
+            "tailnet IP must be advertised as a host candidate: {:?}",
+            addrs
+        );
+        anyhow::ensure!(
+            answer.contains("100.64.0.19"),
+            "tailnet host candidate missing from answer SDP:\n{}",
+            answer
+        );
+        // Duplicates and loopback must not be added twice.
+        anyhow::ensure!(
+            addrs.iter().filter(|a| a.ip() == tailnet).count() == 1,
+            "tailnet candidate added more than once: {:?}",
+            addrs
+        );
+        Ok(())
+    }
+
     #[tokio::test]
     async fn session_teardown_releases_internal_turn_allocation() -> anyhow::Result<()> {
         use std::time::Duration;
@@ -245,6 +290,7 @@ mod tests {
         .await?;
         let config = lumen_webrtc::SessionConfig {
             bind_addr: "127.0.0.1:0".parse()?,
+            extra_candidate_ips: Vec::new(),
             turn: Some(lumen_webrtc::types::TurnClientConfig {
                 server_addr: SocketAddr::new(server.config.bind_ip, server.config.listen_port),
                 username: "test".into(),

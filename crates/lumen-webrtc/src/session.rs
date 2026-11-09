@@ -135,6 +135,23 @@ impl WebRtcSession {
                 local_candidates.push(outbound_addr);
             }
         }
+        // Add explicitly configured reachable IPs (e.g. a tailnet address)
+        // as extra host candidates so remote clients can connect directly
+        // instead of taking the TURN relay hop.
+        for extra_ip in config.extra_candidate_ips.iter() {
+            let extra_addr = std::net::SocketAddr::new(*extra_ip, port);
+            // Skip loopback, the auto-detected outbound IP, and any IP we
+            // already registered (e.g. duplicated in the config).
+            if local_candidates.iter().any(|a| a.ip() == *extra_ip) {
+                continue;
+            }
+            if let Ok(c) = Candidate::host(extra_addr, "udp") {
+                rtc.add_local_candidate(c);
+                local_candidates.push(extra_addr);
+            } else {
+                tracing::warn!(%extra_addr, "failed to add extra host candidate");
+            }
+        }
 
         // ── TURN relay candidate ─────────────────────────────────────────────
         let (relay_addr, relay_recv_rx, relay_send_tx, _turn_relay) =
@@ -407,6 +424,11 @@ impl WebRtcSession {
             .map_err(|e| anyhow!("Candidate parse error: {:?}", e))?;
         self.rtc.add_remote_candidate(c);
         Ok(())
+    }
+
+    /// All local (host + relay) candidate addresses registered for this session.
+    pub fn local_candidate_addrs(&self) -> Vec<std::net::SocketAddr> {
+        self.local_candidates.clone()
     }
 
     /// Resolve which local candidate address a packet from `source_ip` arrived on.

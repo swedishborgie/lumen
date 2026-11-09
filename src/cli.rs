@@ -145,6 +145,10 @@ pub struct Args {
     pub inner_display: String,
     #[arg(long, env = "LUMEN_ICE_SERVERS", default_value = "stun:stun.l.google.com:19302")]
     pub ice_servers: String,
+    /// Comma-separated extra local IPs to advertise as ICE host candidates
+    /// (e.g. a tailnet address), in addition to the auto-detected LAN IP.
+    #[arg(long, env = "LUMEN_EXTRA_CANDIDATE_IPS", default_value_t = String::new())]
+    pub extra_candidate_ips: String,
 
     // ── TURN server ───────────────────────────────────────────────────────────
     /// Use only TURN/TCP through SSH forwarding. Keeps relay traffic on the remote host.

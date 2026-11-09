@@ -14,4 +14,5 @@ pub mod types;
 
 pub use compositor::{Compositor, InputSender};
 pub use input::InputEvent;
+pub use state::{is_descendant_of, read_ppid};
 pub use types::{CapturedFrame, ClipboardEvent, CompositorConfig, CursorEvent};

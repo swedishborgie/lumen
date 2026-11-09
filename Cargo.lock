@@ -2121,6 +2121,7 @@ dependencies = [
  "bindgen 0.69.5",
  "clap",
  "hostname",
+ "libc",
  "lumen-audio",
  "lumen-compositor",
  "lumen-encode",

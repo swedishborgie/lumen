@@ -228,6 +228,7 @@ impl Compositor {
             clipboard_sent_text: Arc::new(std::sync::Mutex::new(None)),
             bridge_write_tx: None,
             last_log_time: Instant::now(), encoded_frame_count: 0, start_time: Instant::now(),
+            last_frame_tx_at: None, diag_capture_missed: 0,
             use_gpu,
             cursor_pos: smithay::utils::Point::from((0.0, 0.0)),
         };
@@ -278,8 +279,25 @@ impl Compositor {
         // -----------------------------------------------------------------------
         // Wayland socket source
         // -----------------------------------------------------------------------
-        let socket_source = ListeningSocketSource::new_auto()
-            .context("Failed to create Wayland socket")?;
+        // A PID-suffixed socket name keeps restarted instances from colliding
+        // with a stale client's cached WAYLAND_DISPLAY (see CompositorConfig::
+        // socket_name).  Fall back to auto-selection if the explicit bind
+        // fails (e.g. a leftover socket file).
+        let socket_source = match self.config.socket_name.as_deref() {
+            Some(name) => match ListeningSocketSource::with_name(name) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!(
+                        name, error = %e,
+                        "could not bind requested Wayland socket name; falling back to auto"
+                    );
+                    ListeningSocketSource::new_auto()
+                        .context("Failed to create Wayland socket")?
+                }
+            },
+            None => ListeningSocketSource::new_auto()
+                .context("Failed to create Wayland socket")?,
+        };
         let socket_name = socket_source.socket_name().to_string_lossy().into_owned();
         tracing::info!("Wayland socket: {}", socket_name);
         // Notify any listener (e.g. a --launch task) that the socket is ready.
@@ -292,6 +310,7 @@ impl Compositor {
         let tracker = CompositorClientTracker::new(
             self.config.fatal_client_shutdown_tx.take(),
             5_000, // 5 second grace period
+            self.config.launch_pid.clone(),
         );
         let tracker_clone = tracker.clone();
 
@@ -387,6 +406,21 @@ impl Compositor {
                     if let Some(mut dt) = state.damage_tracker.take() {
                         render_and_capture(state, &mut dt);
                         state.damage_tracker = Some(dt);
+                    }
+                    // [diag] peer present but nothing captured for a while.
+                    let since_capture = state.last_frame_tx_at
+                        .map_or(std::time::Duration::from_secs(999), |t| t.elapsed());
+                    if since_capture > std::time::Duration::from_secs(2) {
+                        let n = state.diag_capture_missed.saturating_add(1);
+                        if n % 30 == 1 {
+                            tracing::warn!(
+                                is_capturing = state.is_capturing,
+                                width = state.width,
+                                height = state.height,
+                                since_capture_ms = since_capture.as_millis(),
+                                "[diag] peer present but no frame captured recently"
+                            );
+                        }
                     }
                 } else if state.is_capturing && !has_peers {
                     // Log once per second so we can confirm idle mode is active.

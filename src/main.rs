@@ -7,8 +7,11 @@ use tokio::sync::broadcast;
 mod cli;
 mod hardware;
 mod logging;
+mod launch;
 mod tasks;
 mod turn;
+
+use launch::{kill_session, ChildRef};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -75,17 +78,31 @@ async fn main() -> Result<()> {
     };
 
     // ── Shutdown signal ───────────────────────────────────────────────────────
-    // Two independent shutdown triggers: (1) the --launch child process exits,
-    // and (2) the compositor detects all nested compositor clients have been
-    // lost.  We race both via tokio::select! and forward the winner to a
-    // combined channel that the web server listens on.
+    // Three independent shutdown triggers: (1) the --launch child process
+    // exits, (2) the compositor detects all nested compositor clients have
+    // been lost, and (3) a SIGTERM/SIGINT (systemd stop, Ctrl-C).  We race
+    // them via tokio::select! and forward the winner to a combined channel
+    // that the web server listens on.  Trigger (3) exists so a systemd stop
+    // runs our normal shutdown path — including tearing down the launch
+    // session — instead of the default SIGTERM kill that would leak the
+    // whole desktop.
     let (launch_shutdown_tx, launch_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let (fatal_shutdown_tx, fatal_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let (combined_shutdown_tx, combined_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     tokio::spawn(async move {
+        let mut sigterm =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("failed to install SIGTERM handler");
+        let ctrl_c = tokio::signal::ctrl_c();
         tokio::select! {
             _ = launch_shutdown_rx => {},
             _ = fatal_shutdown_rx => {},
+            _ = sigterm.recv() => {
+                tracing::info!("SIGTERM received; shutting down");
+            }
+            _ = ctrl_c => {
+                tracing::info!("Ctrl-C received; shutting down");
+            }
         }
         let _ = combined_shutdown_tx.send(());
     });
@@ -107,6 +124,17 @@ async fn main() -> Result<()> {
         None
     };
 
+    // The launch child's PID, shared with the compositor's fatal-exit tracker
+    // (so only its descendants count) and with the shutdown paths (so they
+    // can signal the whole desktop session).
+    let launch_pid = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let launch_pid_for_compositor = launch_pid.clone();
+
+    // A PID-suffixed socket name means a restarted lumen never reuses the
+    // socket name a stale client from a previous instance still has in its
+    // WAYLAND_DISPLAY — such a client would otherwise silently reattach.
+    let socket_name = format!("wayland-lumen-{}", std::process::id());
+
     let compositor = lumen_compositor::Compositor::new(lumen_compositor::CompositorConfig {
         width: args.width,
         height: args.height,
@@ -116,6 +144,8 @@ async fn main() -> Result<()> {
         peer_count: Some(peer_count.clone()),
         socket_name_tx: Some(socket_name_tx),
         fatal_client_shutdown_tx,
+        socket_name: Some(socket_name),
+        launch_pid: launch_pid_for_compositor,
         ..Default::default()
     })?;
     let frame_rx = compositor.frame_receiver();
@@ -174,8 +204,14 @@ async fn main() -> Result<()> {
     let (capabilities_tx, capabilities_rx) =
         tokio::sync::watch::channel(initial_capabilities);
 
+    // Shared handle to the launch child.  The launch task populates it once
+    // the desktop session is up; the exit paths (main's normal exit, the
+    // web-server failure path, and the compositor thread's crash path) use it
+    // to reap the session leader so no zombies survive our own exit.
+    let launch_child = ChildRef::default();
+
     // ── Spawn tasks ───────────────────────────────────────────────────────────
-    tasks::spawn_compositor(compositor);
+    tasks::spawn_compositor(compositor, launch_pid.clone());
     tasks::spawn_audio(audio_capture);
     tasks::spawn_encoder(
         encoder_config,
@@ -195,10 +231,18 @@ async fn main() -> Result<()> {
         capabilities_tx,
     );
     tasks::spawn_gamepad_manager(gamepad_rx, haptic_tx);
+    let launch_child_for_task = launch_child.clone();
+    let launch_pid_for_task = launch_pid.clone();
+    let launch_cb = move |pid: u32| {
+        // Tell the fatal-exit tracker which subtree counts as "the desktop".
+        launch_pid_for_task.store(pid, std::sync::atomic::Ordering::Relaxed);
+    };
     let _shutdown_keep_alive = tasks::spawn_launch_task(
         args.effective_launch(),
         socket_name_rx,
         launch_shutdown_tx,
+        launch_child_for_task,
+        Some(Box::new(launch_cb)),
     );
     tasks::spawn_input_forwarder(input_rx, compositor_input_tx.clone(), gamepad_tx);
     tasks::spawn_haptic_fanout(haptic_rx, session_manager.clone());
@@ -251,16 +295,24 @@ async fn main() -> Result<()> {
         // A web-server failure is fatal: the browser endpoint is what makes
         // the machine reachable, and the compositor is a plain std::thread
         // that would otherwise outlive main() and leave a live-but-dead
-        // process that systemd's Restart= never sees.  Exit non-zero
-        // immediately (skipping the Result unwinding) so the unit restarts.
+        // process that systemd's Restart= never sees.  Tear down the desktop
+        // session first, then exit non-zero (skipping the Result unwinding)
+        // so the unit restarts.
+        let pid = launch_pid.load(std::sync::atomic::Ordering::Relaxed);
+        kill_session(if pid != 0 { Some(pid) } else { None });
         std::process::exit(1);
     })?;
 
     // The web server has shut down (either via graceful shutdown signal or
     // by returning normally).  Stop the compositor, which closes the broadcast
-    // channels and causes the encoder to exit.  Then force-exit the process to
-    // clean up threads that don't have explicit stop signals (audio capture).
+    // channels and causes the encoder to exit.  Tear down the whole launch
+    // session (KDE moves it into user.slice, so systemd will never reap it —
+    // a leaked kwin_wayland_wrapper would respawn a kwin that reattaches to
+    // the next lumen instance).  Then force-exit the process to clean up
+    // threads that don't have explicit stop signals (audio capture).
     tracing::info!("Web server stopped; shutting down");
     compositor_input_tx.stop();
+    let pid = launch_pid.load(std::sync::atomic::Ordering::Relaxed);
+    kill_session(if pid != 0 { Some(pid) } else { None });
     std::process::exit(0);
 }

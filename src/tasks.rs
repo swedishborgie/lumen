@@ -44,7 +44,15 @@ pub fn clipboard_event_to_json(ev: &lumen_compositor::ClipboardEvent) -> Option<
 // ── Blocking thread spawns ────────────────────────────────────────────────────
 
 /// Spawn the compositor on a dedicated thread.
-pub fn spawn_compositor(mut compositor: lumen_compositor::Compositor) {
+///
+/// `launch_pid` is the desktop session PID (0 until spawned).  The
+/// compositor runs on a bare std::thread, so when it crashes or panics we
+/// exit directly (main never gets a chance to clean up) — the desktop
+/// session must be torn down here or it leaks into user.slice.
+pub fn spawn_compositor(
+    mut compositor: lumen_compositor::Compositor,
+    launch_pid: std::sync::Arc<std::sync::atomic::AtomicU32>,
+) {
     std::thread::spawn(move || {
         let result = std::panic::catch_unwind(
             std::panic::AssertUnwindSafe(|| compositor.run()),
@@ -56,10 +64,14 @@ pub fn spawn_compositor(mut compositor: lumen_compositor::Compositor) {
             }
             Ok(Err(e)) => {
                 tracing::error!("Compositor crashed: {e:#}; exiting so systemd can restart");
+                let pid = launch_pid.load(std::sync::atomic::Ordering::Relaxed);
+                crate::launch::kill_session(if pid != 0 { Some(pid) } else { None });
                 std::process::exit(1);
             }
             Err(_) => {
                 tracing::error!("Compositor panicked; exiting so systemd can restart");
+                let pid = launch_pid.load(std::sync::atomic::Ordering::Relaxed);
+                crate::launch::kill_session(if pid != 0 { Some(pid) } else { None });
                 std::process::exit(1);
             }
         }
@@ -96,6 +108,9 @@ pub fn spawn_encoder(
         let mut frame_rx = frame_rx;
         let mut encoded_count: u64 = 0;
         let mut dropped_count: u64 = 0;
+        let mut frame_drops: u64 = 0; // [diag] dimension-mismatch drops
+        let mut first_frame_at: Option<std::time::Instant> = None;
+        let mut diag_since_first: u64 = 0;
         let mut encoder_width = encoder_config.width;
         let mut encoder_height = encoder_config.height;
         let mut frame_interval = std::time::Duration::from_secs_f64(1.0 / encoder_config.fps);
@@ -143,13 +158,32 @@ pub fn spawn_encoder(
             }
 
             let frame = match frame_rx.blocking_recv() {
-                Ok(f) => f,
+                Ok(f) => {
+                    if first_frame_at.is_none() {
+                        first_frame_at = Some(std::time::Instant::now());
+                    }
+                    f
+                }
                 Err(broadcast::error::RecvError::Lagged(n)) => {
                     dropped_count += n;
                     continue;
                 }
                 Err(_) => break,
             };
+            // [diag] frames keep arriving but the encoder produced nothing.
+            if encoded_count == 0 {
+                if let Some(t0) = first_frame_at {
+                    if t0.elapsed() > std::time::Duration::from_secs(3) && diag_since_first % 15 == 0 {
+                        diag_since_first += 1;
+                        tracing::warn!(
+                            got = format!("{}x{}", frame.width, frame.height),
+                            want = format!("{}x{}", encoder_width, encoder_height),
+                            secs = t0.elapsed().as_secs(),
+                            "[diag] frames arriving but encoder produced 0 frames"
+                        );
+                    }
+                }
+            }
             // Warn when a frame arrives with abnormally high capture-to-encode latency.
             // This indicates the compositor or encoder pipeline is stalling — on a
             // discrete GPU this is often caused by GPU fence contention on the DMA-BUF.
@@ -166,6 +200,15 @@ pub fn spawn_encoder(
             }
             // Skip frames from the old resolution that arrived after a resize.
             if frame.width != encoder_width || frame.height != encoder_height {
+                if frame_drops % 30 == 0 {
+                    tracing::warn!(
+                        got = format!("{}x{}", frame.width, frame.height),
+                        want = format!("{}x{}", encoder_width, encoder_height),
+                        total = frame_drops,
+                        "[diag] encoder dropping frames: size mismatch"
+                    );
+                }
+                frame_drops += 1;
                 continue;
             }
             // Service any pending keyframe request before encoding.
@@ -338,6 +381,8 @@ pub fn spawn_launch_task(
     effective_launch: Option<(String, &'static [(&'static str, &'static str)])>,
     socket_name_rx: std::sync::mpsc::Receiver<String>,
     shutdown_tx: tokio::sync::oneshot::Sender<()>,
+    child_ref: crate::launch::ChildRef,
+    on_spawned: Option<Box<dyn Fn(u32) + Send>>,
 ) -> Option<tokio::sync::oneshot::Sender<()>> {
     if let Some((launch_cmd, preset_env)) = effective_launch {
         tokio::task::spawn_blocking(move || {
@@ -356,7 +401,8 @@ pub fn spawn_launch_task(
             cmd.args(["-c", &launch_cmd])
                 .env("WAYLAND_DISPLAY", &socket_name)
                 .env("XDG_RUNTIME_DIR", &runtime_dir)
-                .env_remove("DISPLAY");
+                .env_remove("DISPLAY")
+                .stdin(std::process::Stdio::null());
             // Strip all LUMEN_ vars so secrets don't leak into the child process.
             for (key, _) in std::env::vars() {
                 if key.starts_with("LUMEN_") {
@@ -366,9 +412,27 @@ pub fn spawn_launch_task(
             for (key, val) in preset_env {
                 cmd.env(key, val);
             }
-            match cmd.status() {
-                Ok(s) => tracing::info!(cmd = %launch_cmd, status = %s, "Launched client exited; shutting down"),
-                Err(e) => tracing::error!(cmd = %launch_cmd, "Failed to launch client: {e:#}"),
+            // Spawn in its own session so the whole desktop can be signalled
+            // (and reaped) on any exit path.  See the `launch` module docs.
+            let child = match crate::launch::spawn_session(&mut cmd) {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::error!(cmd = %launch_cmd, %e, "Failed to launch client");
+                    let _ = shutdown_tx.send(());
+                    return;
+                }
+            };
+            let session_id = child.id();
+            child_ref.set(child);
+            if let Some(cb) = on_spawned {
+                cb(session_id);
+            }
+            tracing::info!(pid = session_id, "launch: desktop session started");
+            // Poll through the shared handle: the shutdown paths may reap the
+            // child first, in which case we simply observe that and proceed.
+            match child_ref.wait() {
+                Some(s) => tracing::info!(cmd = %launch_cmd, status = %s, "Launched client exited; shutting down"),
+                None => tracing::info!(cmd = %launch_cmd, "Launched client already reaped; shutting down"),
             }
             let _ = shutdown_tx.send(());
         });
@@ -487,20 +551,36 @@ pub fn spawn_video_fanout(
 ) {
     let mut encoded_rx = encoded_tx.subscribe();
     tokio::spawn(async move {
+        let mut last_fanout_at: Option<tokio::time::Instant> = None;
         loop {
-            let frame = match encoded_rx.recv().await {
-                Ok(f) => f,
-                Err(broadcast::error::RecvError::Lagged(n)) => {
-                    tracing::warn!("Video fan-out lagged {n}");
+            let frame = tokio::select! {
+                f = encoded_rx.recv() => match f {
+                    Ok(f) => f,
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("Video fan-out lagged {n}");
+                        continue;
+                    }
+                    Err(_) => break,
+                },
+                _ = tokio::time::sleep(std::time::Duration::from_secs(3)) => {
+                    // [diag] no encoded frame for 3s while a session exists.
+                    if let Some(t) = last_fanout_at {
+                        if session_manager.all_sessions().await.len() > 0 {
+                            tracing::warn!(
+                                secs = t.elapsed().as_secs(),
+                                "[diag] video fanout: no encoded frames for 3s with active session"
+                            );
+                        }
+                    }
                     continue;
-                }
-                Err(_) => break,
+                },
             };
+            last_fanout_at = Some(tokio::time::Instant::now());
             let sessions = session_manager.all_sessions().await;
             for session in sessions {
                 let mut s = session.lock().await;
                 if let Err(e) = s.push_video(&frame) {
-                    tracing::debug!("Video push error: {e:#}");
+                    tracing::warn!("Video push error: {e:#}"); // [diag] was debug
                 }
             }
             // Yield to the tokio scheduler so each drive task gets a chance to

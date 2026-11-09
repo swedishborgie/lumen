@@ -65,11 +65,24 @@ impl CompositorHandler for AppState {
         // Track this client as a compositor client (nested compositor like kwin).
         // This is the signal that a real compositor (not a plain Wayland app)
         // has connected — useful for the fatal-exit-on-compositor-loss feature.
+        //
+        // The client's PID is passed through so the tracker can ignore clients
+        // outside the `--launch` subtree (e.g. a kwin leaked from a dead lumen
+        // instance reconnecting via a stale WAYLAND_DISPLAY).
         if let Some(client) = surface.client() {
             if let Some(client_state) = client.get_data::<ClientState>() {
+                // The client's PID (unix socket creds) lets the tracker ignore
+                // clients outside the `--launch` subtree — e.g. a kwin leaked
+                // from a dead lumen instance reconnecting via a stale
+                // WAYLAND_DISPLAY.  Degrades to `None` (count the client) if
+                // the credentials are unavailable.
+                let client_pid = client
+                    .get_credentials(&self.dh)
+                    .ok()
+                    .and_then(|creds| u32::try_from(creds.pid).ok());
                 client_state
                     .tracker
-                    .client_created_surface(client.id());
+                    .client_created_surface(client.id(), client_pid);
             }
         }
     }

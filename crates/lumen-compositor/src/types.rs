@@ -36,6 +36,22 @@ pub struct CompositorConfig {
     /// compositor-bound clients (nested compositors like kwin) disconnect,
     /// after a grace period. Used by `--exit-on-compositor-loss`.
     pub fatal_client_shutdown_tx: Option<oneshot::Sender<()>>,
+    /// Name of the Wayland socket to bind. `None` lets smithay pick the next
+    /// free `wayland-N`. Set a name derived from lumen's PID (e.g.
+    /// `wayland-lumen-1234`) so a restarted lumen never reuses the socket name
+    /// a stale client from a previous instance still has in its
+    /// `WAYLAND_DISPLAY` — such a client would otherwise silently reattach and
+    /// cancel the fatal-exit grace timer.
+    pub socket_name: Option<String>,
+    /// PID of the `--launch`/`--desktop` child process, shared with the
+    /// owning binary (`0` until the child is spawned). When non-zero, only
+    /// Wayland clients that are descendants of this process count toward the
+    /// fatal-exit tracker, so clients from unrelated (e.g. leaked, zombie)
+    /// sessions can neither trigger nor cancel the fatal exit.
+    ///
+    /// The owning binary shares this same `Arc` with its launch task, which
+    /// stores the child's PID in it once the desktop session is spawned.
+    pub launch_pid: Arc<std::sync::atomic::AtomicU32>,
 }
 
 impl Default for CompositorConfig {
@@ -50,6 +66,8 @@ impl Default for CompositorConfig {
             peer_count: None,
             socket_name_tx: None,
             fatal_client_shutdown_tx: None,
+            socket_name: None,
+            launch_pid: Arc::new(std::sync::atomic::AtomicU32::new(0)),
         }
     }
 }
